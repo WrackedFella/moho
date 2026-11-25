@@ -27,6 +27,16 @@ pub struct ControlsDraft {
     base: ActionBindings<SearchlightAction>,
     /// One row per action, in `SearchlightAction::ALL` order.
     rows: Vec<Row>,
+    /// The capture waiting on a conflict answer.
+    pending: Option<Pending>,
+}
+
+/// A captured input another action holds: `target` would take `binding` from `by`.
+#[derive(Clone, Copy, Debug)]
+struct Pending {
+    target: SearchlightAction,
+    binding: Binding,
+    by: SearchlightAction,
 }
 
 /// What happened to a captured input.
@@ -35,10 +45,8 @@ pub enum Capture {
     /// The action's primary slot now holds the plain press of the input, or the action already
     /// held it and keeps it where it was.
     Set,
-    /// Another action already holds that binding; nothing changed.
-    InUse { by: SearchlightAction },
-    /// Another action holds that binding in `slot` (`None` when beyond its two slots); the
-    /// capture is pending until `replace` or `cancel`.
+    /// Another action holds that binding in `slot` (`None` when beyond its two slots); nothing
+    /// changed and the capture is pending until `replace` or `cancel`.
     Conflict {
         by: SearchlightAction,
         slot: Option<Slot>,
@@ -63,6 +71,7 @@ impl ControlsDraft {
         Self {
             base: bindings.clone(),
             rows,
+            pending: None,
         }
     }
 
@@ -85,19 +94,46 @@ impl ControlsDraft {
     }
 
     /// Whether `action` holds nothing in either slot or beyond them.
-    pub fn is_unbound(&self, _action: SearchlightAction) -> bool {
-        false
+    pub fn is_unbound(&self, action: SearchlightAction) -> bool {
+        self.rows
+            .iter()
+            .find(|row| row.action == action)
+            .is_some_and(|row| row.slots == [None, None] && row.rest.is_empty())
     }
 
-    /// Answers a pending conflict by moving its input to the target action.
-    pub fn replace(&mut self) {}
+    /// Answers a pending conflict: the capturing action takes the input in its primary slot and
+    /// the action that held it loses it from the slot it was in. Does nothing with none pending.
+    pub fn replace(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == pending.by) {
+            for slot in &mut row.slots {
+                if *slot == Some(pending.binding) {
+                    *slot = None;
+                }
+            }
+            row.rest.retain(|held| *held != pending.binding);
+        }
+        if let Some(row) = self
+            .rows
+            .iter_mut()
+            .find(|row| row.action == pending.target)
+        {
+            row.slots[0] = Some(pending.binding);
+        }
+    }
 
     /// Answers a pending conflict by dropping it.
-    pub fn cancel(&mut self) {}
+    pub fn cancel(&mut self) {
+        self.pending = None;
+    }
 
     /// Puts the plain press of `input` in `action`'s primary slot unless it is reserved, another
-    /// action holds it, or `action` already holds it in any slot.
+    /// action holds it, or `action` already holds it in any slot. A conflict stays pending until
+    /// `replace` or `cancel`; any later capture drops it.
     pub fn capture(&mut self, action: SearchlightAction, input: Input) -> Capture {
+        self.pending = None;
         let binding = Binding::from(input);
         if binding.is_protected() {
             return Capture::Reserved;
@@ -107,7 +143,22 @@ impl ControlsDraft {
             .iter()
             .find(|row| row.action != action && row.holds(binding))
         {
-            return Capture::InUse { by: other.action };
+            let slot = if other.slots[0] == Some(binding) {
+                Some(Slot::Primary)
+            } else if other.slots[1] == Some(binding) {
+                Some(Slot::Secondary)
+            } else {
+                None
+            };
+            self.pending = Some(Pending {
+                target: action,
+                binding,
+                by: other.action,
+            });
+            return Capture::Conflict {
+                by: other.action,
+                slot,
+            };
         }
         if let Some(row) = self
             .rows

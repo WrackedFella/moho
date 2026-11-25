@@ -155,11 +155,11 @@ pub fn controls_screen(draft: &ControlsDraft) -> MenuScreen<MenuAction> {
 }
 
 /// The dialog asking whether `input_label` moves from `by_label`'s action; Escape is Cancel.
-pub fn conflict_screen(_input_label: &str, _by_label: &str) -> MenuScreen<MenuAction> {
+pub fn conflict_screen(input_label: &str, by_label: &str) -> MenuScreen<MenuAction> {
     MenuScreen {
-        title: None,
-        items: Vec::new(),
-        back: None,
+        title: Some(format!("{input_label} is used by {by_label}")),
+        items: vec![MenuAction::Replace.button(), MenuAction::Cancel.button()],
+        back: Some(MenuAction::Cancel),
         settings: None,
     }
 }

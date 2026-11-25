@@ -44,7 +44,8 @@ use crate::input::{
 use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
-    MenuAction, controls_rows, controls_screen, main_screen, pause_screen, settings_screen,
+    MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
+    settings_screen,
 };
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
@@ -982,6 +983,8 @@ impl SearchlightGame {
                     self.controls = None;
                     self.stage.shell().menu_mut().pop();
                 }
+                MenuEvent::Chosen(MenuAction::Replace) => self.answer_conflict(true),
+                MenuEvent::Chosen(MenuAction::Cancel) => self.answer_conflict(false),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
                 MenuEvent::GameSettingsApplied(values) => {
@@ -1026,12 +1029,7 @@ impl SearchlightGame {
                 }
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
-                | MenuEvent::Chosen(
-                    MenuAction::Item(_)
-                    | MenuAction::ItemAction(_)
-                    | MenuAction::Replace
-                    | MenuAction::Cancel,
-                ) => {}
+                | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}
             }
         }
     }
@@ -1044,20 +1042,31 @@ impl SearchlightGame {
         }
     }
 
-    /// Stages a captured `input` for `action` on the Controls page, or notes why it was refused.
+    /// Stages a captured `input` for `action` on the Controls page, or asks about the action that
+    /// holds it.
     fn captured(&mut self, action: SearchlightAction, input: Input) {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        let note = match draft.capture(action, input) {
-            Capture::InUse { by } => Some(format!(
-                "{} is used by {}",
-                Binding::from(input).label(),
-                label(by)
-            )),
-            Capture::Set | Capture::Reserved | Capture::Conflict { .. } => None,
-        };
-        self.show_controls(note.as_deref().map(|note| (action, note)));
+        if let Capture::Conflict { by, .. } = draft.capture(action, input) {
+            let dialog = conflict_screen(&Binding::from(input).label(), label(by));
+            self.stage.shell().menu_mut().push(dialog);
+            return;
+        }
+        self.show_controls(None);
+    }
+
+    /// Closes the conflict dialog, answers it through the draft and refreshes the Controls rows.
+    fn answer_conflict(&mut self, replace: bool) {
+        if let Some(draft) = &mut self.controls {
+            if replace {
+                draft.replace();
+            } else {
+                draft.cancel();
+            }
+        }
+        self.stage.shell().menu_mut().pop();
+        self.show_controls(None);
     }
 
     /// Makes the drafted bindings live, replacing the action map, and saves them; a failed save
