@@ -515,4 +515,20 @@ mod tests {
         near(linear, Vec3::ZERO);
         near(angular, Vec3::new(0.0, -5.0, 0.0));
     }
+
+    #[test]
+    fn angular_velocity_of_a_half_turn_keeps_its_axis() {
+        let before = Affine3A::IDENTITY;
+        let now = Affine3A::from_quat(Quat::from_xyzw(0.0, 1.0, 0.0, 0.0));
+        let (_, rotation, _) = now.to_scale_rotation_translation();
+        assert!(
+            rotation.w == 0.0 && rotation.y > 0.0,
+            "the fixture must be an exact half turn: {rotation}"
+        );
+
+        let (linear, angular) = velocities(before, now, 0.5);
+
+        near(linear, Vec3::ZERO);
+        near(angular, Vec3::new(0.0, 2.0 * std::f32::consts::PI, 0.0));
+    }
 }
