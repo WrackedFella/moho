@@ -152,6 +152,19 @@ mod tests {
         (0..64).map(|i| i as f32 * TAU / 64.0)
     }
 
+    /// How far `offsets` reach along `right` and up and down.
+    fn extents(offsets: &[Vec3], right: Vec3) -> (f32, f32) {
+        let range = |values: Vec<f32>| {
+            let high = values.iter().copied().fold(f32::MIN, f32::max);
+            let low = values.iter().copied().fold(f32::MAX, f32::min);
+            high - low
+        };
+        (
+            range(offsets.iter().map(|o| o.dot(right)).collect()),
+            range(offsets.iter().map(|o| o.y).collect()),
+        )
+    }
+
     #[test]
     fn new_accepts_exactly_the_grid() {
         for percent in -10..=110 {
@@ -376,13 +389,7 @@ mod tests {
             })
             .collect();
 
-        let range = |values: Vec<f32>| {
-            let high = values.iter().copied().fold(f32::MIN, f32::max);
-            let low = values.iter().copied().fold(f32::MAX, f32::min);
-            high - low
-        };
-        let sideways = range(offsets.iter().map(|o| o.dot(right)).collect());
-        let vertical = range(offsets.iter().map(|o| o.y).collect());
+        let (sideways, vertical) = extents(&offsets, right);
 
         assert!(vertical > 0.0, "the eye must move up and down");
         assert!(sideways > vertical, "{sideways} wide, {vertical} tall");
@@ -594,13 +601,7 @@ mod tests {
             })
             .collect();
 
-        let range = |values: Vec<f32>| {
-            let high = values.iter().copied().fold(f32::MIN, f32::max);
-            let low = values.iter().copied().fold(f32::MAX, f32::min);
-            high - low
-        };
-        let sideways = range(offsets.iter().map(|o| o.dot(right)).collect());
-        let vertical = range(offsets.iter().map(|o| o.y).collect());
+        let (sideways, vertical) = extents(&offsets, right);
 
         assert!((sideways - 2.0 * SWAY).abs() < 1e-4, "{sideways}");
         assert!((vertical - 2.0 * RISE).abs() < 1e-4, "{vertical}");
