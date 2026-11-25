@@ -391,8 +391,8 @@ impl PhysicsWorld {
     /// `record` exactly, and its first move sees every collider already in the world. Counts
     /// no tick and moves no dynamic body.
     ///
-    /// Set the world's geometry first; a mesh set after the restore enters at the next step,
-    /// as it does today. Hit volumes are not in the record: set them again after the restore.
+    /// Set the world's geometry first; a mesh set after the restore enters at the next step.
+    /// Hit volumes are not in the record: set them again after the restore.
     ///
     /// # Panics
     /// On an impossible hull ([`CharacterBody::validate`]), as `add_character` does.
