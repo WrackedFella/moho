@@ -60,6 +60,8 @@ pub struct WorldMeshes {
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Placements that cast no shadow, kept apart so the ordinary draw lists are unchanged.
     unshadowed: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Placements that cast a shadow and are not drawn in view.
+    shadow_only: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Skinned placements in call order.
     skinned: Vec<SkinnedPlacement>,
     /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
@@ -172,7 +174,16 @@ impl WorldMeshes {
     /// Unshadowed placements of live ids as `(backend handle, instance)`, in id order and
     /// call order.
     pub fn unshadowed_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        self.unshadowed.iter().flat_map(move |(id, placements)| {
+        self.placed_draws(&self.unshadowed)
+    }
+
+    /// The placements in `map` of live ids as `(backend handle, instance)`, in id order and
+    /// call order.
+    fn placed_draws<'a>(
+        &'a self,
+        map: &'a BTreeMap<WorldMeshId, Vec<Placement>>,
+    ) -> impl Iterator<Item = (u32, InstanceGpu)> + 'a {
+        map.iter().flat_map(move |(id, placements)| {
             let handle = self.live.get(id).map(|live| live.handle);
             handle.into_iter().flat_map(move |handle| {
                 placements.iter().map(move |placement| {
@@ -186,19 +197,24 @@ impl WorldMeshes {
     /// Append a placement of the mesh under `id` for this frame that casts a shadow and is
     /// not drawn in view, listed by [`shadow_only_draws`](Self::shadow_only_draws) only.
     pub fn place_shadow_only(&mut self, id: WorldMeshId, transform: glam::Affine3A) {
-        let _ = (id, transform);
+        self.shadow_only.entry(id).or_default().push(Placement {
+            transform,
+            material: 0,
+            texture: None,
+        });
     }
 
     /// Shadow-only placements of live ids as `(backend handle, instance)`, in id order and
     /// call order.
     pub fn shadow_only_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        std::iter::empty()
+        self.placed_draws(&self.shadow_only)
     }
 
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
         self.unshadowed.clear();
+        self.shadow_only.clear();
         self.skinned.clear();
     }
 

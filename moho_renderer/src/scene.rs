@@ -107,6 +107,13 @@ impl Scene {
                 _ => unshadowed_draws.push((mesh, vec![instance])),
             }
         }
+        let mut shadow_only_draws: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
+        for (mesh, instance) in self.world_meshes.shadow_only_draws() {
+            match shadow_only_draws.last_mut() {
+                Some((last, instances)) if *last == mesh => instances.push(instance),
+                _ => shadow_only_draws.push((mesh, vec![instance])),
+            }
+        }
         // Cleared before begin_frame so a skipped frame consumes its placements too.
         self.world_meshes.clear_placements();
 
@@ -126,6 +133,10 @@ impl Scene {
 
         for (mesh, instances) in &unshadowed_draws {
             renderer.enqueue_unshadowed_draw(*mesh, instances);
+        }
+
+        for (mesh, instances) in &shadow_only_draws {
+            renderer.enqueue_shadow_only_draw(*mesh, instances);
         }
 
         // Render transparent instances (back-to-front sorted)

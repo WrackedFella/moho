@@ -283,6 +283,9 @@ impl RendererBackend for Renderer<'_> {
     fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
         self.enqueue_unshadowed_draw(mesh, instances);
     }
+    fn enqueue_shadow_only_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_shadow_only_draw(mesh, instances);
+    }
     fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
         self.register_skin(mesh, joints, weights);
     }

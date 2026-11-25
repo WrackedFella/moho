@@ -62,21 +62,25 @@ impl VertexSource {
     }
 }
 
-/// Which passes a draw is in.
+/// Which passes a draw is in. An enum rather than two flags, so "in no pass" cannot be
+/// expressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Passes {
+    /// Drawn in view and casts a shadow.
     Both,
+    /// Drawn in view, casts no shadow.
     MainOnly,
+    /// Casts a shadow, not drawn in view.
     ShadowOnly,
 }
 
 impl Passes {
     pub(crate) fn in_main_pass(self) -> bool {
-        todo!("Passes::in_main_pass")
+        matches!(self, Self::Both | Self::MainOnly)
     }
 
     pub(crate) fn in_shadow_pass(self) -> bool {
-        todo!("Passes::in_shadow_pass")
+        matches!(self, Self::Both | Self::ShadowOnly)
     }
 }
 
@@ -87,7 +91,7 @@ pub struct DrawKey {
     pub(crate) mesh: u32,
     pub(crate) texture: u32,
     pub(crate) source: VertexSource,
-    pub(crate) casts_shadow: bool,
+    pub(crate) passes: Passes,
 }
 
 impl DrawKey {
@@ -97,7 +101,7 @@ impl DrawKey {
             mesh,
             texture,
             source: VertexSource::Arena { first_vertex },
-            casts_shadow: true,
+            passes: Passes::Both,
         }
     }
 
