@@ -112,7 +112,7 @@ compare() {
 self_test() {
     local fixtures failed=0 case_dir name actual
     fixtures="$(dirname "${BASH_SOURCE[0]}")/fixtures/replay-hashes"
-    for name in agree disagree missing; do
+    for name in agree disagree missing truncated none; do
         case_dir=$fixtures/$name
         if ! actual=$(compare "$case_dir"); then
             echo "FAIL $name: compare exited non-zero" >&2
@@ -124,6 +124,16 @@ self_test() {
             echo "ok $name"
         fi
     done
+    case_dir=$fixtures/agree
+    if ! actual=$(compare "$case_dir" ubuntu-latest windows-latest); then
+        echo "FAIL platform-list: compare exited non-zero" >&2
+        failed=1
+    elif ! diff <(printf '%s\n' "$actual") "$case_dir/expected-ubuntu-windows.md"; then
+        echo "FAIL platform-list: output differs from expected-ubuntu-windows.md" >&2
+        failed=1
+    else
+        echo "ok platform-list"
+    fi
     if "${BASH_SOURCE[0]}" > /dev/null 2>&1; then
         echo "FAIL usage: no arguments exited 0" >&2
         failed=1
