@@ -172,6 +172,48 @@ mod tests {
     }
 
     #[test]
+    fn spawn_cells_take_the_higher_cell_of_a_column_when_around_is_nearer_to_it() {
+        let mut grid = ground((-2, -2), (2, 2));
+        // Column (1, 0) has standable cells at y 1 and y 5.
+        grid.mutator()
+            .fill_region(cell(1, 4, 0), cell(1, 4, 0), STONE);
+
+        let cells = spawn_cells(&grid, cell(0, 5, 0), 5);
+
+        let platform_column: Vec<BlockPos> =
+            cells.into_iter().filter(|c| (c.x, c.z) == (1, 0)).collect();
+        assert_eq!(platform_column, [cell(1, 5, 0)]);
+    }
+
+    #[test]
+    fn get_mut_changes_the_pawn_get_returns_and_no_other() {
+        let mut crew = Crew::default();
+        let first = crew.spawn(Pawn::default());
+        let second = crew.spawn(Pawn::default());
+        let untouched = crew.get(second).expect("the second pawn").selected_slot;
+
+        crew.get_mut(first).expect("the first pawn").select_slot(2);
+
+        assert_eq!(crew.get(first).expect("the first pawn").selected_slot, 2);
+        assert_eq!(
+            crew.get(second).expect("the second pawn").selected_slot,
+            untouched
+        );
+        assert_ne!(untouched, 2, "setup: the slot change must be visible");
+        assert!(crew.get_mut(PawnId(9)).is_none(), "no pawn beyond the crew");
+    }
+
+    #[test]
+    fn a_crew_is_empty_until_a_pawn_spawns() {
+        let mut crew = Crew::default();
+        assert!(crew.is_empty());
+
+        crew.spawn(Pawn::default());
+
+        assert!(!crew.is_empty());
+    }
+
+    #[test]
     fn spawn_cells_start_at_the_nearest_standable_column_when_around_is_not_ground() {
         let mut grid = ground((-6, -6), (6, 6));
         grid.mutator().remove(cell(0, 0, 0));

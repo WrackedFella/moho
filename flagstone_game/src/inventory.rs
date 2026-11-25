@@ -64,6 +64,18 @@ mod tests {
     }
 
     #[test]
+    fn sorted_lists_every_resource_in_ascending_id_order() {
+        let mut inventory = Inventory::default();
+        inventory.add(7, 3);
+        inventory.add(2, 5);
+        inventory.add(7, 1);
+        inventory.add(4, 9);
+
+        assert_eq!(inventory.sorted(), [(2, 5), (4, 9), (7, 4)]);
+        assert!(Inventory::default().sorted().is_empty());
+    }
+
+    #[test]
     fn count_when_resource_never_added_returns_zero() {
         let inventory = Inventory::default();
 
