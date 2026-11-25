@@ -144,6 +144,34 @@ fn finished_action_is_dropped_on_the_next_advance() {
 }
 
 #[test]
+fn play_action_replaces_a_running_action() {
+    let (_dir, model) = load();
+    let duration = model.clips()[model.clip("reload").expect("reload exists")].duration();
+    let mut animator = walker(&model);
+    let mut states = Vec::new();
+
+    for tick in 0..=286 {
+        animator.advance(&model, TICK);
+        if tick == START_TICK || tick == 130 {
+            animator
+                .play_action(&model, "reload", ticks(RELOAD_TICKS))
+                .expect("reload exists");
+        }
+        states.push(animator.clone());
+    }
+
+    assert_eq!(states[130].action().expect("restarted").time(), 0.0);
+    for tick in 131..286 {
+        let action = states[tick].action().expect("still playing");
+        assert!(!action.is_finished(&model), "tick {tick}");
+        assert!(action.time() < duration, "tick {tick}");
+    }
+    let end = states[286].action().expect("held on its last tick");
+    assert_eq!(end.time(), duration);
+    assert!(end.is_finished(&model));
+}
+
+#[test]
 fn looping_action_never_ends_until_cancelled() {
     let (_dir, model) = load();
 

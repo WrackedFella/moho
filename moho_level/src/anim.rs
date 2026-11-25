@@ -929,6 +929,37 @@ mod tests {
             player.advance(&model, 4.0);
             assert!(!player.is_finished(&model));
         }
+
+        let mut backwards = ClipPlayer::new(&model, "ramp", Playback::Loop).expect("clip exists");
+        backwards.set_speed(-1.0);
+        assert_eq!(backwards.time(), 0.0);
+        assert!(!backwards.is_finished(&model));
+    }
+
+    #[test]
+    fn a_once_player_at_speed_zero_and_time_zero_is_not_finished() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", Playback::Once).expect("clip exists");
+
+        player.set_speed(0.0);
+
+        assert_eq!(player.time(), 0.0);
+        assert!(!player.is_finished(&model));
+    }
+
+    #[test]
+    fn ticks_playback_on_a_zero_length_clip_still_finishes_on_the_nth_advance() {
+        let model = model_with(vec![clip("still", Vec::new())]);
+        let mut player = ClipPlayer::new(&model, "still", ticks(3)).expect("clip exists");
+
+        for _ in 0..2 {
+            player.advance(&model, 0.0);
+            assert!(!player.is_finished(&model));
+        }
+        player.advance(&model, 0.0);
+
+        assert!(player.is_finished(&model));
+        assert_eq!(player.time(), 0.0);
     }
 
     proptest! {
