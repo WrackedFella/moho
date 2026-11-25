@@ -9,6 +9,10 @@ use rapier3d::prelude::{
 /// invisible to characters, which filter it out.
 pub(super) const LOOSE: Group = Group::GROUP_32;
 
+/// Collision filter of a loose collider: it carries [`LOOSE`] and meets every collider.
+const LOOSE_GROUPS: InteractionGroups =
+    InteractionGroups::new(LOOSE, Group::ALL, InteractionTestMode::And);
+
 /// Steepest ground, radians from level, that a new world brakes loose objects on: 5°.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
 
@@ -227,11 +231,7 @@ impl PhysicsWorld {
             .mass(spawn.mass)
             .friction(spawn.friction)
             .restitution(spawn.restitution)
-            .collision_groups(InteractionGroups::new(
-                LOOSE,
-                Group::ALL,
-                InteractionTestMode::And,
-            ))
+            .collision_groups(LOOSE_GROUPS)
             .build();
         self.collider_set
             .insert_with_parent(collider, handle, &mut self.rigid_body_set);
@@ -317,8 +317,9 @@ impl PhysicsWorld {
         let cos_slope = self.rest_slope.cos();
 
         for loose in self.loose.values() {
-            let (Roll::About { radius } | Roll::Ball { radius }) = loose.roll else {
-                continue;
+            let radius = match loose.roll {
+                Roll::None => continue,
+                Roll::About { radius } | Roll::Ball { radius } => radius,
             };
             let body = &mut self.rigid_body_set[loose.body];
             if body.is_sleeping()
@@ -326,32 +327,30 @@ impl PhysicsWorld {
             {
                 continue;
             }
-            if matches!(loose.roll, Roll::Ball { .. }) {
+            let (spin, velocity) = (body.angvel(), body.linvel());
+            let (spin, velocity) = if let Roll::Ball { .. } = loose.roll {
                 // A ball rolls about any axis and cannot tip, so all its spin and all its
                 // travel across up is braked.
-                body.set_angvel(shrink(body.angvel(), cut / radius), false);
-                let velocity = body.linvel();
                 let vertical = up * velocity.dot(up);
-                body.set_linvel(vertical + shrink(velocity - vertical, cut), false);
-                continue;
-            }
-            // Only the rolling motion is braked: spin about the shape's axis and travel across
-            // it. Tipping happens in the plane of the axis and up, so it is left alone and a
-            // shape tipping over an edge cannot be frozen part-way.
-            let axis = *body.rotation() * Vec3::Y;
-            let spin = body.angvel();
-            let rolling_spin = axis * spin.dot(axis);
-            body.set_angvel(
-                spin - rolling_spin + shrink(rolling_spin, cut / radius),
-                false,
-            );
-            let across_axis = axis.cross(up).normalize_or_zero();
-            let velocity = body.linvel();
-            let rolling_velocity = across_axis * velocity.dot(across_axis);
-            body.set_linvel(
-                velocity - rolling_velocity + shrink(rolling_velocity, cut),
-                false,
-            );
+                (
+                    shrink(spin, cut / radius),
+                    vertical + shrink(velocity - vertical, cut),
+                )
+            } else {
+                // Only the rolling motion is braked: spin about the shape's axis and travel
+                // across it. Tipping happens in the plane of the axis and up, so it is left
+                // alone and a shape tipping over an edge cannot be frozen part-way.
+                let axis = *body.rotation() * Vec3::Y;
+                let rolling_spin = axis * spin.dot(axis);
+                let across_axis = axis.cross(up).normalize_or_zero();
+                let rolling_velocity = across_axis * velocity.dot(across_axis);
+                (
+                    spin - rolling_spin + shrink(rolling_spin, cut / radius),
+                    velocity - rolling_velocity + shrink(rolling_velocity, cut),
+                )
+            };
+            body.set_angvel(spin, false);
+            body.set_linvel(velocity, false);
         }
     }
 }
