@@ -206,12 +206,7 @@ impl<K: Copy> Assembly<K> {
         let destination = self.socket_transform(models, to, pose)?;
         let offset = destination.inverse() * held;
 
-        let (socket, parents) = from.split_last().expect("`from` is not empty");
-        let part = self
-            .assembly_at_mut(models, parents)
-            .and_then(|parent| parent.detach(models, socket))
-            .expect("`from` was resolved above")
-            .expect("`from` holds a part, checked above");
+        let part = self.take_at(models, from);
         let (socket, parents) = to.split_last().expect("`to` is not empty");
         Ok(self
             .assembly_at_mut(models, parents)
@@ -257,18 +252,12 @@ impl<K: Copy> Assembly<K> {
             dt.is_finite() && dt > 0.0,
             "dt must be positive and finite, got {dt}"
         );
-        let at_now = now.root * self.chain(models, path, Some(now.pose))?;
-        let at_before = before.root * self.chain(models, path, Some(before.pose))?;
+        let at_now = self.part_transform(models, path, now.root, now.pose)?;
+        let at_before = self.part_transform(models, path, before.root, before.pose)?;
         let (linear_velocity, angular_velocity) = velocities(at_before, at_now, dt);
 
-        let (socket, parents) = path.split_last().expect("`path` is not empty");
-        let part = self
-            .assembly_at_mut(models, parents)
-            .and_then(|parent| parent.detach(models, socket))
-            .expect("`path` was resolved above")
-            .expect("`path` holds a part, checked above");
         Ok(Released {
-            part,
+            part: self.take_at(models, path),
             transform: Affine3A::from_rotation_translation(
                 rotation_of(at_now),
                 Vec3::from(at_now.translation),
@@ -276,6 +265,15 @@ impl<K: Copy> Assembly<K> {
             linear_velocity,
             angular_velocity,
         })
+    }
+
+    /// Detach the part at `path`, which the caller has already resolved to a part.
+    fn take_at<'m>(&mut self, models: &impl Fn(K) -> &'m Model, path: &[&str]) -> Assembly<K> {
+        let (socket, parents) = path.split_last().expect("`path` is not empty");
+        self.assembly_at_mut(models, parents)
+            .and_then(|parent| parent.detach(models, socket))
+            .expect("`path` was resolved by the caller")
+            .expect("`path` holds a part, checked by the caller")
     }
 
     /// The part at `path` as a transform from this copy's root, `pose` (when given) posing
