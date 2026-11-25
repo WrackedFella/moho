@@ -1,3 +1,4 @@
+use super::query::encode_loose;
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
@@ -215,7 +216,8 @@ impl PhysicsWorld {
     /// it stops.
     ///
     /// Characters ignore loose objects: a loose object neither blocks a character nor is pushed
-    /// by one. Rays skip loose objects because their colliders carry no tag.
+    /// by one. Rays skip loose objects because their colliders carry no tag; a
+    /// [look](PhysicsWorld::pick_loose) finds them, unless a tagged surface is nearer.
     ///
     /// # Panics
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
@@ -232,6 +234,8 @@ impl PhysicsWorld {
             .angular_damping(spawn.angular_damping)
             .build();
         let handle = self.rigid_body_set.insert(body);
+        let id = LooseId(self.next_loose);
+        self.next_loose += 1;
         let collider = spawn
             .shape
             .collider()
@@ -239,12 +243,11 @@ impl PhysicsWorld {
             .friction(spawn.friction)
             .restitution(spawn.restitution)
             .collision_groups(LOOSE_GROUPS)
+            .user_data(encode_loose(id))
             .build();
         self.collider_set
             .insert_with_parent(collider, handle, &mut self.rigid_body_set);
 
-        let id = LooseId(self.next_loose);
-        self.next_loose += 1;
         self.loose.insert(
             id,
             Loose {
@@ -273,15 +276,7 @@ impl PhysicsWorld {
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
     pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
         let handle = self.loose.remove(&id).ok_or(UnknownLoose)?.body;
-        self.rigid_body_set.remove(
-            handle,
-            &mut self.island_manager,
-            &mut self.collider_set,
-            &mut self.impulse_joint_set,
-            &mut self.multibody_joint_set,
-            &mut self.soft_body_set,
-            true,
-        );
+        self.remove_body(handle);
         Ok(())
     }
 
@@ -399,7 +394,7 @@ fn shrink(v: Vec3, cut: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh, x_wall_mesh};
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, x_wall_mesh, TEST_TAG};
     use crate::world::{HitTag, RayQuery};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;

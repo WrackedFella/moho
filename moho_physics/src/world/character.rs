@@ -288,15 +288,7 @@ impl PhysicsWorld {
     /// [`UnknownCharacter`] if `handle` was already removed.
     pub fn remove_character(&mut self, handle: CharacterHandle) -> Result<(), UnknownCharacter> {
         self.characters.remove(&handle).ok_or(UnknownCharacter)?;
-        self.rigid_body_set.remove(
-            handle.0,
-            &mut self.island_manager,
-            &mut self.collider_set,
-            &mut self.impulse_joint_set,
-            &mut self.multibody_joint_set,
-            &mut self.soft_body_set,
-            true,
-        );
+        self.remove_body(handle.0);
         Ok(())
     }
 

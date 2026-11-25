@@ -24,8 +24,18 @@ pub struct RayHit {
     pub tag: HitTag,
 }
 
+/// Layout of a collider's `user_data`: bits 0..=31 hold a tag, bit 32 ([`TAGGED_BIT`]) marks a
+/// tagged collider, bit 33 ([`LOOSE_BIT`]) marks a loose object, bits 64..=127 hold the loose
+/// id. A collider is never both tagged and loose.
+///
 /// Set on every tagged collider's `user_data`, so tag 0 differs from an untagged collider (0).
 const TAGGED_BIT: u128 = 1 << 32;
+
+/// Set on every loose collider's `user_data`, with the id in bits 64..=127; see [`TAGGED_BIT`].
+const LOOSE_BIT: u128 = 1 << 33;
+
+/// How far the loose id sits above the flag bits in `user_data`.
+const LOOSE_ID_SHIFT: u32 = 64;
 
 pub(super) fn encode_tag(tag: HitTag) -> u128 {
     TAGGED_BIT + u128::from(tag.0)
@@ -40,36 +50,43 @@ fn decode_tag(user_data: u128) -> Option<HitTag> {
         .map(HitTag)
 }
 
-/// Stub: the real encoding sets a loose bit and puts the id in the upper 64 bits.
-pub(super) fn encode_loose(_id: LooseId) -> u128 {
-    0
+pub(super) fn encode_loose(id: LooseId) -> u128 {
+    LOOSE_BIT | (u128::from(id.get()) << LOOSE_ID_SHIFT)
 }
 
-/// Stub: the real decoding is the inverse of [`encode_loose`].
-fn decode_loose(_user_data: u128) -> Option<LooseId> {
-    None
+fn decode_loose(user_data: u128) -> Option<LooseId> {
+    if user_data & LOOSE_BIT == 0 {
+        return None;
+    }
+    u64::try_from(user_data >> LOOSE_ID_SHIFT)
+        .ok()
+        .map(LooseId::from_raw)
 }
 
 impl PhysicsWorld {
     /// The loose object `query` reaches first, ahead of any tagged surface; `None` when a tagged
     /// surface is nearer or nothing is in range. Reads the world as the last `step` left it.
-    pub fn pick_loose(&self, _query: &RayQuery) -> Option<LooseId> {
-        None
+    ///
+    /// Characters' capsules and other untagged colliders never stop the look; their hit volumes
+    /// do, unless `query.ignore` names them. Invalid queries are as for [`PhysicsWorld::cast_ray`].
+    pub fn pick_loose(&self, query: &RayQuery) -> Option<LooseId> {
+        let (collider, _, _) = self.first_hit(query, |user_data| {
+            decode_tag(user_data).is_some() || decode_loose(user_data).is_some()
+        })?;
+        decode_loose(self.collider_set.get(collider)?.user_data)
     }
 
-    /// The nearest tagged surface along `query`.
-    ///
-    /// Reads the world as the last `step` left it, so a tick moves characters, steps, then
-    /// casts rays. Untagged colliders (movement capsules, props) never stop a ray. The
-    /// direction is normalised, so its length does not matter; the normal faces back against
-    /// the ray. A zero or non-finite direction, or a `max_distance` that is not positive, hits
-    /// nothing.
-    pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
+    /// The first collider whose `user_data` satisfies `accepts` along `query`, with the distance
+    /// to it and the surface normal there.
+    fn first_hit(
+        &self,
+        query: &RayQuery,
+        accepts: impl Fn(u128) -> bool,
+    ) -> Option<(ColliderHandle, f32, Vec3)> {
         let direction = query.direction.try_normalize()?;
         let ray = Ray::new(query.origin, direction);
-        let tagged =
-            |_: ColliderHandle, collider: &Collider| decode_tag(collider.user_data).is_some();
-        let mut filter = QueryFilter::default().predicate(&tagged);
+        let accepted = |_: ColliderHandle, collider: &Collider| accepts(collider.user_data);
+        let mut filter = QueryFilter::default().predicate(&accepted);
         if let Some(ignore) = query.ignore {
             filter = filter.exclude_rigid_body(ignore.0);
         }
@@ -81,11 +98,25 @@ impl PhysicsWorld {
         );
 
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, query.max_distance, true)?;
+        Some((collider, hit.time_of_impact, hit.normal))
+    }
+
+    /// The nearest tagged surface along `query`.
+    ///
+    /// Reads the world as the last `step` left it, so a tick moves characters, steps, then
+    /// casts rays. Untagged colliders (movement capsules, props) never stop a ray. The
+    /// direction is normalised, so its length does not matter; the normal faces back against
+    /// the ray. A zero or non-finite direction, or a `max_distance` that is not positive, hits
+    /// nothing.
+    pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
+        let (collider, distance, normal) =
+            self.first_hit(query, |user_data| decode_tag(user_data).is_some())?;
         let tag = self.collider_tag(collider)?;
+        let direction = query.direction.try_normalize()?;
         Some(RayHit {
-            point: query.origin + direction * hit.time_of_impact,
-            normal: hit.normal,
-            distance: hit.time_of_impact,
+            point: query.origin + direction * distance,
+            normal,
+            distance,
             tag,
         })
     }
