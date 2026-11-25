@@ -183,13 +183,24 @@ struct App {
 
 impl App {
     /// The possessed pawn. Only for first-person paths, where a pawn is always possessed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when nothing is possessed (the strategy view). Code that can run there reads
+    /// `self.possessed.and_then(|id| self.crew.get(id))` instead; this accessor is for tests.
+    #[cfg(test)]
     fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
         self.crew
             .get(self.possessed.expect("a pawn is possessed"))
             .expect("the possessed pawn is in the crew")
     }
 
-    /// See [`App::possessed_pawn`].
+    /// The possessed pawn, mutably.
+    ///
+    /// # Panics
+    ///
+    /// Panics when nothing is possessed, as `possessed_pawn` does.
+    #[cfg(test)]
     fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
         self.crew
             .get_mut(self.possessed.expect("a pawn is possessed"))
