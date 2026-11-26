@@ -463,3 +463,81 @@ fn switching_the_base_under_an_action_keeps_the_action() {
         "legs follow the new base",
     );
 }
+
+/// A walker advanced `ticks` ticks, with `reload` just started over `region`.
+fn walker_reloading(model: &Model, region: Region, ticks: usize) -> Animator {
+    let mut animator = walker(model);
+    for _ in 0..ticks {
+        animator.advance(model, TICK);
+    }
+    animator
+        .play_action(model, "reload", Playback::Loop, region)
+        .expect("reload exists");
+    animator
+}
+
+#[test]
+fn playing_a_whole_action_replaces_an_upper_body_action() {
+    let (_dir, model) = load_with_idle();
+    let reload = model.clip("reload").expect("reload exists");
+    let mut animator = walker_reloading(&model, upper_body(), 30);
+    let layered = pose_bits(&animator.pose(&model));
+
+    animator
+        .play_action(&model, "reload", Playback::Loop, Region::Whole)
+        .expect("reload exists");
+    animator.advance(&model, TICK);
+
+    let time = animator.action().expect("playing").time();
+    assert_eq!(
+        pose_bits(&animator.pose(&model)),
+        pose_bits(&model.pose(reload, time))
+    );
+    assert_ne!(pose_bits(&animator.pose(&model)), layered);
+    let upper_only = model.layered_pose(
+        (animator.base().clip(), animator.base().time()),
+        (reload, time),
+        SPINE_01,
+    );
+    assert_ne!(pose_bits(&animator.pose(&model)), pose_bits(&upper_only));
+}
+
+#[test]
+fn playing_an_upper_body_action_replaces_a_whole_action() {
+    let (_dir, model) = load_with_idle();
+    let reload = model.clip("reload").expect("reload exists");
+    let mut animator = walker_reloading(&model, Region::Whole, 30);
+
+    animator
+        .play_action(&model, "reload", Playback::Loop, upper_body())
+        .expect("reload exists");
+    animator.advance(&model, TICK);
+
+    let time = animator.action().expect("playing").time();
+    let base = (animator.base().clip(), animator.base().time());
+    let expected = model.layered_pose(base, (reload, time), SPINE_01);
+    assert_eq!(pose_bits(&animator.pose(&model)), pose_bits(&expected));
+    assert_ne!(
+        pose_bits(&animator.pose(&model)),
+        pose_bits(&model.pose(reload, time))
+    );
+}
+
+#[test]
+fn cancelling_an_upper_body_action_returns_the_base_only_pose() {
+    let (_dir, model) = load_with_idle();
+    let mut animator = walker_reloading(&model, upper_body(), 30);
+    let walking = simulate_over(&model, "walk", None, 0, None, 29).remove(29);
+    assert_ne!(
+        pose_bits(&animator.pose(&model)),
+        pose_bits(&walking.pose(&model))
+    );
+
+    animator.cancel_action();
+
+    assert!(animator.action().is_none());
+    assert_eq!(
+        pose_bits(&animator.pose(&model)),
+        pose_bits(&walking.pose(&model))
+    );
+}
