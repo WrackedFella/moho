@@ -44,6 +44,24 @@ mod tests {
         assert_eq!(result.to_bits(), libm::tanf(angle).to_bits());
     }
 
+    #[test]
+    fn tan_keeps_the_sign_of_negative_zero() {
+        let result = tan(-0.0_f32);
+
+        assert_eq!(result.to_bits(), libm::tanf(-0.0_f32).to_bits());
+        assert_eq!(result.to_bits(), (-0.0_f32).to_bits());
+    }
+
+    #[test]
+    fn tan_at_a_right_angle_is_libm_and_huge_but_finite() {
+        let angle = std::f32::consts::FRAC_PI_2;
+
+        let result = tan(angle);
+
+        assert_eq!(result.to_bits(), libm::tanf(angle).to_bits());
+        assert!(result.is_finite() && result.abs() > 1e6, "got {result}");
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(2_000))]
 
