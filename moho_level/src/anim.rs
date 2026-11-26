@@ -1094,6 +1094,58 @@ mod tests {
     }
 
     #[test]
+    fn play_action_from_a_node_past_the_last_is_rejected_naming_the_node_and_count() {
+        let model = model_with(vec![ramp(), moving("act", 9.0)]);
+        let count = model.nodes().len();
+
+        for node in [count, count + 5] {
+            let mut animator = animator_on(&model);
+
+            let result = animator.play_action(&model, "act", Playback::Once, Region::From(node));
+
+            let error = result.expect_err("region starts past the last node");
+            assert_eq!(error, ClipError::NodeOutOfRange { node, count });
+            let text = error.to_string();
+            assert!(text.contains(&node.to_string()), "{text}");
+            assert!(text.contains(&count.to_string()), "{text}");
+            assert!(animator.action().is_none());
+        }
+    }
+
+    #[test]
+    fn a_rejected_region_leaves_the_running_action_and_the_animator_unchanged() {
+        let model = model_with(vec![ramp(), moving("act", 9.0), moving("other", 5.0)]);
+        let count = model.nodes().len();
+        let mut animator = animator_on(&model);
+        animator
+            .play_action(&model, "act", ticks(10), Region::Whole)
+            .expect("clip exists");
+        animator.advance(&model, 0.5);
+        let before = animator.clone();
+
+        let result = animator.play_action(&model, "other", Playback::Once, Region::From(count));
+
+        assert_eq!(
+            result,
+            Err(ClipError::NodeOutOfRange { node: count, count })
+        );
+        assert_eq!(animator, before);
+        assert_eq!(animator.action(), before.action());
+    }
+
+    #[test]
+    fn play_action_from_the_last_node_is_accepted() {
+        let model = model_with(vec![ramp(), moving("act", 9.0)]);
+        let last = model.nodes().len() - 1;
+        let mut animator = animator_on(&model);
+
+        let result = animator.play_action(&model, "act", Playback::Once, Region::From(last));
+
+        assert_eq!(result, Ok(()));
+        assert!(animator.action().is_some());
+    }
+
+    #[test]
     fn a_looping_player_is_never_finished() {
         let model = model_with(vec![ramp()]);
         let mut player = ClipPlayer::new(&model, "ramp", Playback::Loop).expect("clip exists");
