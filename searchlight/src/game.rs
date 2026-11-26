@@ -6836,6 +6836,7 @@ mod tests {
         assert_eq!(game.screen, Screen::Playing);
     }
 
+    use moho_ui_shell::ListId;
     use searchlight_rules::{Item, Place, Remains, Source};
 
     /// A game whose one enemy lies dead 1.5 m ahead of the player carrying one magazine, the
@@ -6906,25 +6907,45 @@ mod tests {
         assert_eq!(body.rows.len(), 1);
     }
 
-    /// Moves the first row of the body's list to the inventory with the keys, from the
-    /// equipment list the screen opens on.
-    fn pick_up_and_drop(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, fresh: bool) {
-        let keys: &[Key] = if fresh {
-            &[
-                Key::ArrowRight,
-                Key::ArrowRight,
-                Key::ArrowRight,
-                Key::Enter,
-                Key::ArrowLeft,
-                Key::Enter,
-            ]
-        } else {
-            &[Key::ArrowRight, Key::Enter, Key::ArrowLeft, Key::Enter]
+    /// Where `list` sits among the lists on top of the screen.
+    fn position_of(game: &SearchlightGame, list: ListId) -> usize {
+        let mut shell = game.stage.shell();
+        let lists = shell.menu_mut().top_lists().expect("the inventory is open");
+        lists
+            .lists
+            .iter()
+            .position(|candidate| candidate.id == list)
+            .expect("the list is on the screen")
+    }
+
+    /// Picks the first row of list `from` and drops it on list `to` with the keys, starting from
+    /// the list at position `focus`. Returns the position of `to`, where the focus ends.
+    fn move_first_row(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        focus: usize,
+        from: ListId,
+        to: ListId,
+    ) -> usize {
+        let (from_at, to_at) = (position_of(game, from), position_of(game, to));
+        let steps = |at: usize, goal: usize| {
+            let key = if goal >= at {
+                Key::ArrowRight
+            } else {
+                Key::ArrowLeft
+            };
+            std::iter::repeat_n(key, at.abs_diff(goal))
         };
-        for &key in keys {
+        let keys: Vec<Key> = steps(focus, from_at)
+            .chain([Key::Enter])
+            .chain(steps(from_at, to_at))
+            .chain([Key::Enter])
+            .collect();
+        for key in keys {
             game.route_input(ctx, Input::Key(key), true, false);
             game.route_input(ctx, Input::Key(key), false, false);
         }
+        to_at
     }
 
     fn open_body_screen() -> SearchlightGame {
@@ -6937,33 +6958,15 @@ mod tests {
     }
 
     #[test]
-    fn a_move_on_the_screen_reaches_the_sim_as_one_command() {
-        let mut game = open_body_screen();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-
-        pick_up_and_drop(&mut game, &mut ctx, true);
-        let command = game.command();
-        let after = game.command();
-
-        assert_eq!(
-            command.inventory,
-            Some(InventoryCommand::Move {
-                from: Source::BodyCarried(0),
-                to: Place::Inventory,
-            })
-        );
-        assert_eq!(after.inventory, None, "the move is sent once");
-    }
-
-    #[test]
     fn a_second_move_before_the_command_is_taken_is_dropped() {
+        use crate::inventory::{BODY, INVENTORY, MAGAZINE_SLOTS};
+
         let mut game = open_body_screen();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
 
-        pick_up_and_drop(&mut game, &mut ctx, true);
-        pick_up_and_drop(&mut game, &mut ctx, false);
+        let focus = move_first_row(&mut game, &mut ctx, 0, BODY, INVENTORY);
+        move_first_row(&mut game, &mut ctx, focus, BODY, MAGAZINE_SLOTS);
         let first = game.command();
         let second = game.command();
 

@@ -180,8 +180,10 @@ mod tests {
     fn sparse_player() -> Loadout {
         let rig = Rig::from_slots(
             ItemId::new("test_rig"),
+            &RigSpec { magazine_slots: 4 },
             vec![None, Some(mag(30, 30)), None, Some(mag(30, 30))],
-        );
+        )
+        .expect("four slots for a four-slot spec");
         Loadout::new(rifle_from(mag(30, 30)), rig)
             .with_backpack(ItemId::new("backpack_small"))
             .with_inventory(vec![bandage(), Item::Other(ItemId::new("rag"))])
@@ -190,10 +192,14 @@ mod tests {
     /// A body wearing a rig with magazines in slots 0 and 2 of 3, a backpack, and two items.
     fn full_body() -> Remains {
         Remains {
-            rig: Some(Rig::from_slots(
-                ItemId::new("body_rig"),
-                vec![Some(mag(30, 30)), None, Some(mag(30, 30))],
-            )),
+            rig: Some(
+                Rig::from_slots(
+                    ItemId::new("body_rig"),
+                    &RigSpec { magazine_slots: 3 },
+                    vec![Some(mag(30, 30)), None, Some(mag(30, 30))],
+                )
+                .expect("three slots for a three-slot spec"),
+            ),
             backpack: Some(ItemId::new("backpack_small")),
             carried: vec![bandage(), Item::Other(ItemId::new("rag"))],
         }

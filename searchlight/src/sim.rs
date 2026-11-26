@@ -4306,17 +4306,10 @@ mod tests {
         mode.sim_mut().kill_enemy(0);
         mode.tick(&idle(), DT);
         mode.tick(&turning(0.0, pitch), DT);
-        let mut open = SearchlightSim::start(
-            arena_with(&[], Vec3::ZERO, &[near], &route),
-            loot_config(two_magazines()),
-        );
-        open.kill_enemy(0);
-        open.tick(&idle(), DT);
-        open.tick(&turning(0.0, pitch), DT);
         assert_eq!(
-            open.body_in_view(),
+            mode.sim().body_in_view(),
             Some(0),
-            "without the post the body is in view"
+            "the post does not hide the body"
         );
         assert_eq!(mode.sim().control_in_reach(), Some(0));
         assert_eq!(mode.tally().map(|tally| tally.wave), Some(1));

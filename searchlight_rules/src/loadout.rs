@@ -406,14 +406,20 @@ mod tests {
 
     fn inventory_item(kind: u8, n: usize) -> Item {
         let item = format!("i{n}");
+        let partial = 1 + u32::try_from(n % 29).unwrap();
         match kind {
-            0 => mag_item(&item),
+            0 => Item::Magazine(mag_of(&item, "rifle", 30, partial)),
             1 => Item::Other(id(&item)),
             2 => Item::Rounds(RoundStack {
                 round: id(&item),
-                count: 5,
+                count: 5 + u32::try_from(n).unwrap(),
             }),
-            3 => Item::Weapon(rifle_with(mag_of(&format!("{item}_in"), "rifle", 30, 30))),
+            3 => Item::Weapon(rifle_with(mag_of(
+                &format!("{item}_in"),
+                "rifle",
+                30,
+                partial,
+            ))),
             _ => Item::Rig(rig_holding(&item, &[Some(&format!("{item}_m"))])),
         }
     }
@@ -566,15 +572,21 @@ mod tests {
             Source::BodyBackpack,
         ];
         for source in sources {
-            let mut loadout = player(&[Some("a"), None], vec![bandage()]);
-            let mut remains = body(None, vec![bandage()]);
-            let (loadout_before, remains_before) = (loadout.clone(), remains.clone());
+            for place in [Place::Inventory, Place::MagazineSlots, Place::Body] {
+                let mut loadout = player(&[Some("a"), None], vec![bandage()]);
+                let mut remains = body(None, vec![bandage()]);
+                let (loadout_before, remains_before) = (loadout.clone(), remains.clone());
 
-            let moved = loadout.move_item(Some(&mut remains), source, Place::Inventory);
+                let moved = loadout.move_item(Some(&mut remains), source, place);
 
-            assert_eq!(moved, Err(MoveRefused::NoSuchItem), "{source:?}");
-            assert_eq!(loadout, loadout_before, "{source:?}");
-            assert_eq!(remains, remains_before, "{source:?}");
+                assert_eq!(
+                    moved,
+                    Err(MoveRefused::NoSuchItem),
+                    "{source:?} to {place:?}"
+                );
+                assert_eq!(loadout, loadout_before, "{source:?} to {place:?}");
+                assert_eq!(remains, remains_before, "{source:?} to {place:?}");
+            }
         }
     }
 
@@ -594,28 +606,6 @@ mod tests {
         assert_eq!(moved, Err(MoveRefused::NoSuchItem));
         assert_eq!(loadout, loadout_before);
         assert_eq!(remains, remains_before);
-    }
-
-    #[test]
-    fn a_source_holding_nothing_is_refused_for_every_place() {
-        let sources = [Source::Inventory(1), Source::BodyCarried(1)];
-        for source in sources {
-            for place in [Place::Inventory, Place::MagazineSlots, Place::Body] {
-                let mut loadout = player(&[Some("a"), None], vec![bandage()]);
-                let mut remains = body(None, vec![bandage()]);
-                let (loadout_before, remains_before) = (loadout.clone(), remains.clone());
-
-                let moved = loadout.move_item(Some(&mut remains), source, place);
-
-                assert_eq!(
-                    moved,
-                    Err(MoveRefused::NoSuchItem),
-                    "{source:?} to {place:?}"
-                );
-                assert_eq!(loadout, loadout_before, "{source:?} to {place:?}");
-                assert_eq!(remains, remains_before, "{source:?} to {place:?}");
-            }
-        }
     }
 
     #[test]
