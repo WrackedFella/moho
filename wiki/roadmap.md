@@ -52,7 +52,7 @@ Engine item numbers are those of the [engine roadmap](engine/roadmap.md).
 | FPS-M2 | Unload a level and load another by name | 2.27 ENG-F14-04 #750, -05 #752 |
 | FPS-M3 | Large level load budget, loading screen, authored boundary; scatter and distant detail levels | 3.4i ENG-F46 #746; ENG-F14-06 #751; 3.4j ENG-F52 #962; 3.4k ENG-F53 #963 |
 | FPS-F9-05 (after FPS-M2) | Ragdoll bodies | 3.4l ENG-F54 #988 (#615) |
-| FPS enemy AI slice 2 | Positional audio; hidden routes and cover | 2.4 ENG-F16; 3.4c ENG-F42 |
+| FPS enemy AI slice 2 | Positional audio; hidden routes and cover | 2.4 ENG-F16; 2.13.1 ENG-F42 |
 | FPS-M3.1 | Beam and dot; first-person view | 3.4d ENG-F40; 3.4b ENG-F39 |
 | FPS-M4 | Screen and sound follow game values; clips blended by speed and direction | 3.4e ENG-F41; 3.4b ENG-F39 |
 | FPS-M5 | Game clock scaling; save and load | ENG-F11-04 and the game clock; 2.5.1 ENG-F25 |
