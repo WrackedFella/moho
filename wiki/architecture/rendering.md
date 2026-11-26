@@ -275,13 +275,19 @@ model, a clip and a time; it never changes the model.
   clamps to `[0, duration]`, `Ticks(n)` ignores `dt` and speed and reaches exactly the duration
   on the n-th `advance` (counted, so it does not drift). `is_finished(model)` is true once a
   `Ticks` or `Once` clip is at its end; `Loop` never finishes.
+- `Model::layered_pose(base, action, from)` takes the nodes at and below `from` from the
+  action clip and time and every other node from the base, then composes parent-first. The
+  layered nodes ride the base's ancestors (the pelvis) and the rest keep the base's pose;
+  `from` as the root equals the action's own pose.
 - `Animator` (`moho_level/src/anim.rs`) is one character's playback: a base `ClipPlayer`
-  (locomotion) and an optional action player (a reload) that poses the whole body while it
-  runs. `play_action` replaces any action and restarts it at 0 (unknown clip: `UnknownClip`,
-  nothing changes); `cancel_action` drops it. The base keeps advancing under an action. Call
-  `advance` once per tick before that tick's commands: an action finished before the call is
-  dropped, so its last pose is read on the tick it is reached and the base returns on the next.
-  `pose` is the action's if one runs, else the base's.
+  (locomotion) and an optional action player (a reload). `play_action` takes a `Region`:
+  `Whole` poses the whole body from the action, `From(node)` plays it on that node's subtree
+  (the upper body) over the base. It replaces any action and restarts it at 0 (unknown clip:
+  `UnknownClip`, nothing changes); `cancel_action` drops it. The base keeps advancing under an
+  action. Call `advance` once per tick before that tick's commands: an action finished before
+  the call is dropped, so its last pose is read on the tick it is reached and the base returns
+  on the next. `pose` is the base's with no action, the action's for `Whole`, else the layered
+  pose.
 - `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
   animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is
