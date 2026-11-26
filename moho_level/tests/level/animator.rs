@@ -313,6 +313,16 @@ fn reload_from_spine_01_over_walk_moves_the_upper_body_and_not_the_legs() {
     }
     let spine_parent = model.nodes()[SPINE_01].parent.expect("spine has a parent");
     assert_eq!(spine_parent, 0);
+    assert_ne!(
+        reload_pose.nodes()[0],
+        walk.nodes()[0],
+        "the action's pelvis differs from the base's"
+    );
+    let spine_local = reload_pose.nodes()[0].inverse() * reload_pose.nodes()[SPINE_01];
+    assert!(
+        pose.nodes()[SPINE_01].abs_diff_eq(walk.nodes()[0] * spine_local, 1e-5),
+        "the upper body rides the base's pelvis"
+    );
     assert_ne!(pose.nodes()[SPINE_01], walk.nodes()[SPINE_01]);
     assert_ne!(pose.nodes()[9], walk.nodes()[9]);
 }
@@ -378,6 +388,7 @@ fn two_runs_of_reload_over_walk_are_bit_equal_at_tick_45() {
     assert_eq!(pose_bits(&a), pose_bits(&b));
     let never = simulate_over(&first, "walk", None, 0, None, 45);
     assert_ne!(pose_bits(&a), pose_bits(&never[45].pose(&first)));
+    assert_nodes_bit_equal(&a, &never[45].pose(&first), &LOWER_BODY, "legs follow walk");
 }
 
 #[test]
@@ -436,6 +447,15 @@ fn switching_the_base_under_an_action_keeps_the_action() {
     assert_eq!(animator.action(), Some(&action_before));
     let expected = model.layered_pose((idle, 0.0), (reload, action_before.time()), SPINE_01);
     assert_eq!(pose_bits(&animator.pose(&model)), pose_bits(&expected));
+    let action_pose = model.pose(reload, action_before.time());
+    let base_pose = model.pose(idle, 0.0);
+    assert_ne!(action_pose.nodes()[0], base_pose.nodes()[0]);
+    let spine_local = action_pose.nodes()[0].inverse() * action_pose.nodes()[SPINE_01];
+    assert!(
+        animator.pose(&model).nodes()[SPINE_01]
+            .abs_diff_eq(base_pose.nodes()[0] * spine_local, 1e-5),
+        "the upper body rides the new base's pelvis"
+    );
     assert_nodes_bit_equal(
         &animator.pose(&model),
         &model.pose(idle, 0.0),

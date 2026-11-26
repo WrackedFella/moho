@@ -82,7 +82,7 @@ pub struct HumanoidSpec {
 }
 
 /// `reload` lasts this many seconds when the spec asks for it; `spine_01` rises and `hand_r`
-/// moves up, and `thigh_l` and `calf_r` move too (an upper-body layer must ignore those),
+/// moves up, and `pelvis`, `thigh_l` and `calf_r` move too (an upper-body layer must ignore those),
 /// linearly from the first key to the last.
 pub const RELOAD_DURATION: f32 = 2.0;
 
@@ -299,6 +299,8 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
         let (thigh_in, thigh_out) = blob.keys(&times, &thigh, "VEC3", 3);
         let calf = [0.0, -0.45, 0.0, 0.2, -0.45, 0.0];
         let (calf_in, calf_out) = blob.keys(&times, &calf, "VEC3", 3);
+        let pelvis = [0.0, 1.0, 0.0, 0.0, 1.3, 0.0];
+        let (pelvis_in, pelvis_out) = blob.keys(&times, &pelvis, "VEC3", 3);
         animations.push(json!({
             "name": "reload",
             "samplers": [
@@ -306,12 +308,14 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
                 { "input": hand_in, "output": hand_out, "interpolation": "LINEAR" },
                 { "input": thigh_in, "output": thigh_out, "interpolation": "LINEAR" },
                 { "input": calf_in, "output": calf_out, "interpolation": "LINEAR" },
+                { "input": pelvis_in, "output": pelvis_out, "interpolation": "LINEAR" },
             ],
             "channels": [
                 { "sampler": 0, "target": { "node": file(1), "path": "translation" } },
                 { "sampler": 1, "target": { "node": file(HAND_R), "path": "translation" } },
                 { "sampler": 2, "target": { "node": file(THIGH_L), "path": "translation" } },
                 { "sampler": 3, "target": { "node": file(CALF_R), "path": "translation" } },
+                { "sampler": 4, "target": { "node": file(PELVIS), "path": "translation" } },
             ],
         }));
     }
