@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
@@ -14,9 +14,9 @@ use moho_input::bindings::{Binding, Input};
 use moho_input::key::Key;
 use moho_physics::{CharacterBody, CharacterState, HitVolume, first_person_view};
 use moho_render_api::{
-    InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, UiFrame, UiFrameSource,
-    UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
-    WorldMeshId,
+    InstanceGpu, Marker, MarkerId, MarkerStyle, MaterialGpu, MaterialKey, RenderMaterial,
+    Renderable, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId,
+    UiTextureSet, UiVertex, WorldMesh, WorldMeshId,
 };
 use moho_renderer::{
     EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle, WorldMeshes,
@@ -210,6 +210,8 @@ struct Segment {
     id: WorldMeshId,
     mesh: WorldMesh,
     flash_left: u32,
+    /// World-axis bounds `(min, max)` of the part's hit volume.
+    bounds: (Vec3, Vec3),
 }
 
 /// The dummies' segments, in the frame the world draws them in.
@@ -223,6 +225,7 @@ fn dummy_segments(body: &CharacterBody, spawns: &[Vec3]) -> Vec<Segment> {
                 id: WorldMeshId(DUMMY_MESH_BASE + segments.len() as u64),
                 mesh: box_mesh(centre + volume.offset, volume.half_extents),
                 flash_left: 0,
+                bounds: volume_bounds(centre, 0.0, &volume),
             });
         }
     }
@@ -232,8 +235,29 @@ fn dummy_segments(body: &CharacterBody, spawns: &[Vec3]) -> Vec<Segment> {
 /// The world-axis bounds `(min, max)` of `volume` on a body standing at `position` turned
 /// `yaw` about the vertical: the volume's oriented box, axis-aligned.
 fn volume_bounds(position: Vec3, yaw: f32, volume: &HitVolume) -> (Vec3, Vec3) {
-    let _ = (position, yaw, volume);
-    todo!("volume_bounds")
+    let facing = Quat::from_rotation_y(yaw);
+    let axes = Mat3::from_quat(facing * volume.rotation);
+    let half = axes.x_axis.abs() * volume.half_extents.x
+        + axes.y_axis.abs() * volume.half_extents.y
+        + axes.z_axis.abs() * volume.half_extents.z;
+    let centre = position + facing * volume.offset;
+    (centre - half, centre + half)
+}
+
+/// Linear RGBA of the outlines of the player's, an enemy's and a dummy's hit volumes.
+const PLAYER_OUTLINE: [f32; 4] = [0.2, 1.0, 0.3, 1.0];
+const ENEMY_OUTLINE: [f32; 4] = [1.0, 0.2, 0.2, 1.0];
+const DUMMY_OUTLINE: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
+
+/// Marker ids of the hit-volume outlines start here; `character` 0 is the player, a target
+/// numbered `t` is character `t + 1`, and each has up to [`OUTLINE_SLOTS`] volumes.
+const OUTLINE_ID_BASE: u64 = 1 << 32;
+const OUTLINE_SLOTS: u64 = 16;
+/// Dummy outlines count up from here, clear of every character's range.
+const DUMMY_OUTLINE_BASE: u64 = OUTLINE_ID_BASE + (1 << 24);
+
+fn outline_id(character: u64, slot: usize) -> MarkerId {
+    MarkerId(OUTLINE_ID_BASE + character * OUTLINE_SLOTS + slot as u64)
 }
 
 /// One enemy as box segments: the six body parts and the gun, which flashes when it fires.
@@ -472,6 +496,8 @@ struct Stage {
     shell: Arc<Mutex<UiShell<ConsoleCommand, MenuAction>>>,
     /// Whether the cursor is captured for mouse look.
     cursor_captured: bool,
+    /// Hit-volume outlines are in the scene.
+    outlines_placed: bool,
     /// Times the cursor was captured, windowed or not, so tests can see it.
     #[cfg(test)]
     cursor_captures: u32,
@@ -585,6 +611,7 @@ impl Stage {
                 console_commands::console(&BTreeMap::new()).0,
             ))),
             cursor_captured: false,
+            outlines_placed: false,
             #[cfg(test)]
             cursor_captures: 0,
         }
@@ -760,7 +787,42 @@ impl Stage {
     /// With `shown`, outlines every hit volume of the player and of every living enemy and
     /// dummy where the sim has them; otherwise removes the outlines.
     fn sync_hit_volumes(&mut self, sim: &SearchlightSim, shown: bool) {
-        let _ = (sim, shown);
+        if !shown {
+            if std::mem::take(&mut self.outlines_placed) {
+                self.scene.markers_mut().clear();
+            }
+            return;
+        }
+        self.outlines_placed = true;
+        let body = sim.character_body();
+        let markers = self.scene.markers_mut();
+        markers.clear();
+        let mut place = |id: MarkerId, bounds: (Vec3, Vec3), color: [f32; 4]| {
+            markers.upsert(
+                id,
+                Marker::new(bounds.0.to_array(), bounds.1.to_array(), color)
+                    .with_style(MarkerStyle::Outline),
+            );
+        };
+        let player = sim.player();
+        for (slot, volume) in sim.player_hit_volumes().iter().enumerate() {
+            let bounds = volume_bounds(player.position, player.yaw, volume);
+            place(outline_id(0, slot), bounds, PLAYER_OUTLINE);
+        }
+        for index in 0..sim.enemy_count() {
+            let Some(state) = sim.enemy_state(index) else {
+                continue;
+            };
+            let target = (self.dummy_count + index) as u64;
+            for (slot, volume) in dummy_hit_volumes_of(body, 0).iter().enumerate() {
+                let bounds = volume_bounds(state.position, state.yaw, volume);
+                place(outline_id(target + 1, slot), bounds, ENEMY_OUTLINE);
+            }
+        }
+        for (index, segment) in self.segments.iter().enumerate() {
+            let id = MarkerId(DUMMY_OUTLINE_BASE + index as u64);
+            place(id, segment.bounds, DUMMY_OUTLINE);
+        }
     }
 
     /// Pushes the death tint and damage bars to the UI.
@@ -1331,7 +1393,15 @@ impl SearchlightGame {
                     self.save_head_bob();
                 }
                 ConsoleCommand::Items => self.open_items(),
-                ConsoleCommand::HitVolumes => {}
+                ConsoleCommand::HitVolumes => {
+                    self.hit_volumes = !self.hit_volumes;
+                    let text = if self.hit_volumes {
+                        "Hit volumes: on"
+                    } else {
+                        "Hit volumes: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
             }
         }
         if self.simple != simple_before

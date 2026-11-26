@@ -28,8 +28,11 @@ pub enum ConsoleCommand {
 }
 
 /// Parses `hitvolumes`; it takes no arguments.
-pub fn parse_hitvolumes(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    Err("not implemented".to_owned())
+pub fn parse_hitvolumes(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::HitVolumes, String::new())),
+        _ => Err("Usage: hitvolumes".to_owned()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,7 +237,7 @@ fn console_with_grade(
         .register(CommandSpec {
             name: "hitvolumes".to_owned(),
             usage: "hitvolumes".to_owned(),
-            help: "toggle hit-volume outlines".to_owned(),
+            help: "show or hide every character's hit volumes".to_owned(),
             parse: parse_hitvolumes,
         })
         .expect("\"hitvolumes\" is not an engine command and is registered once");
