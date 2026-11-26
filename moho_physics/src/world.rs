@@ -192,6 +192,19 @@ impl PhysicsWorld {
         );
     }
 
+    /// Remove a body with its colliders and joints, waking what touched it.
+    pub(super) fn remove_body(&mut self, handle: RigidBodyHandle) {
+        self.rigid_body_set.remove(
+            handle,
+            &mut self.island_manager,
+            &mut self.collider_set,
+            &mut self.impulse_joint_set,
+            &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
+            true,
+        );
+    }
+
     /// Spawn a dynamic sphere rigid body. Returns the body handle.
     pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> RigidBodyHandle {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
