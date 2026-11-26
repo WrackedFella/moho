@@ -258,6 +258,8 @@ pub enum RestoreLooseError {
     BadId(LooseId),
     #[error("loose object {id:?}: {reason}")]
     BadSpawn { id: LooseId, reason: String },
+    #[error("the next loose id {0:?} leaves no id to issue")]
+    BadNextId(LooseId),
 }
 
 /// Where a loose object stood: the position and rotation a game draws it at.
@@ -318,11 +320,15 @@ impl PhysicsWorld {
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
     /// is not positive and finite, a friction, restitution or damping that is negative or not
     /// finite, a position or velocity that is not finite, or a rotation that is not finite or
-    /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`). Also if
+    /// every id has been issued, so that no id is ever issued twice.
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
         let id = LooseId(self.next_loose);
-        self.next_loose += 1;
+        self.next_loose = self
+            .next_loose
+            .checked_add(1)
+            .expect("every loose id has been issued");
         self.insert_loose(id, spawn);
         id
     }
@@ -436,6 +442,8 @@ impl PhysicsWorld {
     /// again; they are not in the records.
     ///
     /// # Errors
+    /// [`RestoreLooseError::BadNextId`] if the next id is `u64::MAX`, which no spawn could
+    /// issue from without reusing an id;
     /// [`RestoreLooseError::BadId`] if ids do not ascend strictly or reach the next id;
     /// [`RestoreLooseError::BadSpawn`] if a record fails the checks of
     /// [`PhysicsWorld::spawn_loose`]. Every record is checked before any is inserted, so on
@@ -448,6 +456,9 @@ impl PhysicsWorld {
             self.next_loose == 0,
             "restore_loose needs a world that has issued no id, but this one already has"
         );
+        if records.next_id.0 == u64::MAX {
+            return Err(RestoreLooseError::BadNextId(records.next_id));
+        }
         let mut previous: Option<LooseId> = None;
         for record in &records.objects {
             let ascends = previous.is_none_or(|last| record.id > last);
@@ -3400,21 +3411,77 @@ mod tests {
     }
 
     #[test]
-    fn the_highest_ids_restore_and_an_id_equal_to_the_highest_next_id_is_bad() {
+    fn the_highest_ids_restore_and_a_next_id_that_leaves_none_to_issue_is_bad() {
         let spawn = flat_box_spawn();
         let mut world = world_with_floor(&floor_mesh(0.0));
 
-        let outcome = world.restore_loose(&records(u64::MAX, vec![record(u64::MAX - 1, spawn)]));
+        let outcome =
+            world.restore_loose(&records(u64::MAX - 1, vec![record(u64::MAX - 2, spawn)]));
 
         assert_eq!(outcome, Ok(()));
-        assert!(world.loose(LooseId(u64::MAX - 1)).is_some());
-        assert_eq!(world.loose_records().next_id, LooseId(u64::MAX));
+        assert!(world.loose(LooseId(u64::MAX - 2)).is_some());
+        assert_eq!(world.loose_records().next_id, LooseId(u64::MAX - 1));
         let mut other = world_with_floor(&floor_mesh(0.0));
         assert_eq!(
-            other.restore_loose(&records(u64::MAX, vec![record(u64::MAX, spawn)])),
-            Err(RestoreLooseError::BadId(LooseId(u64::MAX)))
+            other.restore_loose(&records(u64::MAX - 1, vec![record(u64::MAX - 1, spawn)])),
+            Err(RestoreLooseError::BadId(LooseId(u64::MAX - 1)))
+        );
+        assert_eq!(
+            other.restore_loose(&records(u64::MAX, vec![record(u64::MAX - 1, spawn)])),
+            Err(RestoreLooseError::BadNextId(LooseId(u64::MAX)))
         );
         assert_eq!(other.loose_count(), 0);
+        assert_eq!(other.spawn_loose(&spawn), LooseId(0), "no id was issued");
+    }
+
+    #[test]
+    fn a_restored_object_draws_at_its_restored_pose_until_the_next_step() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&tumbling_spawn(
+            Vec3::new(7.0, -3.0, 11.0),
+            Vec3::new(2.0, 0.0, -1.5),
+            4.0,
+        ));
+        run(&mut world, 30);
+        let saved = world.loose(id).expect("the object is alive");
+
+        let back = restored(&world);
+
+        let poses = back.loose_poses(id).expect("the restored object has poses");
+        assert_eq!(
+            poses.previous, poses.current,
+            "no jump on the first drawn frame"
+        );
+        assert_eq!(poses.current.position, saved.position);
+        assert_eq!(poses.current.rotation, saved.rotation);
+    }
+
+    #[test]
+    fn a_world_restored_at_the_top_issues_the_last_id_without_reusing_one() {
+        let spawn = flat_box_spawn();
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world
+            .restore_loose(&records(u64::MAX - 1, vec![record(0, spawn)]))
+            .expect("the records restore");
+
+        let last = world.spawn_loose(&spawn);
+
+        assert_eq!(last, LooseId(u64::MAX - 1));
+        assert_eq!(world.loose_count(), 2);
+        assert!(world.loose(LooseId(0)).is_some(), "id 0 is untouched");
+    }
+
+    #[test]
+    #[should_panic(expected = "every loose id has been issued")]
+    fn spawning_after_the_last_id_panics_rather_than_reuse_one() {
+        let spawn = flat_box_spawn();
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world
+            .restore_loose(&records(u64::MAX - 1, vec![record(0, spawn)]))
+            .expect("the records restore");
+        world.spawn_loose(&spawn);
+
+        world.spawn_loose(&spawn);
     }
 
     #[test]
