@@ -3193,7 +3193,7 @@ mod tests {
         )
     }
 
-    /// Next id 7, two objects; each is its id, the shape's variant index and fields, then the
+    /// Next id 7, four objects, one of each shape; each is its id, the shape's variant index and fields, then the
     /// spawn's f32s in little-endian order.
     const PINNED: [u8; 330] = [
         7, 4, 0, 0, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 0, 62, 0, 0, 0, 64, 0, 0, 0, 63, 0, 0, 128,
