@@ -45,7 +45,7 @@ This is the groundwork for L1. Cross-OS agreement is reported per CI run, not ga
 ## 4 The sim-math gate
 
 `just check` runs `scripts/check-sim-math.sh` over the files in `scripts/sim-math.txt`
-(the `moho_physics` movement and world files). It prints the file and line of each
+(the `moho_physics` movement and world files and `searchlight/src/sim.rs`). It prints the file and line of each
 method call or `f32::`/`f64::` path of a platform transcendental and fails.
 
 - The list is the boundary. Files outside it (camera, rendering, UI) are never scanned.
