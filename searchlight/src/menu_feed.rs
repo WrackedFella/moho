@@ -35,13 +35,24 @@ impl MenuFeed {
 
     /// Lets `dt` of frame time pass, cutting to the next camera (wrapping after the last) each
     /// [`CUT_INTERVAL`].
-    pub fn advance(&mut self, _dt: Duration) {
-        todo!("advance the feed")
+    pub fn advance(&mut self, dt: Duration) {
+        if self.cameras.is_empty() {
+            return;
+        }
+        self.elapsed += dt;
+        while let Some(rest) = self.elapsed.checked_sub(CUT_INTERVAL) {
+            self.elapsed = rest;
+            self.shown = (self.shown + 1) % self.cameras.len();
+        }
     }
 
     /// The view matrix and eye of the camera showing now, or `None` without cameras.
     pub fn view(&self) -> Option<(Mat4, Vec3)> {
-        todo!("the shown camera's view")
+        let camera = self.cameras.get(self.shown)?;
+        Some((
+            glam::camera::rh::view::look_to_mat4(camera.eye, camera.forward, Vec3::Y),
+            camera.eye,
+        ))
     }
 }
 
@@ -112,7 +123,7 @@ mod tests {
     fn a_cut_comes_after_the_interval_and_not_before() {
         let mut feed = feed_of(3);
 
-        feed.advance(CUT_INTERVAL - Duration::from_millis(1));
+        feed.advance(Duration::from_millis(4999));
         let before = shown_x(&feed);
         feed.advance(Duration::from_millis(1));
         let at = shown_x(&feed);
@@ -125,11 +136,11 @@ mod tests {
     fn small_frames_add_up_to_a_cut() {
         let mut feed = feed_of(3);
 
-        for _ in 0..299 {
-            feed.advance(Duration::from_secs(1) / 60);
+        for _ in 0..99 {
+            feed.advance(Duration::from_millis(50));
         }
         let before = shown_x(&feed);
-        feed.advance(Duration::from_secs(1) / 60);
+        feed.advance(Duration::from_millis(50));
         let after = shown_x(&feed);
 
         assert_eq!(before, 0.0);

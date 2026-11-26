@@ -21,6 +21,9 @@ Markers are empty, named glTF nodes that the game reads by name (see searchlight
                       hiding geometry lies
     control_NN        a floor point a usable post stands on; its extras name the `action`
                       (`next_wave`)
+    menu_camera_NN    a view the main menu shows behind itself, optional: the node's translation
+                      is the eye and its rotation turns +Z to the view direction (roll is
+                      ignored); the views show in number order
 
 A cover point sits COVER_DEPTH behind the rear face of a COVER_HEIGHT block. A ray at body
 height (BODY_HEIGHT above the floor) coming from the block's side is stopped by the block; a
@@ -55,6 +58,14 @@ WAYPOINTS = [(-12.0, -10.0), (12.0, -10.0), (10.0, 4.0), (0.0, 8.0), (-10.0, 2.0
 # Usable posts: (x, z, action). This one is 1.5 m beside the player spawn: in reach at once, clear
 # of the spawn's capsule.
 CONTROLS = [(1.5, -17.0, "next_wave")]
+
+# Menu camera views: (x, z, yaw degrees, pitch degrees down). Each stands at EYE_HEIGHT and looks
+# across the cover lanes from a different side.
+MENU_CAMERAS = [
+    (-18.0, -18.0, 40.0, 8.0),
+    (18.0, -18.0, -40.0, 8.0),
+    (18.0, 10.0, -110.0, 8.0),
+]
 
 # Cover blocks: (centre x, centre z, size x, size z, direction from the cover point to the
 # block). The cover point is COVER_DEPTH behind the face opposite that direction.
@@ -207,7 +218,19 @@ def markers():
                     {"shielded_from": direction_name(block[4])}))
     for index, (x, z, action) in enumerate(CONTROLS, start=1):
         out.append((f"control_{index:02d}", (x, 0.0, z), {"action": action}))
+    for index, (x, z, yaw, pitch) in enumerate(MENU_CAMERAS, start=1):
+        out.append((f"menu_camera_{index:02d}", (x, EYE_HEIGHT, z), None,
+                    look_rotation(yaw, pitch)))
     return out
+
+
+def look_rotation(yaw_degrees, pitch_degrees):
+    """The quaternion (x, y, z, w) that tips +Z down by the pitch, then turns it about Y."""
+    half_yaw = math.radians(yaw_degrees) / 2
+    half_pitch = math.radians(pitch_degrees) / 2
+    sy, cy = math.sin(half_yaw), math.cos(half_yaw)
+    sx, cx = math.sin(half_pitch), math.cos(half_pitch)
+    return [cy * sx, sy * cx, -sy * sx, cy * cx]
 
 
 def prism(profile, z_min, z_max):
@@ -379,8 +402,10 @@ def build_glb(solid_list, marker_list, materials):
         })
         document["nodes"].append({"name": f"{name}_node", "mesh": len(document["meshes"]) - 1})
 
-    for name, translation, extras in marker_list:
+    for name, translation, extras, *rotation in marker_list:
         node = {"name": name, "translation": list(translation)}
+        if rotation:
+            node["rotation"] = rotation[0]
         if extras:
             node["extras"] = extras
         document["nodes"].append(node)

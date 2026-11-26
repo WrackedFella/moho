@@ -27,6 +27,7 @@ const ENEMY_SPAWN_PREFIX: &str = "enemy_spawn_";
 const WAYPOINT_PREFIX: &str = "waypoint_";
 const COVER_PREFIX: &str = "cover_";
 const CONTROL_PREFIX: &str = "control_";
+const MENU_CAMERA_PREFIX: &str = "menu_camera_";
 const CONTROL_ACTION_KEY: &str = "action";
 /// First control mesh id; see [`control_mesh_id`].
 const CONTROL_MESH_BASE: u64 = 3 << 32;
@@ -78,6 +79,8 @@ pub struct ArenaMarkers {
     pub covers: Vec<LevelMarker>,
     /// `control_NN`: placed posts the player can use.
     pub controls: Vec<LevelMarker>,
+    /// `menu_camera_NN`: views the main menu shows; optional.
+    pub menu_cameras: Vec<LevelMarker>,
 }
 
 impl ArenaMarkers {
@@ -92,6 +95,8 @@ impl ArenaMarkers {
     /// With an enemy spawn also:
     /// [`ArenaError::MissingMarker`] naming `waypoint_NN`; [`ArenaError::BadWaypoint`] naming
     /// a waypoint whose suffix is not a number or repeats an earlier one's value.
+    /// On any level: [`ArenaError::BadMenuCamera`] naming a menu camera whose suffix is not a
+    /// number or repeats an earlier one's value.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
         let mut spawns = Vec::new();
         let mut dummies = Vec::new();
@@ -99,6 +104,7 @@ impl ArenaMarkers {
         let mut waypoints = Vec::new();
         let mut covers = Vec::new();
         let mut controls = Vec::new();
+        let mut menu_cameras = Vec::new();
         for marker in &level.markers {
             let name = marker.name.as_str();
             let kind = if name == PLAYER_SPAWN {
@@ -113,6 +119,8 @@ impl ArenaMarkers {
                 &mut covers
             } else if name.starts_with(CONTROL_PREFIX) {
                 &mut controls
+            } else if name.starts_with(MENU_CAMERA_PREFIX) {
+                &mut menu_cameras
             } else {
                 continue;
             };
@@ -129,6 +137,7 @@ impl ArenaMarkers {
         if !enemy_spawns.is_empty() {
             validate_enemy_spawn_rules(&waypoints)?;
         }
+        validate_menu_cameras(&menu_cameras)?;
         Ok(Self {
             player_spawn,
             dummies,
@@ -136,8 +145,26 @@ impl ArenaMarkers {
             waypoints,
             covers,
             controls,
+            menu_cameras,
         })
     }
+}
+
+/// Menu camera suffixes must be numbers, each used once.
+fn validate_menu_cameras(cameras: &[LevelMarker]) -> Result<(), ArenaError> {
+    let mut numbers = Vec::new();
+    for marker in cameras {
+        let number = menu_camera_number(marker).filter(|n| !numbers.contains(n));
+        numbers.push(number.ok_or_else(|| ArenaError::BadMenuCamera {
+            marker: marker.name.clone(),
+        })?);
+    }
+    Ok(())
+}
+
+/// The `NN` of a `menu_camera_NN` marker, `None` when it is not a number.
+fn menu_camera_number(marker: &LevelMarker) -> Option<u32> {
+    marker.name[MENU_CAMERA_PREFIX.len()..].parse().ok()
 }
 
 /// The rules for a level that places an enemy spawn: a waypoint, and numeric, distinct
@@ -169,6 +196,19 @@ impl ArenaMarkers {
         self.ordered_waypoints()
             .into_iter()
             .map(|marker| marker.position)
+            .collect()
+    }
+
+    /// The menu views in numeric order of `NN`; each looks along its marker's rotation of +Z.
+    fn menu_cameras(&self) -> Vec<MenuCamera> {
+        let mut markers: Vec<&LevelMarker> = self.menu_cameras.iter().collect();
+        markers.sort_by_key(|marker| menu_camera_number(marker));
+        markers
+            .into_iter()
+            .map(|marker| MenuCamera {
+                eye: marker.position,
+                forward: marker.rotation * Vec3::Z,
+            })
             .collect()
     }
 
@@ -302,7 +342,7 @@ impl Arena {
             route,
             covers: positions(&markers.covers),
             controls,
-            menu_cameras: Vec::new(),
+            menu_cameras: markers.menu_cameras(),
         })
     }
 

@@ -435,7 +435,7 @@ fn grab_cursor(window: &Window) {
 #[derive(Debug)]
 struct Stage {
     scene: Scene,
-    /// Drawn instead of `scene` behind the main menu, so the dormant arena stays untouched.
+    /// Drawn instead of `scene` behind the main menu of a level without menu cameras.
     backdrop: Scene,
     segments: Vec<Segment>,
     dummy_material: u32,
@@ -1473,13 +1473,19 @@ impl SearchlightGame {
         self
     }
 
-    /// A frame of the main menu: the title bare, the HUD hidden and an empty world; the shell
-    /// paints the menu.
+    /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
+    /// feed's camera, or an empty world on a level without menu cameras; the shell paints the
+    /// menu. The feed follows frame time: the sim is paused here.
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
         self.stage.refresh_title("");
         self.stage.hide_hud();
+        self.menu_feed.advance(ctx.frame_dt);
+        let view = self.menu_feed.view();
         if let Some(renderer) = ctx.renderer() {
-            self.stage.draw_backdrop(renderer);
+            match view {
+                Some(view) => self.stage.draw(renderer, view),
+                None => self.stage.draw_backdrop(renderer),
+            }
         }
     }
 
