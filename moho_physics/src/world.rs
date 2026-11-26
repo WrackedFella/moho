@@ -17,7 +17,7 @@ use character::Character;
 pub use character::{
     CharacterHandle, CharacterRecord, CharacterSpawn, CharacterState, HitVolume, UnknownCharacter,
 };
-pub use loose::{LooseId, LooseShape, LooseSpawn, LooseState, UnknownLoose};
+pub use loose::{LooseId, LoosePose, LoosePoses, LooseShape, LooseSpawn, LooseState, UnknownLoose};
 pub use query::{HitTag, RayHit, RayQuery};
 
 pub struct PhysicsWorld {
