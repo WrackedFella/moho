@@ -30,8 +30,22 @@ mod tests {
         assert_eq!(cos.to_bits(), libm::cosf(angle).to_bits());
     }
 
+    #[test]
+    fn tan_matches_libm_at_an_angle_where_the_platform_differs() {
+        let angle = 0.300_000_25_f32;
+
+        let result = tan(angle);
+
+        assert_eq!(result.to_bits(), libm::tanf(angle).to_bits());
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(2_000))]
+
+        #[test]
+        fn tan_equals_libm_bit_for_bit(angle in finite()) {
+            prop_assert_eq!(tan(angle).to_bits(), libm::tanf(angle).to_bits());
+        }
 
         #[test]
         fn sin_cos_equals_libm_bit_for_bit(angle in finite()) {
