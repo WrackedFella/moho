@@ -3261,6 +3261,28 @@ mod tests {
 
         assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
         assert!(log.contains("test_round"), "{log}");
+        assert!(log.contains("WARN"), "{log}");
+    }
+
+    #[test]
+    fn a_round_falling_faster_than_its_muzzle_velocity_does_no_more_than_its_damage() {
+        let slow = Ballistics {
+            muzzle_velocity: 150.0,
+            drag: 0.0,
+        };
+        let heavy_gravity = SearchlightCommand {
+            fire: true,
+            round_gravity: GravityScale::new(300.0).expect("a valid scale"),
+            ..idle()
+        };
+
+        let health =
+            dummy_health_after_a_shot(2.0, BodyPart::Head, with_round(slow, 30), heavy_gravity);
+
+        assert_eq!(
+            health, 70,
+            "the round arrives at about 158 m/s, an uncapped 32 damage"
+        );
     }
 
     /// Fires level at a head 60 m away under `scale`; returns the aim point and the first strike.

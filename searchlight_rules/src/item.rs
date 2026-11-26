@@ -515,16 +515,20 @@ mod tests {
 
     #[test]
     fn a_round_section_loads_its_damage() {
-        let item = parse(json!({
-            "class": "consumable", "size": [1, 1],
-            "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 45}
-        }))
-        .expect("a round with a damage loads");
+        for damage in [45, 1] {
+            let item = parse(json!({
+                "class": "consumable", "size": [1, 1],
+                "round": {
+                    "caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": damage
+                }
+            }))
+            .unwrap_or_else(|e| panic!("a round with damage {damage} loads: {e}"));
 
-        let ItemKind::Round(spec) = item.kind else {
-            panic!("expected a round kind, got {:?}", item.kind);
-        };
-        assert_eq!(spec.damage, 45);
+            let ItemKind::Round(spec) = item.kind else {
+                panic!("expected a round kind, got {:?}", item.kind);
+            };
+            assert_eq!(spec.damage, damage);
+        }
     }
 
     #[test]
@@ -543,20 +547,6 @@ mod tests {
         }));
 
         assert!(text.contains("damage must be at least 1, got 0"), "{text}");
-    }
-
-    #[test]
-    fn a_round_with_damage_1_is_accepted() {
-        let item = parse(json!({
-            "class": "consumable", "size": [1, 1],
-            "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 1}
-        }))
-        .expect("the smallest hit is valid");
-
-        let ItemKind::Round(spec) = item.kind else {
-            panic!("expected a round kind, got {:?}", item.kind);
-        };
-        assert_eq!(spec.damage, 1);
     }
 
     #[test]

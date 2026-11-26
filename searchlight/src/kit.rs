@@ -196,25 +196,10 @@ condition = 100
     }
 
     #[test]
-    fn a_round_without_damage_fails_the_load_naming_the_round_and_the_field() {
-        let items = items_toml().replace(", damage = 30 }", " }");
-        let (dir, roots) = base_with(&items, &start_kit(2));
-
-        let Err(error) = load(&roots, START_KIT_ID) else {
-            panic!("a round without damage loaded");
-        };
-
-        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
-            panic!("expected Invalid content, got {error:?}");
-        };
-        assert_eq!(file, &dir.path().join("items.toml"));
-        assert_eq!(id, "round_ball");
-        assert!(reason.contains("damage"), "{reason}");
-    }
-
-    #[test]
     fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
         let cases = [
+            ("damage = 30", "damage = 0", "damage"),
+            (", damage = 30", "", "damage"),
             (
                 "muzzle_velocity = 940.0",
                 "muzzle_velocity = 0.0",

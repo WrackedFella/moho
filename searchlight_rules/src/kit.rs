@@ -312,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_kit_carries_the_ballistics_of_every_round_it_names() {
+    fn a_resolved_kit_carries_the_stats_of_every_round_it_names() {
         let def = kit_def(json!({
             "rig": "rig_chest",
             "weapon": "rifle",
@@ -348,22 +348,6 @@ mod tests {
             ),
         ]);
         assert_eq!(kit.rounds, expected);
-    }
-
-    #[test]
-    fn a_resolved_kit_carries_each_round_s_damage() {
-        let def = kit_def(json!({
-            "rig": "rig_chest",
-            "weapon": "rifle",
-            "loaded": {"magazine": "mag_rifle", "round": "round_heavy"},
-            "magazines": [{"magazine": "mag_rifle", "round": "round_ball"}]
-        }));
-
-        let kit = resolve(&def).expect("the kit resolves");
-
-        let damage = |name: &str| kit.rounds[&id(name)].damage;
-        assert_eq!(damage("round_heavy"), 55);
-        assert_eq!(damage("round_ball"), 30);
     }
 
     #[test]
