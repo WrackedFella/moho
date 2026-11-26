@@ -47,6 +47,8 @@ impl LooseId {
 pub(super) struct Loose {
     body: RigidBodyHandle,
     roll: Roll,
+    /// The body's pose before the last step, for drawing between ticks.
+    previous: LoosePose,
 }
 
 /// How a shape rolls, which decides what the rest brake cuts.
@@ -217,9 +219,23 @@ pub struct LoosePoses {
 
 impl LoosePoses {
     /// `alpha` 0 is `previous`, 1 is `current`: position lerp, rotation shortest-arc slerp.
-    /// `alpha` is clamped to [0, 1].
-    pub fn blend(self, _alpha: f32) -> LoosePose {
-        self.previous
+    /// `alpha` is clamped to [0, 1], and 0 and 1 return `previous` and `current` exactly.
+    ///
+    /// A NaN `alpha` is not mapped to anything: it passes through the clamp and the result has
+    /// NaN components.
+    pub fn blend(self, alpha: f32) -> LoosePose {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if alpha == 0.0 {
+            return self.previous;
+        }
+        if alpha == 1.0 {
+            return self.current;
+        }
+        LoosePose {
+            position: self.previous.position.lerp(self.current.position, alpha),
+            // glam's slerp negates one end when the dot product is negative: the short way.
+            rotation: self.previous.rotation.slerp(self.current.rotation, alpha),
+        }
     }
 }
 
@@ -275,6 +291,10 @@ impl PhysicsWorld {
             Loose {
                 body: handle,
                 roll: spawn.shape.roll(),
+                previous: LoosePose {
+                    position: spawn.position,
+                    rotation: spawn.rotation,
+                },
             },
         );
         id
@@ -294,7 +314,27 @@ impl PhysicsWorld {
 
     /// The object's pose at the last two ticks; `None` for an unknown id.
     pub fn loose_poses(&self, id: LooseId) -> Option<LoosePoses> {
-        self.loose.get(&id).and(None)
+        let loose = self.loose.get(&id)?;
+        let body = self.rigid_body_set.get(loose.body)?;
+        Some(LoosePoses {
+            previous: loose.previous,
+            current: LoosePose {
+                position: body.translation(),
+                rotation: *body.rotation(),
+            },
+        })
+    }
+
+    /// Copy every loose body's pose, asleep or not, into `previous`: a sleeper skipped here
+    /// would keep the pose from before it slept for ever.
+    pub(super) fn remember_loose_poses(&mut self) {
+        for loose in self.loose.values_mut() {
+            let body = &self.rigid_body_set[loose.body];
+            loose.previous = LoosePose {
+                position: body.translation(),
+                rotation: *body.rotation(),
+            };
+        }
     }
 
     /// Remove the object's body and collider.

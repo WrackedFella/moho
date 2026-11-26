@@ -87,6 +87,7 @@ impl PhysicsWorld {
     /// Step the physics simulation (advances dynamic rigid bodies).
     pub fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
+        self.remember_loose_poses();
         self.physics_pipeline.step(
             self.gravity,
             &self.integration_parameters,
