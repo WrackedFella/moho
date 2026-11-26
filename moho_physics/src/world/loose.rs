@@ -5,6 +5,7 @@ use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
     Pose, RigidBodyBuilder, RigidBodyHandle,
 };
+use serde::{Deserialize, Serialize};
 
 /// Membership bit that marks a loose collider. A collider whose only membership is this bit is
 /// ignored by characters: their filter tests with `And`, so it hides only colliders whose every
@@ -29,7 +30,7 @@ const DEEP_CONTACT: f32 = 0.005;
 ///
 /// Issued in increasing order from zero and never reused, so the same call sequence issues the
 /// same ids.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct LooseId(u64);
 
 impl LooseId {
@@ -61,7 +62,7 @@ enum Roll {
 }
 
 /// The collision shape of a loose object.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum LooseShape {
     /// A box centred on the body, `half_extents` m from the centre to each face.
     Box { half_extents: Vec3 },
@@ -101,7 +102,7 @@ impl LooseShape {
 }
 
 /// Everything a game states when it drops a loose object.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LooseSpawn {
     pub shape: LooseShape,
     /// Kilograms.
@@ -201,6 +202,32 @@ pub struct LooseState {
     pub asleep: bool,
 }
 
+/// One loose object as a plain record: its id and the spawn that recreates it now.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LooseRecord {
+    pub id: LooseId,
+    /// The spawn that recreates the object now: its shape, mass, material and damping as
+    /// spawned, with the pose and velocities it had when the record was taken.
+    pub spawn: LooseSpawn,
+}
+
+/// Every loose object of a world, ascending id, and the next id the world will issue.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LooseRecords {
+    pub next_id: LooseId,
+    pub objects: Vec<LooseRecord>,
+}
+
+/// Why a set of loose records cannot be restored.
+#[derive(Debug, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RestoreLooseError {
+    #[error("loose ids must ascend strictly and stay below the next id; {0:?} does not")]
+    BadId(LooseId),
+    #[error("loose object {id:?}: {reason}")]
+    BadSpawn { id: LooseId, reason: String },
+}
+
 /// The id names a loose object that was never spawned or was removed.
 #[derive(Debug, PartialEq, thiserror::Error)]
 #[error("unknown loose object")]
@@ -278,6 +305,22 @@ impl PhysicsWorld {
         let handle = self.loose.remove(&id).ok_or(UnknownLoose)?.body;
         self.remove_body(handle);
         Ok(())
+    }
+
+    /// Every live loose object as a record. Read at a tick boundary.
+    pub fn loose_records(&self) -> LooseRecords {
+        todo!("ENG-F50-02: read every loose object as a record")
+    }
+
+    /// Rebuild loose objects from `records`, ready for the next tick.
+    ///
+    /// # Errors
+    /// Checks every record before inserting any; on error the world is unchanged.
+    /// # Panics
+    /// If the world already holds a loose object or has issued an id.
+    pub fn restore_loose(&mut self, records: &LooseRecords) -> Result<(), RestoreLooseError> {
+        let _ = records;
+        todo!("ENG-F50-02: restore loose objects from records")
     }
 
     /// How many loose objects are alive.
@@ -2693,5 +2736,457 @@ mod tests {
         assert_eq!(ray.tag, WALL_TAG);
         assert!((ray.distance - 3.0).abs() <= 0.001, "{ray:?}");
         assert_eq!(hidden, None);
+    }
+
+    /// `loose_records`, postcard to bytes and back, `restore_loose` into a fresh world with the
+    /// same floor.
+    fn restored(world: &PhysicsWorld) -> PhysicsWorld {
+        let bytes = postcard::to_allocvec(&world.loose_records()).expect("records serialise");
+        let records: LooseRecords = postcard::from_bytes(&bytes).expect("records deserialise");
+        let mut fresh = world_with_floor(&floor_mesh(0.0));
+        fresh.restore_loose(&records).expect("the records restore");
+        fresh
+    }
+
+    fn record(id: u64, spawn: LooseSpawn) -> LooseRecord {
+        LooseRecord {
+            id: LooseId(id),
+            spawn,
+        }
+    }
+
+    fn records(next_id: u64, objects: Vec<LooseRecord>) -> LooseRecords {
+        LooseRecords {
+            next_id: LooseId(next_id),
+            objects,
+        }
+    }
+
+    fn every_shape_with_sphere() -> [(&'static str, LooseShape); 4] {
+        let [a, b, c] = every_shape();
+        [a, b, c, ("sphere", SPHERE)]
+    }
+
+    #[test]
+    fn a_restored_object_has_its_saved_state_at_the_load_tick() {
+        for (name, shape) in every_shape_with_sphere() {
+            for saved_at in [5, 40, 120] {
+                let mut world = world_with_floor(&floor_mesh(0.0));
+                let tumbling = world.spawn_loose(&LooseSpawn {
+                    shape,
+                    ..tumbling_spawn(Vec3::new(7.0, -3.0, 11.0), Vec3::new(2.0, 0.0, -1.5), 4.0)
+                });
+                let sliding = world.spawn_loose(&LooseSpawn {
+                    position: Vec3::new(-1.0, 0.2, 1.0),
+                    linear_velocity: Vec3::new(3.0, 0.0, 0.5),
+                    ..LooseSpawn::new(shape, 0.2)
+                });
+                run(&mut world, saved_at);
+
+                let back = restored(&world);
+
+                assert_eq!(back.loose_count(), 2, "{name} at tick {saved_at}");
+                for id in [tumbling, sliding] {
+                    assert_eq!(
+                        bits(&read(&back, id)),
+                        bits(&read(&world, id)),
+                        "{name} at tick {saved_at}: {id:?} differs"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn restoring_after_a_removal_continues_the_ids() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        for _ in 0..5 {
+            world.spawn_loose(&flat_box_spawn());
+        }
+        world.remove_loose(LooseId(2)).expect("the object is alive");
+
+        let mut back = restored(&world);
+        let next = back.spawn_loose(&flat_box_spawn());
+
+        let ids: Vec<u64> = back
+            .loose_records()
+            .objects
+            .iter()
+            .map(|object| object.id.get())
+            .collect();
+        assert_eq!(ids, [0, 1, 3, 4, 5]);
+        assert_eq!(next, LooseId(5));
+        assert!(back.loose(LooseId(2)).is_none(), "id 2 stays removed");
+    }
+
+    #[test]
+    fn restoring_no_objects_still_sets_the_next_id() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+
+        world
+            .restore_loose(&records(5, Vec::new()))
+            .expect("empty records restore");
+
+        assert_eq!(world.loose_count(), 0);
+        assert_eq!(world.spawn_loose(&flat_box_spawn()), LooseId(5));
+    }
+
+    #[test]
+    fn a_restored_pile_settles_again() {
+        for seed in 0..16 {
+            let (mut world, ids) = pile_world(seed);
+            let mut ticks = 0;
+            while ticks < 600 && !all_asleep(&world, &ids) {
+                world.step(DT);
+                ticks += 1;
+            }
+            assert!(all_asleep(&world, &ids), "seed {seed}: the pile sleeps");
+            run(&mut world, 10);
+            let saved: Vec<Vec3> = ids.iter().map(|&id| read(&world, id).position).collect();
+
+            let mut back = restored(&world);
+            run(&mut back, 120);
+
+            assert!(
+                all_asleep(&back, &ids),
+                "seed {seed}: the restored pile is not asleep"
+            );
+            for (&id, saved_at) in ids.iter().zip(&saved) {
+                let moved = read(&back, id).position.distance(*saved_at);
+                assert!(
+                    moved <= 0.05,
+                    "seed {seed}: {id:?} moved {moved} m from its saved position"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_look_finds_a_restored_object_before_the_first_step() {
+        let (mut world, id) = resting_box_world();
+        run(&mut world, 300);
+        let centre = read(&world, id).position;
+        let query = look(centre + Vec3::Y * 1.6, Vec3::NEG_Y);
+
+        let mut back = restored(&world);
+
+        let before_a_step = back.pick_loose(&query);
+        back.step(DT);
+        let after_a_step = back.pick_loose(&query);
+        assert_eq!(before_a_step, Some(id));
+        assert_eq!(after_a_step, Some(id));
+    }
+
+    #[test]
+    fn a_restored_pile_still_stands_on_its_floor_when_knocked() {
+        for seed in 0..4 {
+            let (mut world, ids) = pile_world(seed);
+            run(&mut world, 300);
+            let mut back = restored(&world);
+            let mut ticks = 0;
+            while ticks < 300 && !all_asleep(&back, &ids) {
+                back.step(DT);
+                ticks += 1;
+            }
+            assert!(all_asleep(&back, &ids), "seed {seed}: re-settles");
+            let knocked = ids[ids.len() - 1];
+            let handle = back.loose[&knocked].body;
+            let velocity = read(&back, knocked).linear_velocity + Vec3::X;
+            back.rigid_body_set[handle].set_linvel(velocity, true);
+
+            run(&mut back, 300);
+
+            for &id in &ids {
+                let bottom = bottom_of(&back, id);
+                assert!(bottom > -0.01, "seed {seed}: {id:?} fell, bottom {bottom}");
+            }
+            assert!(
+                all_asleep(&back, &ids),
+                "seed {seed}: the knocked pile is not asleep"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restored_collider_matches_a_spawned_one() {
+        for (name, shape) in every_shape_with_sphere() {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let id = world.spawn_loose(&LooseSpawn {
+                friction: 0.3,
+                restitution: 0.2,
+                linear_damping: 0.1,
+                angular_damping: 0.4,
+                position: Vec3::new(0.5, 1.0, -0.5),
+                linear_velocity: Vec3::new(0.5, 0.0, 1.0),
+                ..LooseSpawn::new(shape, 3.5)
+            });
+            run(&mut world, 10);
+
+            let back = restored(&world);
+
+            let (was, is) = (collider_of(&world, id), collider_of(&back, id));
+            assert_eq!(is.mass(), was.mass(), "{name}: mass");
+            assert_eq!(is.friction(), was.friction(), "{name}: friction");
+            assert_eq!(is.restitution(), was.restitution(), "{name}: restitution");
+            assert_eq!(
+                is.collision_groups(),
+                was.collision_groups(),
+                "{name}: collision groups"
+            );
+            assert_eq!(is.user_data, was.user_data, "{name}: user data");
+            let (was, is) = (body_of(&world, id), body_of(&back, id));
+            assert_eq!(is.linear_damping(), was.linear_damping(), "{name}");
+            assert_eq!(is.angular_damping(), was.angular_damping(), "{name}");
+            assert_eq!(is.mass(), was.mass(), "{name}: body mass");
+        }
+    }
+
+    #[test]
+    fn loose_records_lists_live_objects_ascending_with_the_next_id() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let spawns = [
+            LooseSpawn::new(cuboid(FLAT_BOX), 0.5),
+            LooseSpawn {
+                position: Vec3::new(1.0, 1.0, 0.0),
+                ..LooseSpawn::new(CAPSULE, 0.7)
+            },
+            LooseSpawn {
+                position: Vec3::new(-1.0, 1.0, 0.0),
+                friction: 0.9,
+                ..LooseSpawn::new(SPHERE, 0.9)
+            },
+        ];
+        let ids: Vec<LooseId> = spawns.iter().map(|s| world.spawn_loose(s)).collect();
+        world.remove_loose(ids[1]).expect("the object is alive");
+        run(&mut world, 20);
+
+        let records = world.loose_records();
+
+        assert_eq!(records.next_id, LooseId(3));
+        let listed: Vec<LooseId> = records.objects.iter().map(|o| o.id).collect();
+        assert_eq!(listed, [ids[0], ids[2]]);
+        for (object, original) in records.objects.iter().zip([spawns[0], spawns[2]]) {
+            let state = read(&world, object.id);
+            let spawn = object.spawn;
+            assert_eq!(spawn.shape, original.shape);
+            assert_eq!(spawn.mass, original.mass);
+            assert_eq!(spawn.friction, original.friction);
+            assert_eq!(spawn.restitution, original.restitution);
+            assert_eq!(spawn.linear_damping, original.linear_damping);
+            assert_eq!(spawn.angular_damping, original.angular_damping);
+            assert_eq!(spawn.position, state.position);
+            assert_eq!(spawn.rotation, state.rotation);
+            assert_eq!(spawn.linear_velocity, state.linear_velocity);
+            assert_eq!(spawn.angular_velocity, state.angular_velocity);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 16,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x891),
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn records_round_trip_through_a_restore(
+            ops in proptest::collection::vec((0u8..3, 0usize..8, 1u32..30), 0..20)
+        ) {
+            let shapes = every_shape_with_sphere();
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let mut live: Vec<LooseId> = Vec::new();
+            for (kind, pick, ticks) in ops {
+                match kind {
+                    0 => {
+                        let shape = shapes[pick % shapes.len()].1;
+                        live.push(world.spawn_loose(&LooseSpawn {
+                            shape,
+                            position: Vec3::new(pick as f32 * 0.3, 1.0 + ticks as f32 * 0.05, 0.0),
+                            angular_velocity: Vec3::new(ticks as f32 * 0.2, 1.0, -2.0),
+                            ..LooseSpawn::new(shape, 0.2)
+                        }));
+                    }
+                    1 if !live.is_empty() => {
+                        let id = live.remove(pick % live.len());
+                        prop_assert_eq!(world.remove_loose(id), Ok(()));
+                    }
+                    _ => run(&mut world, ticks),
+                }
+            }
+
+            let back = restored(&world);
+
+            prop_assert_eq!(back.loose_records(), world.loose_records());
+        }
+    }
+
+    /// A box with id 3 and a capsule with id 5, `next_id` 7. Every float is exact in binary.
+    fn pinned_fixture() -> LooseRecords {
+        records(
+            7,
+            vec![
+                record(
+                    3,
+                    LooseSpawn {
+                        shape: LooseShape::Box {
+                            half_extents: Vec3::new(0.5, 0.25, 0.125),
+                        },
+                        mass: 2.0,
+                        friction: 0.5,
+                        restitution: 0.25,
+                        linear_damping: 0.0,
+                        angular_damping: 1.0,
+                        position: Vec3::new(1.0, 2.0, 3.0),
+                        rotation: Quat::from_xyzw(0.0, 0.0, 0.0, 1.0),
+                        linear_velocity: Vec3::new(-1.0, 0.5, 0.0),
+                        angular_velocity: Vec3::new(0.0, 4.0, -8.0),
+                    },
+                ),
+                record(
+                    5,
+                    LooseSpawn {
+                        shape: LooseShape::Capsule {
+                            half_height: 0.5,
+                            radius: 0.25,
+                        },
+                        mass: 1.0,
+                        friction: 0.75,
+                        restitution: 0.0,
+                        linear_damping: 0.5,
+                        angular_damping: 0.25,
+                        position: Vec3::new(0.0, 0.5, 0.0),
+                        rotation: Quat::from_xyzw(0.0, 1.0, 0.0, 0.0),
+                        linear_velocity: Vec3::new(0.0, 0.0, 2.0),
+                        angular_velocity: Vec3::new(1.0, 0.0, 0.0),
+                    },
+                ),
+            ],
+        )
+    }
+
+    /// Next id 7, two objects; each is its id, the shape's variant index and fields, then the
+    /// spawn's f32s in little-endian order.
+    const PINNED: [u8; 170] = [
+        7, 2, 3, 0, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 0, 62, 0, 0, 0, 64, 0, 0, 0, 63, 0, 0, 128,
+        62, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 128, 191, 0, 0, 0, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        128, 64, 0, 0, 0, 193, 5, 1, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 128, 63, 0, 0, 64, 63, 0, 0,
+        0, 0, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 0, 0, 0, 0, 0, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 128, 63, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ];
+
+    #[test]
+    fn loose_records_bytes_are_pinned() {
+        let fixture = pinned_fixture();
+
+        let bytes = postcard::to_allocvec(&fixture).expect("the records serialise");
+
+        assert_eq!(bytes, PINNED);
+        let back: LooseRecords = postcard::from_bytes(&PINNED).expect("the pinned bytes decode");
+        assert_eq!(back, fixture);
+    }
+
+    #[test]
+    fn restore_rejects_bad_ids() {
+        let spawn = flat_box_spawn();
+        let rows: [(&str, LooseRecords, u64); 5] = [
+            (
+                "duplicate",
+                records(5, vec![record(1, spawn), record(1, spawn)]),
+                1,
+            ),
+            (
+                "descending",
+                records(5, vec![record(2, spawn), record(1, spawn)]),
+                1,
+            ),
+            ("equal to next", records(3, vec![record(3, spawn)]), 3),
+            (
+                "above next",
+                records(3, vec![record(0, spawn), record(9, spawn)]),
+                9,
+            ),
+            (
+                "second equal to next",
+                records(2, vec![record(0, spawn), record(2, spawn)]),
+                2,
+            ),
+        ];
+
+        for (name, bad, culprit) in rows {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+
+            let outcome = world.restore_loose(&bad);
+
+            assert_eq!(
+                outcome,
+                Err(RestoreLooseError::BadId(LooseId(culprit))),
+                "{name}"
+            );
+            assert_eq!(world.loose_count(), 0, "{name}: the world is unchanged");
+            assert_eq!(
+                world.spawn_loose(&spawn),
+                LooseId(0),
+                "{name}: ids unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn restore_accepts_ascending_ids_with_gaps_up_to_the_last_before_next() {
+        let spawn = flat_box_spawn();
+        let mut world = world_with_floor(&floor_mesh(0.0));
+
+        let outcome = world.restore_loose(&records(
+            4,
+            vec![record(0, spawn), record(2, spawn), record(3, spawn)],
+        ));
+
+        assert_eq!(outcome, Ok(()));
+        assert_eq!(world.loose_count(), 3);
+        assert!(world.loose(LooseId(1)).is_none());
+        assert_eq!(world.spawn_loose(&spawn), LooseId(4));
+    }
+
+    #[test]
+    fn restore_rejects_a_bad_spawn_and_restores_nothing() {
+        let valid = flat_box_spawn();
+        let bad = LooseSpawn {
+            position: Vec3::new(f32::NAN, 1.0, 0.0),
+            ..valid
+        };
+        let expected_reason = spawn_panic_message(&bad).expect("a NaN position is rejected");
+        let mut world = world_with_floor(&floor_mesh(0.0));
+
+        let outcome = world.restore_loose(&records(
+            4,
+            vec![
+                record(0, valid),
+                record(1, valid),
+                record(2, bad),
+                record(3, valid),
+            ],
+        ));
+
+        assert_eq!(
+            outcome,
+            Err(RestoreLooseError::BadSpawn {
+                id: LooseId(2),
+                reason: expected_reason,
+            })
+        );
+        assert_eq!(world.loose_count(), 0);
+        assert_eq!(world.spawn_loose(&valid), LooseId(0));
+    }
+
+    #[test]
+    #[should_panic(expected = "already")]
+    fn restoring_into_a_used_world_panics() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&flat_box_spawn());
+        world.remove_loose(id).expect("the object is alive");
+
+        let _ = world.restore_loose(&records(1, Vec::new()));
     }
 }
