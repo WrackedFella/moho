@@ -9,8 +9,8 @@ use std::fmt::Write as _;
 use glam::{Quat, Vec3};
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
-    CharacterState, HitTag, Hull, HullShape, Lean, LeanReach, MoveSettings, PhysicsWorld,
-    RigidBodyHandle, Stance, Stature,
+    CharacterState, HitTag, Hull, HullShape, Lean, LeanReach, LooseId, LooseShape, LooseSpawn,
+    LooseState, MoveSettings, PhysicsWorld, RigidBodyHandle, Stance, Stature,
 };
 use moho_render_api::{WorldMesh, WorldMeshId};
 use serde::{Deserialize, Serialize};
@@ -30,18 +30,30 @@ const UPRIGHT_ROLL: f32 = 12.0 * std::f32::consts::PI / 180.0;
 const PRONE_ROLL: f32 = 20.0 * std::f32::consts::PI / 180.0;
 const SEED: u64 = 0x5EED_0502;
 
-/// Effects queued before the tick's moves, then each character's command, in creation order.
+/// A loose-object input: a drop, or the removal of an earlier drop. A script cannot name an id
+/// the world has not issued yet, so a removal names the index of the spawn, counted in the
+/// order the script spawns.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+enum LooseInput {
+    Spawn(LooseSpawn),
+    Remove(usize),
+}
+
+/// Loose inputs and effects applied before the tick's moves, then each character's command, in
+/// creation order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct TickInput {
+    loose: Vec<LooseInput>,
     effects: Vec<(usize, CharacterEffect)>,
     commands: [CharacterCommand; 2],
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Snapshot {
     characters: [CharacterState; 2],
     box_translation: Vec3,
     box_rotation: Quat,
+    loose: Vec<(LooseId, LooseState)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -305,6 +317,63 @@ fn wanted_lean(who: usize, tick: usize) -> f32 {
     }
 }
 
+/// The dropped capsule's launch velocity; it rolls clear of the cuboid and never leaves the run.
+const CAPSULE_VELOCITY: Vec3 = Vec3::new(1.0, 0.0, 0.5);
+
+/// The loose objects of tick `tick`: five drops, four of them on the characters' paths, and two
+/// removals of earlier drops.
+fn loose_inputs(tick: usize) -> Vec<LooseInput> {
+    let drop = |shape, position: Vec3, velocity: Vec3| {
+        vec![LooseInput::Spawn(LooseSpawn {
+            position,
+            rotation: Quat::from_rotation_y(0.4),
+            linear_velocity: velocity,
+            angular_velocity: Vec3::new(0.0, 0.0, 1.5),
+            ..LooseSpawn::new(shape, 0.5)
+        })]
+    };
+    match tick {
+        10 => drop(
+            LooseShape::Box {
+                half_extents: Vec3::new(0.2, 0.15, 0.1),
+            },
+            Vec3::new(-0.6, 0.6, -3.0),
+            Vec3::new(0.4, 0.0, 0.0),
+        ),
+        30 => drop(
+            LooseShape::Capsule {
+                half_height: 0.2,
+                radius: 0.1,
+            },
+            Vec3::new(3.6, 0.8, -1.0),
+            CAPSULE_VELOCITY,
+        ),
+        50 => drop(
+            LooseShape::Cylinder {
+                half_height: 0.15,
+                radius: 0.12,
+            },
+            Vec3::new(-0.3, 0.6, -1.5),
+            Vec3::new(0.5, 0.0, 0.2),
+        ),
+        70 => drop(
+            LooseShape::Sphere { radius: 0.2 },
+            Vec3::new(0.5, 0.5, -0.5),
+            Vec3::new(-0.8, 0.0, 0.3),
+        ),
+        120 => drop(
+            LooseShape::Box {
+                half_extents: Vec3::splat(0.15),
+            },
+            Vec3::new(1.2, 2.0, -2.0),
+            Vec3::new(0.0, -1.0, 0.0),
+        ),
+        200 => vec![LooseInput::Remove(0)],
+        350 => vec![LooseInput::Remove(3)],
+        _ => Vec::new(),
+    }
+}
+
 /// Walk toward the cuboid, then steer noisily with jump presses, a held jump and occasional effects.
 fn make_script() -> Vec<TickInput> {
     let mut rng = Lcg(SEED);
@@ -332,7 +401,11 @@ fn make_script() -> Vec<TickInput> {
             if tick == BOX_HIT_TICK {
                 effects.push((0, BOX_HIT));
             }
-            TickInput { effects, commands }
+            TickInput {
+                loose: loose_inputs(tick),
+                effects,
+                commands,
+            }
         })
         .collect()
 }
@@ -349,6 +422,7 @@ fn snapshot(scene: &Scene) -> Snapshot {
         characters: [first, second],
         box_translation: body.position().translation,
         box_rotation: body.position().rotation,
+        loose: scene.world.loose_states().collect(),
     }
 }
 
@@ -359,9 +433,19 @@ fn run(script: &[TickInput]) -> Vec<Snapshot> {
 
 fn run_in(mut scene: Scene, script: &[TickInput]) -> Vec<Snapshot> {
     let settings = settings();
+    let mut spawned: Vec<LooseId> = Vec::new();
     script
         .iter()
         .map(|tick| {
+            for input in &tick.loose {
+                match input {
+                    LooseInput::Spawn(spawn) => spawned.push(scene.world.spawn_loose(spawn)),
+                    LooseInput::Remove(index) => scene
+                        .world
+                        .remove_loose(spawned[*index])
+                        .expect("a script removes each drop once"),
+                }
+            }
             for &(who, effect) in &tick.effects {
                 scene
                     .world
@@ -418,6 +502,66 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 13] {
     ]
 }
 
+/// Every compared field of one loose object but its id and shape, as raw bits.
+fn loose_fields(state: &LooseState) -> [(&'static str, [u32; 4]); 5] {
+    let vec4 = |v: Vec3| {
+        let [x, y, z] = bits3(v);
+        [x, y, z, 0]
+    };
+    [
+        ("position", vec4(state.position)),
+        ("rotation", state.rotation.to_array().map(f32::to_bits)),
+        ("linear_velocity", vec4(state.linear_velocity)),
+        ("angular_velocity", vec4(state.angular_velocity)),
+        ("asleep", [u32::from(state.asleep), 0, 0, 0]),
+    ]
+}
+
+/// A shape as raw words: a variant tag, then each dimension's bits.
+fn shape_words(shape: LooseShape) -> Vec<u32> {
+    match shape {
+        LooseShape::Box { half_extents } => [vec![0], bits3(half_extents).to_vec()].concat(),
+        LooseShape::Capsule {
+            half_height,
+            radius,
+        } => vec![1, half_height.to_bits(), radius.to_bits()],
+        LooseShape::Cylinder {
+            half_height,
+            radius,
+        } => vec![2, half_height.to_bits(), radius.to_bits()],
+        LooseShape::Sphere { radius } => vec![3, radius.to_bits()],
+    }
+}
+
+fn loose_divergence(
+    tick: usize,
+    recorded: &[(LooseId, LooseState)],
+    replayed: &[(LooseId, LooseState)],
+) -> Option<Divergence> {
+    let at = |field| Divergence {
+        tick,
+        entity: "loose",
+        field,
+    };
+    if recorded.len() != replayed.len() {
+        return Some(at("count"));
+    }
+    for ((a_id, a), (b_id, b)) in recorded.iter().zip(replayed) {
+        if a_id != b_id {
+            return Some(at("id"));
+        }
+        if shape_words(a.shape) != shape_words(b.shape) {
+            return Some(at("shape"));
+        }
+        for ((field, x), (_, y)) in loose_fields(a).iter().zip(&loose_fields(b)) {
+            if x != y {
+                return Some(at(field));
+            }
+        }
+    }
+    None
+}
+
 fn first_divergence(recorded: &[Snapshot], replayed: &[Snapshot]) -> Option<Divergence> {
     assert_eq!(recorded.len(), replayed.len(), "the runs differ in length");
     for (tick, (a, b)) in recorded.iter().zip(replayed).enumerate() {
@@ -451,18 +595,32 @@ fn first_divergence(recorded: &[Snapshot], replayed: &[Snapshot]) -> Option<Dive
                 field: "rotation",
             });
         }
+        if let Some(divergence) = loose_divergence(tick, &a.loose, &b.loose) {
+            return Some(divergence);
+        }
     }
     None
 }
 
 /// FNV-1a 64 over the bits `first_divergence` compares: both characters' fields, then the
-/// box's translation and rotation. Hand-written so the hash is the same on every platform.
+/// box's translation and rotation, then the loose list: its length, and per object its id,
+/// shape and fields. Hand-written so the hash is the same on every platform.
 fn state_hash(snapshot: &Snapshot) -> u64 {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let loose_words = std::iter::once(snapshot.loose.len() as u32).chain(
+        snapshot.loose.iter().flat_map(|(id, state)| {
+            let id = id.get();
+            [id as u32, (id >> 32) as u32]
+                .into_iter()
+                .chain(shape_words(state.shape))
+                .chain(loose_fields(state).into_iter().flat_map(|(_, bits)| bits))
+        }),
+    );
     let box_words = bits3(snapshot.box_translation)
         .into_iter()
-        .chain(snapshot.box_rotation.to_array().map(f32::to_bits));
+        .chain(snapshot.box_rotation.to_array().map(f32::to_bits))
+        .chain(loose_words);
     let words = snapshot
         .characters
         .iter()
@@ -584,6 +742,54 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
     );
     kinds(|e| matches!(e, CharacterEffect::SetLook { .. }), "SetLook");
 
+    let loose_inputs = || script.iter().flat_map(|t| &t.loose);
+    let drops = loose_inputs()
+        .filter(|input| matches!(input, LooseInput::Spawn(_)))
+        .count();
+    let removals = loose_inputs()
+        .filter(|input| matches!(input, LooseInput::Remove(_)))
+        .count();
+    assert_eq!(
+        (drops, removals),
+        (5, 2),
+        "the script drops five and removes two"
+    );
+    let drops_of = |pick: fn(&LooseShape) -> bool| {
+        loose_inputs().any(|input| matches!(input, LooseInput::Spawn(s) if pick(&s.shape)))
+    };
+    assert!(
+        drops_of(|s| matches!(s, LooseShape::Box { .. })),
+        "no box drop"
+    );
+    assert!(
+        drops_of(|s| matches!(s, LooseShape::Capsule { .. })),
+        "no capsule drop"
+    );
+    assert!(
+        drops_of(|s| matches!(s, LooseShape::Cylinder { .. })),
+        "no cylinder drop"
+    );
+    assert!(
+        drops_of(|s| matches!(s, LooseShape::Sphere { .. })),
+        "no sphere drop"
+    );
+    assert_eq!(
+        recorded.iter().map(|s| s.loose.len()).max(),
+        Some(5),
+        "five objects were alive at once"
+    );
+    assert_eq!(
+        recorded[TICKS - 1].loose.len(),
+        3,
+        "two of the five were removed by the end"
+    );
+    assert!(
+        recorded[..TICKS - 100]
+            .iter()
+            .any(|s| s.loose.iter().any(|(_, state)| state.asleep)),
+        "no loose object fell asleep before the end"
+    );
+
     for index in 0..2 {
         let positions: Vec<Vec3> = recorded
             .iter()
@@ -700,6 +906,7 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
     let idle: Vec<TickInput> = script
         .iter()
         .map(|_| TickInput {
+            loose: Vec::new(),
             effects: Vec::new(),
             commands: [CharacterCommand::default(); 2],
         })
@@ -747,6 +954,20 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
 #[test]
 fn a_tick_of_commands_and_effects_round_trips_through_postcard() {
     let tick = TickInput {
+        loose: vec![
+            LooseInput::Spawn(LooseSpawn {
+                friction: 0.3,
+                restitution: 0.2,
+                linear_damping: 0.1,
+                angular_damping: 0.4,
+                position: Vec3::new(1.0, 2.0, -3.0),
+                rotation: Quat::from_rotation_y(0.7),
+                linear_velocity: Vec3::new(0.5, -1.0, 2.0),
+                angular_velocity: Vec3::new(0.1, 0.2, 0.3),
+                ..LooseSpawn::new(LooseShape::Sphere { radius: 0.25 }, 3.5)
+            }),
+            LooseInput::Remove(4),
+        ],
         effects: vec![
             (0, CharacterEffect::AddVelocity(Vec3::new(1.0, -2.5, 0.125))),
             (1, CharacterEffect::SetVelocity(Vec3::new(-3.0, 4.0, 5.5))),
@@ -833,6 +1054,62 @@ fn a_one_ulp_change_to_the_box_launch_velocity_breaks_the_replay() {
     let divergence = first_divergence(&recorded, &replayed)
         .expect("a one-ulp change to the box must show in the replay");
     assert_eq!(divergence.entity, "box", "{divergence:?}");
+}
+
+/// The script and where its capsule drop sits, with the capsule's launch x velocity raised by
+/// 1e-3 m/s.
+fn script_with_a_nudged_capsule() -> (Vec<TickInput>, usize) {
+    let mut script = make_script();
+    let (tick, slot) = script
+        .iter()
+        .enumerate()
+        .find_map(|(tick, t)| {
+            let slot = t.loose.iter().position(|input| {
+                matches!(
+                    input,
+                    LooseInput::Spawn(s) if matches!(s.shape, LooseShape::Capsule { .. })
+                )
+            })?;
+            Some((tick, slot))
+        })
+        .expect("the script drops a capsule");
+    let LooseInput::Spawn(spawn) = &mut script[tick].loose[slot] else {
+        unreachable!("the slot was found as a spawn");
+    };
+    spawn.linear_velocity.x += 1e-3;
+    (script, tick)
+}
+
+#[test]
+fn a_one_milli_change_to_a_loose_launch_velocity_breaks_the_replay() {
+    let recorded = run(&make_script());
+    let (altered, tick) = script_with_a_nudged_capsule();
+
+    let replayed = run(&altered);
+
+    let divergence = first_divergence(&recorded, &replayed)
+        .expect("a 1e-3 m/s change to a dropped object must show in the replay");
+    assert_eq!(divergence.entity, "loose", "{divergence:?}");
+    assert_eq!(divergence.tick, tick, "{divergence:?}");
+}
+
+#[test]
+fn a_one_milli_change_to_a_loose_launch_velocity_changes_the_state_hash() {
+    let recorded = hashes(&run(&make_script()));
+    let (altered, tick) = script_with_a_nudged_capsule();
+
+    let replayed = hashes(&run(&altered));
+
+    assert_eq!(recorded.len(), replayed.len());
+    assert_eq!(
+        &recorded[..tick],
+        &replayed[..tick],
+        "ticks before the drop match"
+    );
+    assert_ne!(
+        recorded[tick], replayed[tick],
+        "a 1e-3 m/s change left the hash of the drop tick unchanged"
+    );
 }
 
 #[test]

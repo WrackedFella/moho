@@ -1,5 +1,5 @@
-use super::query::encode_loose;
 use super::PhysicsWorld;
+use super::query::encode_loose;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
@@ -225,8 +225,9 @@ impl LooseSpawn {
 }
 
 /// A loose object as the game reads it back: plain data, no engine handle.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LooseState {
+    pub shape: LooseShape,
     pub position: Vec3,
     pub rotation: Quat,
     pub linear_velocity: Vec3,
@@ -370,14 +371,21 @@ impl PhysicsWorld {
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(self.loose.get(&id)?.body)?;
+        let loose = self.loose.get(&id)?;
+        let body = self.rigid_body_set.get(loose.body)?;
         Some(LooseState {
+            shape: loose.spawn.shape,
             position: body.translation(),
             rotation: *body.rotation(),
             linear_velocity: body.linvel(),
             angular_velocity: body.angvel(),
             asleep: body.is_sleeping(),
         })
+    }
+
+    /// Every live loose object, ascending id; never depends on handle or hash order.
+    pub fn loose_states(&self) -> impl Iterator<Item = (LooseId, LooseState)> + '_ {
+        std::iter::from_fn(|| todo!("loose_states"))
     }
 
     /// The object's pose at the last two ticks; `None` for an unknown id.
@@ -599,7 +607,7 @@ fn shrink(v: Vec3, cut: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, x_wall_mesh, TEST_TAG};
+    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh, x_wall_mesh};
     use crate::world::{HitTag, RayQuery};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
@@ -3741,5 +3749,175 @@ mod tests {
 
         assert_eq!(from_larger_world, None);
         assert_eq!(beyond_issued, None);
+    }
+
+    fn listed(world: &PhysicsWorld) -> Vec<(LooseId, LooseState)> {
+        world.loose_states().collect()
+    }
+
+    /// An entry as raw bits, so equality is bitwise and a NaN cannot hide a difference.
+    fn entry_bits(entry: &(LooseId, LooseState)) -> (u64, String, [u32; 13], bool) {
+        let (id, state) = entry;
+        (
+            id.get(),
+            format!("{:?}", state.shape),
+            bits(state),
+            state.asleep,
+        )
+    }
+
+    fn varied_spawns() -> Vec<LooseSpawn> {
+        let shapes = every_shape_with_sphere();
+        (0..8)
+            .map(|i| LooseSpawn {
+                position: Vec3::new(i as f32 * 0.4 - 1.5, 0.3 + i as f32 * 0.2, 0.0),
+                linear_velocity: Vec3::new(0.3 * i as f32, 0.0, 0.1),
+                ..LooseSpawn::new(shapes[i % shapes.len()].1, 0.2)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spawn_timing_within_a_tick_does_not_change_the_list() {
+        use crate::movement::CharacterCommand;
+        use crate::world::test_support::test_settings;
+        let settings = test_settings();
+        let command = CharacterCommand {
+            forward: 1.0,
+            ..CharacterCommand::default()
+        };
+        let mut before = world_with_floor(&floor_mesh(0.0));
+        let mut after = world_with_floor(&floor_mesh(0.0));
+        let far_before = before.add_character(Vec3::new(40.0, 1.2, 40.0));
+        let far_after = after.add_character(Vec3::new(40.0, 1.2, 40.0));
+        let spawns = varied_spawns();
+        for spawn in &spawns {
+            before.spawn_loose(spawn);
+        }
+        before
+            .move_character(far_before, &command, &settings, DT)
+            .expect("the character exists");
+        after
+            .move_character(far_after, &command, &settings, DT)
+            .expect("the character exists");
+        for spawn in &spawns {
+            after.spawn_loose(spawn);
+        }
+        before.step(DT);
+        after.step(DT);
+        let mut saw_asleep = false;
+
+        for tick in 1..=300 {
+            let (a, b) = (listed(&before), listed(&after));
+            assert_eq!(a.len(), spawns.len(), "tick {tick}: every object is listed");
+            let a_bits: Vec<_> = a.iter().map(entry_bits).collect();
+            let b_bits: Vec<_> = b.iter().map(entry_bits).collect();
+            assert_eq!(a_bits, b_bits, "tick {tick}: the lists differ");
+            saw_asleep |= a.iter().any(|(_, state)| state.asleep);
+            before
+                .move_character(far_before, &command, &settings, DT)
+                .expect("the character exists");
+            after
+                .move_character(far_after, &command, &settings, DT)
+                .expect("the character exists");
+            before.step(DT);
+            after.step(DT);
+        }
+        assert!(
+            saw_asleep,
+            "some object came to rest, so asleep was compared"
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn the_list_is_in_id_order_after_removals(
+            ops in proptest::collection::vec((any::<bool>(), 0usize..8), 0..30)
+        ) {
+            let mut world = PhysicsWorld::new();
+            let mut live: Vec<LooseId> = Vec::new();
+
+            for (spawn, pick) in ops {
+                if spawn || live.is_empty() {
+                    live.push(world.spawn_loose(&flat_box_spawn()));
+                } else {
+                    let id = live.remove(pick % live.len());
+                    prop_assert_eq!(world.remove_loose(id), Ok(()));
+                }
+            }
+
+            let ids: Vec<LooseId> = world.loose_states().map(|(id, _)| id).collect();
+            prop_assert!(ids.windows(2).all(|w| w[0] < w[1]), "not ascending: {ids:?}");
+            prop_assert_eq!(&ids, &live);
+            prop_assert_eq!(world.loose_states().count(), world.loose_count());
+        }
+    }
+
+    #[test]
+    fn the_list_reads_what_each_id_reads() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let spawns = varied_spawns();
+        let ids: Vec<LooseId> = spawns.iter().map(|s| world.spawn_loose(s)).collect();
+        run(&mut world, 40);
+        world.remove_loose(ids[2]).expect("the object is alive");
+
+        let list = listed(&world);
+
+        assert_eq!(list.len(), spawns.len() - 1);
+        for (id, state) in &list {
+            assert_eq!(Some(*state), world.loose(*id), "{id:?}");
+            assert_eq!(state.shape, spawns[id.get() as usize].shape, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn a_loose_state_carries_the_shape_it_was_spawned_with() {
+        let mut world = PhysicsWorld::new();
+        let ids: Vec<(LooseId, LooseShape)> = every_shape_with_sphere()
+            .into_iter()
+            .map(|(_, shape)| (world.spawn_loose(&LooseSpawn::new(shape, 1.0)), shape))
+            .collect();
+
+        for (id, shape) in ids {
+            assert_eq!(read(&world, id).shape, shape);
+        }
+    }
+
+    #[test]
+    fn a_spawn_round_trips_through_postcard() {
+        for (name, shape) in every_shape_with_sphere() {
+            let spawn = LooseSpawn {
+                friction: 0.3,
+                restitution: 0.2,
+                linear_damping: 0.1,
+                angular_damping: 0.4,
+                position: Vec3::new(1.0, 2.0, -3.0),
+                rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
+                linear_velocity: Vec3::new(0.5, -1.0, 2.0),
+                angular_velocity: Vec3::new(0.1, 0.2, 0.3),
+                ..LooseSpawn::new(shape, 3.5)
+            };
+
+            let bytes = postcard::to_allocvec(&spawn).expect("the spawn serialises");
+            let back: LooseSpawn = postcard::from_bytes(&bytes).expect("the spawn reads back");
+
+            assert_eq!(back, spawn, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_loose_state_round_trips_through_postcard() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        for spawn in varied_spawns() {
+            world.spawn_loose(&spawn);
+        }
+        run(&mut world, 20);
+
+        for (id, state) in listed(&world) {
+            let bytes = postcard::to_allocvec(&state).expect("the state serialises");
+            let back: LooseState = postcard::from_bytes(&bytes).expect("the state reads back");
+
+            assert_eq!(back, state, "{id:?}");
+        }
     }
 }
