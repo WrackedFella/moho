@@ -77,11 +77,17 @@ pub struct HumanoidSpec {
     pub rename: Vec<(&'static str, &'static str)>,
     /// Adds the `reload` clip after `walk` and `crouch`.
     pub reload: bool,
+    /// Adds the `idle` clip after `reload` (or after `crouch` without it).
+    pub idle: bool,
 }
 
 /// `reload` lasts this many seconds when the spec asks for it; `spine_01` rises and `hand_r`
-/// moves up, linearly from the first key to the last.
+/// moves up, and `thigh_l` and `calf_r` move too (an upper-body layer must ignore those),
+/// linearly from the first key to the last.
 pub const RELOAD_DURATION: f32 = 2.0;
+
+/// `idle` lasts this many seconds when the spec asks for it; `hand_l` and `thigh_l` drift.
+pub const IDLE_DURATION: f32 = 1.0;
 
 /// `(name, parent name, local translation)` in walk order.
 const NODES: [(&str, Option<&str>, [f32; 3]); 17] = [
@@ -104,7 +110,10 @@ const NODES: [(&str, Option<&str>, [f32; 3]); 17] = [
     ("foot_r", Some("calf_r"), [0.0, -0.45, 0.0]),
 ];
 
+const HAND_L: usize = 6;
 const HAND_R: usize = 9;
+const THIGH_L: usize = 11;
+const CALF_R: usize = 15;
 const PELVIS: usize = 0;
 
 /// One node in walk order.
@@ -286,15 +295,41 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
         let hand = [0.25, 0.0, 0.0, 0.25, 0.3, 0.0];
         let (spine_in, spine_out) = blob.keys(&times, &spine, "VEC3", 3);
         let (hand_in, hand_out) = blob.keys(&times, &hand, "VEC3", 3);
+        let thigh = [-0.1, -0.05, 0.0, -0.1, -0.05, 0.3];
+        let (thigh_in, thigh_out) = blob.keys(&times, &thigh, "VEC3", 3);
+        let calf = [0.0, -0.45, 0.0, 0.2, -0.45, 0.0];
+        let (calf_in, calf_out) = blob.keys(&times, &calf, "VEC3", 3);
         animations.push(json!({
             "name": "reload",
             "samplers": [
                 { "input": spine_in, "output": spine_out, "interpolation": "LINEAR" },
                 { "input": hand_in, "output": hand_out, "interpolation": "LINEAR" },
+                { "input": thigh_in, "output": thigh_out, "interpolation": "LINEAR" },
+                { "input": calf_in, "output": calf_out, "interpolation": "LINEAR" },
             ],
             "channels": [
                 { "sampler": 0, "target": { "node": file(1), "path": "translation" } },
                 { "sampler": 1, "target": { "node": file(HAND_R), "path": "translation" } },
+                { "sampler": 2, "target": { "node": file(THIGH_L), "path": "translation" } },
+                { "sampler": 3, "target": { "node": file(CALF_R), "path": "translation" } },
+            ],
+        }));
+    }
+    if spec.idle {
+        let times = [0.0, IDLE_DURATION];
+        let hand = [-0.25, 0.0, 0.0, -0.25, 0.05, 0.0];
+        let (hand_in, hand_out) = blob.keys(&times, &hand, "VEC3", 3);
+        let thigh = [-0.1, -0.05, 0.0, -0.1, -0.05, -0.1];
+        let (thigh_in, thigh_out) = blob.keys(&times, &thigh, "VEC3", 3);
+        animations.push(json!({
+            "name": "idle",
+            "samplers": [
+                { "input": hand_in, "output": hand_out, "interpolation": "LINEAR" },
+                { "input": thigh_in, "output": thigh_out, "interpolation": "LINEAR" },
+            ],
+            "channels": [
+                { "sampler": 0, "target": { "node": file(HAND_L), "path": "translation" } },
+                { "sampler": 1, "target": { "node": file(THIGH_L), "path": "translation" } },
             ],
         }));
     }

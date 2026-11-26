@@ -197,6 +197,15 @@ pub enum Playback {
     Ticks(NonZeroU32),
 }
 
+/// The nodes an action poses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    /// Every node.
+    Whole,
+    /// This node index and every node below it.
+    From(usize),
+}
+
 /// Why a clip could not be played.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -369,6 +378,7 @@ impl Animator {
         model: &Model,
         clip: &str,
         playback: Playback,
+        _region: Region,
     ) -> Result<(), ClipError> {
         self.action = Some(ClipPlayer::new(model, clip, playback)?);
         Ok(())
@@ -421,7 +431,9 @@ mod tests {
     use glam::{Affine3A, Quat, Vec3};
     use proptest::prelude::*;
 
-    use super::{Animator, Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Track};
+    use super::{
+        Animator, Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Region, Track,
+    };
     use crate::{Model, ModelNode};
 
     fn track_x(times: &[f32], xs: &[f32]) -> Track {
@@ -989,7 +1001,7 @@ mod tests {
         let model = model_with(vec![ramp(), moving("act", 9.0)]);
         let mut animator = animator_on(&model);
         animator
-            .play_action(&model, "act", ticks(1))
+            .play_action(&model, "act", ticks(1), Region::Whole)
             .expect("clip exists");
 
         animator.advance(&model, 0.5);
@@ -1023,7 +1035,7 @@ mod tests {
         let mut animator = animator_on(&model);
 
         animator
-            .play_action(&model, "still", Playback::Once)
+            .play_action(&model, "still", Playback::Once, Region::Whole)
             .expect("clip exists");
 
         assert!(animator.action().expect("playing").is_finished(&model));
@@ -1037,7 +1049,7 @@ mod tests {
         let model = model_with(vec![ramp(), moving("act", 9.0), moving("other", 5.0)]);
         let mut animator = animator_on(&model);
         animator
-            .play_action(&model, "act", ticks(10))
+            .play_action(&model, "act", ticks(10), Region::Whole)
             .expect("clip exists");
         for _ in 0..3 {
             animator.advance(&model, 0.5);
