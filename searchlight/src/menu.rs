@@ -282,6 +282,7 @@ mod tests {
             "Mouse Left",
             "R",
             "C",
+            "Hold C",
             "F8",
             "Q",
             "E",

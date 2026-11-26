@@ -1,7 +1,7 @@
 //! Wording the player reads for rifle state.
 
 use glam::Vec3;
-use searchlight_rules::{BodyPart, MagazineLevel};
+use searchlight_rules::{BodyPart, MagazineLevel, Rig};
 
 use crate::control::ControlAction;
 use crate::mode::Tally;
@@ -121,6 +121,53 @@ pub fn use_prompt(key: &str, action: ControlAction) -> String {
     format!("[{key}] {what}")
 }
 
+/// What one rig slot holds, as the strip shows it: never a round count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotMark {
+    Empty,
+    Present,
+}
+
+/// One mark per slot of `rig`, in slot order: a free slot or an empty magazine is `Empty`, any
+/// other magazine `Present`.
+pub fn rig_strip(rig: &Rig) -> Vec<SlotMark> {
+    rig.slots()
+        .iter()
+        .map(|slot| match slot {
+            Some(magazine) if magazine.rounds() > 0 => SlotMark::Present,
+            Some(_) | None => SlotMark::Empty,
+        })
+        .collect()
+}
+
+/// Whether `feedback` puts the rig strip up for the fade time.
+pub fn shows_strip(feedback: &Feedback) -> bool {
+    match feedback {
+        Feedback::ReloadDone => true,
+        Feedback::Fired
+        | Feedback::Dry
+        | Feedback::Hit { .. }
+        | Feedback::MagazineLevel(_)
+        | Feedback::EnemyFired { .. }
+        | Feedback::PlayerHit { .. }
+        | Feedback::Impact { .. }
+        | Feedback::EnemyDied { .. }
+        | Feedback::PlayerDied => false,
+    }
+}
+
+/// The strip's text, one word per slot such as `[mag] [mag] [empty]`.
+pub fn strip_text(marks: &[SlotMark]) -> String {
+    marks
+        .iter()
+        .map(|mark| match mark {
+            SlotMark::Present => "[mag]",
+            SlotMark::Empty => "[empty]",
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -141,6 +188,7 @@ pub fn death_overlay(dead: bool, screen: [u32; 2]) -> Option<Overlay> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mag;
 
     #[test]
     fn magazine_levels_read_as_the_acceptance_wording() {
@@ -159,6 +207,83 @@ mod tests {
 
         let expected: Vec<&str> = levels.iter().map(|&(_, w)| w).collect();
         assert_eq!(words, expected);
+    }
+
+    fn rig_holding(slots: u32, magazines: Vec<searchlight_rules::Magazine>) -> Rig {
+        let mut rig = Rig::new(
+            searchlight_rules::ItemId::new("test_rig"),
+            &searchlight_rules::RigSpec {
+                magazine_slots: slots,
+            },
+        );
+        for magazine in magazines {
+            rig.stow(magazine).expect("the rig has a slot per magazine");
+        }
+        rig
+    }
+
+    #[test]
+    fn the_strip_marks_two_present_one_empty() {
+        let rig = rig_holding(3, vec![mag(30, 30), mag(30, 30), mag(30, 0)]);
+
+        let strip = rig_strip(&rig);
+
+        assert_eq!(
+            strip,
+            [SlotMark::Present, SlotMark::Present, SlotMark::Empty]
+        );
+    }
+
+    #[test]
+    fn a_half_magazine_reads_present_with_no_number() {
+        let rig = rig_holding(3, vec![mag(30, 15), mag(30, 1), mag(30, 29)]);
+
+        let strip = rig_strip(&rig);
+
+        assert_eq!(strip, [SlotMark::Present; 3]);
+        assert_eq!(strip[0], rig_strip(&rig_holding(1, vec![mag(30, 30)]))[0]);
+        assert_eq!(format!("{:?}", strip[0]), "Present");
+    }
+
+    #[test]
+    fn the_strip_text_of_a_part_full_rig_holds_no_digit() {
+        let rig = rig_holding(3, vec![mag(30, 15), mag(30, 1), mag(30, 0)]);
+
+        let text = strip_text(&rig_strip(&rig));
+
+        assert_eq!(text, "[mag] [mag] [empty]");
+        assert!(!text.chars().any(|c| c.is_ascii_digit()), "{text}");
+    }
+
+    #[test]
+    fn an_unfilled_rig_slot_reads_empty() {
+        let rig = rig_holding(3, vec![mag(30, 30)]);
+
+        let strip = rig_strip(&rig);
+
+        assert_eq!(strip, [SlotMark::Present, SlotMark::Empty, SlotMark::Empty]);
+    }
+
+    #[test]
+    fn the_strip_reads_one_word_per_slot() {
+        let marks = [SlotMark::Present, SlotMark::Empty, SlotMark::Present];
+
+        assert_eq!(strip_text(&marks), "[mag] [empty] [mag]");
+        assert_eq!(strip_text(&[]), "");
+    }
+
+    #[test]
+    fn only_a_finished_reload_puts_the_strip_up() {
+        assert!(shows_strip(&Feedback::ReloadDone));
+        assert!(!shows_strip(&Feedback::Fired));
+        assert!(!shows_strip(&Feedback::Dry));
+    }
+
+    #[test]
+    fn a_rig_with_no_slots_has_an_empty_strip() {
+        let rig = rig_holding(0, vec![]);
+
+        assert_eq!(rig_strip(&rig), []);
     }
 }
 

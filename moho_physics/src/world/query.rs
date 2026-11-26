@@ -1,4 +1,4 @@
-use super::{CharacterHandle, PhysicsWorld};
+use super::{CharacterHandle, LooseId, PhysicsWorld};
 use glam::Vec3;
 use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, Ray};
 
@@ -24,8 +24,18 @@ pub struct RayHit {
     pub tag: HitTag,
 }
 
+/// Layout of a collider's `user_data`: bits 0..=31 hold a tag, bit 32 ([`TAGGED_BIT`]) marks a
+/// tagged collider, bit 33 ([`LOOSE_BIT`]) marks a loose object, bits 64..=127 hold the loose
+/// id. A collider is never both tagged and loose.
+///
 /// Set on every tagged collider's `user_data`, so tag 0 differs from an untagged collider (0).
 const TAGGED_BIT: u128 = 1 << 32;
+
+/// Set on every loose collider's `user_data`, with the id in bits 64..=127; see [`TAGGED_BIT`].
+const LOOSE_BIT: u128 = 1 << 33;
+
+/// How far the loose id sits above the flag bits in `user_data`.
+const LOOSE_ID_SHIFT: u32 = 64;
 
 pub(super) fn encode_tag(tag: HitTag) -> u128 {
     TAGGED_BIT + u128::from(tag.0)
@@ -40,20 +50,46 @@ fn decode_tag(user_data: u128) -> Option<HitTag> {
         .map(HitTag)
 }
 
+pub(super) fn encode_loose(id: LooseId) -> u128 {
+    LOOSE_BIT | (u128::from(id.get()) << LOOSE_ID_SHIFT)
+}
+
+fn decode_loose(user_data: u128) -> Option<LooseId> {
+    if user_data & LOOSE_BIT == 0 {
+        return None;
+    }
+    u64::try_from(user_data >> LOOSE_ID_SHIFT)
+        .ok()
+        .map(LooseId::from_raw)
+}
+
+/// What a ray reached first, before the caller reads the collider's identity.
+struct FirstHit {
+    collider: ColliderHandle,
+    point: Vec3,
+    normal: Vec3,
+    distance: f32,
+}
+
 impl PhysicsWorld {
-    /// The nearest tagged surface along `query`.
+    /// The loose object `query` reaches first, ahead of any tagged surface; `None` when a tagged
+    /// surface is nearer or nothing is in range. Reads the world as the last `step` left it.
     ///
-    /// Reads the world as the last `step` left it, so a tick moves characters, steps, then
-    /// casts rays. Untagged colliders (movement capsules, props) never stop a ray. The
-    /// direction is normalised, so its length does not matter; the normal faces back against
-    /// the ray. A zero or non-finite direction, or a `max_distance` that is not positive, hits
-    /// nothing.
-    pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
+    /// Characters' capsules and other untagged colliders never stop the look; their hit volumes
+    /// do, unless `query.ignore` names them. Invalid queries are as for [`PhysicsWorld::cast_ray`].
+    pub fn pick_loose(&self, query: &RayQuery) -> Option<LooseId> {
+        let hit = self.first_hit(query, |user_data| {
+            decode_tag(user_data).is_some() || decode_loose(user_data).is_some()
+        })?;
+        decode_loose(self.collider_set.get(hit.collider)?.user_data)
+    }
+
+    /// The first collider whose `user_data` satisfies `accepts` along `query`.
+    fn first_hit(&self, query: &RayQuery, accepts: impl Fn(u128) -> bool) -> Option<FirstHit> {
         let direction = query.direction.try_normalize()?;
         let ray = Ray::new(query.origin, direction);
-        let tagged =
-            |_: ColliderHandle, collider: &Collider| decode_tag(collider.user_data).is_some();
-        let mut filter = QueryFilter::default().predicate(&tagged);
+        let accepted = |_: ColliderHandle, collider: &Collider| accepts(collider.user_data);
+        let mut filter = QueryFilter::default().predicate(&accepted);
         if let Some(ignore) = query.ignore {
             filter = filter.exclude_rigid_body(ignore.0);
         }
@@ -65,12 +101,28 @@ impl PhysicsWorld {
         );
 
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, query.max_distance, true)?;
-        let tag = self.collider_tag(collider)?;
-        Some(RayHit {
+        Some(FirstHit {
+            collider,
             point: query.origin + direction * hit.time_of_impact,
             normal: hit.normal,
             distance: hit.time_of_impact,
-            tag,
+        })
+    }
+
+    /// The nearest tagged surface along `query`.
+    ///
+    /// Reads the world as the last `step` left it, so a tick moves characters, steps, then
+    /// casts rays. Untagged colliders (movement capsules, props) never stop a ray. The
+    /// direction is normalised, so its length does not matter; the normal faces back against
+    /// the ray. A zero or non-finite direction, or a `max_distance` that is not positive, hits
+    /// nothing.
+    pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
+        let hit = self.first_hit(query, |user_data| decode_tag(user_data).is_some())?;
+        Some(RayHit {
+            point: hit.point,
+            normal: hit.normal,
+            distance: hit.distance,
+            tag: self.collider_tag(hit.collider)?,
         })
     }
 
@@ -84,6 +136,7 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::{x_wall_mesh, x_wall_mesh_reversed};
     use super::*;
+    use crate::world::{HitVolume, LooseShape, LooseSpawn};
     use moho_render_api::WorldMeshId;
     use proptest::prelude::*;
 
@@ -401,6 +454,166 @@ mod tests {
             );
             assert_vec_near(hit.normal, Vec3::new(1.0, 0.0, 0.0));
             assert_vec_near(hit.point, Vec3::new(5.0, 0.0, 0.0));
+        }
+    }
+
+    fn weightless_world_with_box_at_x5() -> (PhysicsWorld, LooseId) {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(5.0, 0.0, 0.0),
+            ..LooseSpawn::new(
+                LooseShape::Box {
+                    half_extents: Vec3::splat(0.2),
+                },
+                1.0,
+            )
+        });
+        world.step(DT);
+        (world, id)
+    }
+
+    #[test]
+    fn a_look_skips_untagged_colliders_and_honours_ignore() {
+        let (mut world, id) = weightless_world_with_box_at_x5();
+        let character = world.add_character(Vec3::new(2.0, 0.0, 0.0));
+        world.step(DT);
+        let look = along_x(20.0);
+
+        let past_a_capsule = world.pick_loose(&look);
+        world
+            .set_hit_volumes(
+                character,
+                &[HitVolume {
+                    offset: Vec3::ZERO,
+                    rotation: glam::Quat::IDENTITY,
+                    half_extents: Vec3::splat(0.5),
+                    tag: HitTag(3),
+                }],
+            )
+            .expect("the character is alive");
+        world.step(DT);
+        let behind_a_hit_volume = world.pick_loose(&look);
+        let ignoring_the_character = world.pick_loose(&RayQuery {
+            ignore: Some(character),
+            ..look
+        });
+
+        assert_eq!(
+            past_a_capsule,
+            Some(id),
+            "an untagged capsule between eye and box must not hide the box"
+        );
+        assert_eq!(
+            behind_a_hit_volume, None,
+            "a tagged hit volume between eye and box must hide the box"
+        );
+        assert_eq!(
+            ignoring_the_character,
+            Some(id),
+            "ignoring the character must let the look through its hit volumes"
+        );
+    }
+
+    fn spawn_box_at(world: &mut PhysicsWorld, x: f32) -> LooseId {
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(x, 0.0, 0.0),
+            ..LooseSpawn::new(
+                LooseShape::Box {
+                    half_extents: Vec3::splat(0.2),
+                },
+                1.0,
+            )
+        })
+    }
+
+    #[test]
+    fn a_degenerate_look_finds_nothing_though_a_good_one_finds_the_box() {
+        let (world, id) = weightless_world_with_box_at_x5();
+        let good = along_x(20.0);
+        let directions = [
+            Vec3::ZERO,
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            Vec3::new(1.0, f32::NEG_INFINITY, 0.0),
+            Vec3::new(1.0, 0.0, f32::NAN),
+        ];
+
+        let control = world.pick_loose(&good);
+
+        assert_eq!(control, Some(id), "a good look finds the box");
+        for direction in directions {
+            let picked = world.pick_loose(&RayQuery { direction, ..good });
+            assert_eq!(picked, None, "direction {direction:?}");
+        }
+        for max_distance in [0.0, -1.0, f32::NEG_INFINITY, f32::NAN] {
+            let picked = world.pick_loose(&along_x(max_distance));
+            assert_eq!(picked, None, "max_distance {max_distance}");
+        }
+    }
+
+    #[test]
+    fn a_look_reports_the_nearer_of_two_boxes() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let near = spawn_box_at(&mut world, 3.0);
+        let far = spawn_box_at(&mut world, 6.0);
+        world.step(DT);
+
+        let both = world.pick_loose(&along_x(20.0));
+        let far_only = world.pick_loose(&RayQuery {
+            origin: Vec3::new(4.0, 0.0, 0.0),
+            ..along_x(20.0)
+        });
+
+        assert_eq!(both, Some(near), "the nearer box hides the farther");
+        assert_eq!(
+            far_only,
+            Some(far),
+            "past the near box the far one is found"
+        );
+        assert_ne!(near, far);
+    }
+
+    #[test]
+    fn max_distance_bounds_a_look() {
+        let (world, id) = weightless_world_with_box_at_x5();
+
+        let within = world.pick_loose(&along_x(6.0));
+        let short = world.pick_loose(&along_x(4.0));
+
+        assert_eq!(within, Some(id), "the box is within reach");
+        assert_eq!(short, None, "the box is beyond max_distance");
+    }
+
+    proptest! {
+        #[test]
+        fn a_look_in_an_empty_world_finds_nothing(
+            origin in prop::array::uniform3(-100.0f32..100.0),
+            direction in prop::array::uniform3(-1.0f32..1.0),
+            max_distance in 0.0f32..1000.0,
+        ) {
+            let mut world = PhysicsWorld::new();
+            world.step(DT);
+
+            let picked = world.pick_loose(&RayQuery {
+                origin: Vec3::from(origin),
+                direction: Vec3::from(direction),
+                max_distance,
+                ignore: None,
+            });
+
+            prop_assert_eq!(picked, None);
+        }
+
+        #[test]
+        fn loose_and_tag_encodings_never_collide(tag in any::<u32>(), id in any::<u64>()) {
+            let loose = LooseId::from_raw(id);
+
+            prop_assert_eq!(decode_loose(encode_tag(HitTag(tag))), None);
+            prop_assert_eq!(decode_tag(encode_loose(loose)), None);
+            prop_assert_eq!(decode_loose(encode_loose(loose)), Some(loose));
+            prop_assert_eq!(decode_tag(encode_tag(HitTag(tag))), Some(HitTag(tag)));
         }
     }
 

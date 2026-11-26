@@ -32,6 +32,9 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
     },
 };
 
+/// Ticks the rig strip stays up after a reload or switch.
+pub const STRIP_FADE_TICKS: u32 = 180;
+
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 pub fn tuning(kit: Kit) -> SimConfig {
     let Kit {

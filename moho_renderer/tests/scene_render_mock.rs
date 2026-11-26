@@ -60,6 +60,8 @@ struct MockRenderer {
     pub renders: std::cell::RefCell<Vec<String>>,
     pub drawn_handles: std::cell::RefCell<Vec<u32>>,
     pub enqueues: Vec<Enqueue>,
+    /// Each `enqueue_shadow_only_draw` call as `(mesh handle, instances)`.
+    pub shadow_only: Vec<(u32, Vec<InstanceGpu>)>,
     pub uploads: u32,
     next_handle: u32,
 }
@@ -70,6 +72,7 @@ impl MockRenderer {
             renders: std::cell::RefCell::new(Vec::new()),
             drawn_handles: std::cell::RefCell::new(Vec::new()),
             enqueues: Vec::new(),
+            shadow_only: Vec::new(),
             uploads: 0,
             next_handle: 100,
         }
@@ -133,8 +136,93 @@ impl RendererBackend for MockRenderer {
     fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[moho_renderer::InstanceGpu]) {
         self.enqueues.push((true, mesh, instances.to_vec()));
     }
+    fn enqueue_shadow_only_draw(&mut self, mesh: u32, instances: &[moho_renderer::InstanceGpu]) {
+        self.shadow_only.push((mesh, instances.to_vec()));
+    }
     fn submit_frame(&mut self) {}
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+}
+
+/// A backend that records through a [`MockRenderer`] but keeps the trait's default
+/// `enqueue_shadow_only_draw`.
+struct DefaultShadowBackend(MockRenderer);
+
+impl RendererBackend for DefaultShadowBackend {
+    fn update_lighting(&mut self, lighting: moho_renderer::LightingGpu) {
+        self.0.update_lighting(lighting);
+    }
+    fn resize(&mut self, width: u32, height: u32) {
+        self.0.resize(width, height);
+    }
+    fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
+        self.0.register_mesh(vertices)
+    }
+    fn register_indexed_mesh(
+        &mut self,
+        vertices: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        ao: &[f32],
+        geometry_type: &[u32],
+        light_level: &[f32],
+        block_light_rgb: &[[f32; 3]],
+        sky_exposed: &[f32],
+        material: &[u32],
+        indices: &[u32],
+    ) -> u32 {
+        self.0.register_indexed_mesh(
+            vertices,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+            indices,
+        )
+    }
+    fn unregister_mesh(&mut self, mesh: u32) {
+        self.0.unregister_mesh(mesh);
+    }
+    fn add_point_light(
+        &mut self,
+        position: glam::Vec3,
+        color: glam::Vec3,
+        intensity: f32,
+        range: f32,
+    ) -> u32 {
+        self.0.add_point_light(position, color, intensity, range)
+    }
+    fn remove_light(&mut self, id: u32) -> bool {
+        self.0.remove_light(id)
+    }
+    fn set_light_position(&mut self, id: u32, position: glam::Vec3) {
+        self.0.set_light_position(id, position);
+    }
+    fn set_light_enabled(&mut self, id: u32, enabled: bool) {
+        self.0.set_light_enabled(id, enabled);
+    }
+    fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        self.0.set_shadow_quality(quality)
+    }
+    fn set_ssao_quality(&mut self, quality: u8) {
+        self.0.set_ssao_quality(quality);
+    }
+    fn begin_frame(
+        &mut self,
+        camera: (glam::Mat4, glam::Mat4, Vec3),
+    ) -> Result<(), moho_renderer::FrameError> {
+        self.0.begin_frame(camera)
+    }
+    fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_renderer::InstanceGpu]) {
+        self.0.enqueue_draw(mesh, instances);
+    }
+    fn submit_frame(&mut self) {
+        self.0.submit_frame();
+    }
+    fn set_materials(&mut self, materials: &[MaterialGpu]) {
+        self.0.set_materials(materials);
+    }
 }
 
 fn camera() -> (glam::Mat4, glam::Mat4, Vec3) {
@@ -306,5 +394,179 @@ fn a_streak_is_enqueued_unshadowed_after_the_world_draws() {
             *unshadowed == frames.iter().any(|f| f.0 && f.1 == *mesh)
         }),
         "the streak mesh is never queued as an ordinary draw"
+    );
+}
+
+const BOX: WorldMeshId = WorldMeshId(7);
+
+/// The handle `MockRenderer` returns for its first indexed upload.
+const FIRST_UPLOAD_HANDLE: u32 = 101;
+
+fn box_mesh() -> WorldMesh {
+    WorldMesh::new(
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        vec![[0.0, 1.0, 0.0]; 3],
+        vec![1.0; 3],
+        vec![[1.0; 3]; 3],
+        vec![1.0; 3],
+        vec![0; 3],
+        vec![0, 1, 2],
+    )
+    .expect("well-formed triangle")
+}
+
+fn at(x: f32) -> glam::Affine3A {
+    glam::Affine3A::from_translation(Vec3::new(x, 0.0, 0.0))
+}
+
+#[test]
+fn a_shadow_only_placement_is_enqueued_shadow_only_and_never_drawn() {
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(BOX, box_mesh());
+    scene.world_meshes_mut().place_shadow_only(BOX, at(2.0));
+
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    assert_eq!(mock.uploads, 1, "the box is uploaded once");
+    assert_eq!(mock.shadow_only.len(), 1, "one shadow-only enqueue");
+    let (handle, instances) = &mock.shadow_only[0];
+    assert_eq!(*handle, FIRST_UPLOAD_HANDLE);
+    assert_eq!(instances.len(), 1);
+    assert_eq!(
+        instances[0].model,
+        glam::Mat4::from(at(2.0)).to_cols_array_2d()
+    );
+    assert!(
+        mock.enqueues
+            .iter()
+            .all(|(_, mesh, _)| *mesh != FIRST_UPLOAD_HANDLE),
+        "no ordinary or unshadowed draw carries the box, enqueues = {:?}",
+        mock.enqueues.iter().map(|e| (e.0, e.1)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_shadow_only_placement_moves_by_1_m_without_an_upload() {
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(BOX, box_mesh());
+
+    scene.world_meshes_mut().place_shadow_only(BOX, at(2.0));
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+    let uploads_after_first = mock.uploads;
+    scene.world_meshes_mut().place_shadow_only(BOX, at(3.0));
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    assert_eq!(uploads_after_first, 1);
+    assert_eq!(mock.uploads, uploads_after_first, "moving never uploads");
+    assert_eq!(mock.shadow_only.len(), 2, "one shadow-only enqueue a frame");
+    let (first, second) = (&mock.shadow_only[0], &mock.shadow_only[1]);
+    assert_eq!(first.0, second.0, "the same mesh both frames");
+    assert_eq!(first.1.len(), 1);
+    assert_eq!(second.1.len(), 1);
+    let moved = second.1[0].model[3][0] - first.1[0].model[3][0];
+    assert!((moved - 1.0).abs() < f32::EPSILON, "moved {moved} m");
+}
+
+#[test]
+fn the_default_backend_drops_a_shadow_only_draw() {
+    let mut scene = moho_renderer::Scene::new();
+    let mut backend = DefaultShadowBackend(MockRenderer::new());
+    let sphere_handle = backend.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = backend.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(BOX, box_mesh());
+    scene.world_meshes_mut().place_shadow_only(BOX, at(2.0));
+
+    scene
+        .render::<Prop, Prop>(&mut backend, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    assert_eq!(backend.0.uploads, 1, "the box is registered");
+    assert!(
+        backend.0.shadow_only.is_empty(),
+        "the default method records nothing"
+    );
+    assert!(
+        backend
+            .0
+            .enqueues
+            .iter()
+            .all(|(_, mesh, _)| *mesh != FIRST_UPLOAD_HANDLE),
+        "the default must not fall back to a drawn enqueue"
+    );
+}
+
+#[test]
+fn a_shadow_only_placement_lasts_one_frame() {
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(BOX, box_mesh());
+
+    scene.world_meshes_mut().place_shadow_only(BOX, at(2.0));
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+    let after_first = mock.shadow_only.len();
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    assert_eq!(after_first, 1, "one enqueue in the placed frame");
+    assert_eq!(
+        mock.shadow_only.len(),
+        after_first,
+        "none in the frame without a placement"
+    );
+}
+
+#[test]
+fn interleaved_shadow_only_placements_enqueue_per_id_in_id_then_call_order() {
+    let (first, second) = (WorldMeshId(1), WorldMeshId(2));
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(first, box_mesh());
+    scene.world_meshes_mut().upsert_movable(second, box_mesh());
+    scene.world_meshes_mut().place_shadow_only(second, at(1.0));
+    scene.world_meshes_mut().place_shadow_only(first, at(2.0));
+    scene.world_meshes_mut().place_shadow_only(second, at(3.0));
+
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    let enqueued: Vec<(u32, Vec<(f32, u32)>)> = mock
+        .shadow_only
+        .iter()
+        .map(|(mesh, instances)| {
+            (
+                *mesh,
+                instances
+                    .iter()
+                    .map(|i| (i.model[3][0], i.material))
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        enqueued,
+        vec![
+            (FIRST_UPLOAD_HANDLE, vec![(2.0, 0)]),
+            (FIRST_UPLOAD_HANDLE + 1, vec![(1.0, 0), (3.0, 0)]),
+        ]
     );
 }

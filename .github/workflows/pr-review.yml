@@ -268,12 +268,16 @@ jobs:
               else "### Review run: \(length) permission denial(s)\n" +
                    (map("- `\(.tool_name)`: `\(.tool_input | tostring | .[0:300])`") | join("\n"))
               end' "$EXECUTION_FILE" | tee -a "$GITHUB_STEP_SUMMARY"
+      # A push during the review (an orchestrate run still finishing its PR) makes this review
+      # stale. Nothing else reviews a pushed head (synchronize is not a trigger), so dispatch a
+      # review of the new head before failing this one.
       - name: Check the head did not move
         if: steps.review.outcome == 'success'
         run: |
           now=$(gh api "repos/$GH_REPO/pulls/$PR" --jq .head.sha)
           if [ "$now" != "$HEAD_SHA" ]; then
-            echo "::error::PR #$PR head moved from $HEAD_SHA to $now during the review."
+            echo "::error::PR #$PR head moved from $HEAD_SHA to $now during the review; a review of $now is dispatched."
+            gh workflow run pr-review.yml --ref "${{ github.event.repository.default_branch }}" -f pr="$PR"
             exit 1
           fi
       # The verdict lines open the review the skill posted for this head. No review means the

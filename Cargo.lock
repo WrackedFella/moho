@@ -2012,7 +2012,9 @@ dependencies = [
  "moho_audio",
  "moho_input",
  "moho_renderer",
+ "postcard",
  "proptest",
+ "serde",
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
@@ -2040,6 +2042,7 @@ dependencies = [
  "criterion",
  "glam 0.33.12",
  "ini",
+ "libm",
  "moho_render_api",
  "postcard",
  "proptest",
@@ -2088,6 +2091,7 @@ name = "moho_physics"
 version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
+ "moho_core",
  "moho_render_api",
  "postcard",
  "proptest",
