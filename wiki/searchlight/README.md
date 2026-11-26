@@ -19,7 +19,6 @@ Today's non-test platform calls in `searchlight_rules` and `searchlight`:
 | Site | Calls | Status |
 |---|---|---|
 | `searchlight_rules/src/accuracy.rs` `disc_offset` | `tan`, `cos`, `sin` | sim: shot spread |
-| `searchlight/src/sim.rs` `nearest_waypoint` | `hypot`, `atan2` | sim: patrol start and heading |
 | `searchlight/src/game.rs` `tick` | `hypot` | check: player speed passed to the head bob |
 | `searchlight/src/game.rs` `gap` | `tan` | presentation: crosshair |
 | `searchlight/src/game.rs` `frame` | `atan2` | presentation: view yaw |
