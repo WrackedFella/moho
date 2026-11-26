@@ -5903,6 +5903,118 @@ mod tests {
     }
 
     #[test]
+    fn crosshair_bars_scale_their_alpha_with_the_opacity_and_keep_white() {
+        let bar_colors = |opacity: i32| {
+            let mut crosshair = Crosshair {
+                opacity,
+                ..Crosshair::default()
+            };
+            let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+            frame.meshes[0]
+                .vertices
+                .iter()
+                .map(|vertex| vertex.color)
+                .collect::<Vec<_>>()
+        };
+
+        for (opacity, alpha) in [(100, 255), (50, 128), (10, 26)] {
+            let colors = bar_colors(opacity);
+
+            assert_eq!(colors.len(), 16, "opacity {opacity}");
+            assert!(
+                colors.iter().all(|&color| color == [255, 255, 255, alpha]),
+                "opacity {opacity}: {colors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_saved_field_of_view_draws_the_first_frame_and_sizes_the_crosshair_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("fov", "50").unwrap();
+        let mut saved = game().with_debug_settings(DebugSettings::new(prefs, path.clone()));
+        let mut default = game().with_debug_settings(DebugSettings::new(Prefs::default(), path));
+        let spread = 0.05_f32;
+        let first_bar_left = |game: &SearchlightGame| {
+            let mut crosshair = game.stage.crosshair.lock().unwrap();
+            crosshair.spread = spread;
+            let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+            frame.meshes[0].vertices[0].pos[0]
+        };
+
+        let drawn_saved = drawn_fov_degrees(&mut saved);
+        let drawn_default = drawn_fov_degrees(&mut default);
+        let saved_left = first_bar_left(&saved);
+        let default_left = first_bar_left(&default);
+
+        assert!((drawn_saved - 50.0).abs() < 1e-3, "saved: {drawn_saved}");
+        assert!(
+            (drawn_default - 75.0).abs() < 1e-3,
+            "default: {drawn_default}"
+        );
+        let left_at =
+            |fov: f32| 400.0 - Crosshair::gap(spread, fov.to_radians(), 600.0) - Crosshair::LENGTH;
+        assert!((saved_left - left_at(50.0)).abs() < 1e-3, "{saved_left}");
+        assert!(
+            (default_left - left_at(75.0)).abs() < 1e-3,
+            "{default_left}"
+        );
+        assert!(
+            saved_left < default_left,
+            "a narrower view opens the gap wider"
+        );
+    }
+
+    #[test]
+    fn applying_the_game_page_after_display_keeps_the_applied_field_of_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("crosshair_opacity", "40").unwrap();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let mut game = game_with_prefs(prefs, &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Display");
+        focus_game_slider(&game, "fov");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 5]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let after_display = Prefs::load_from(&path).0;
+
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        choose_page(&mut game, &mut ctx, "Game");
+        focus_game_slider(&game, "crosshair_opacity");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 2]);
+        focus_game_slider(&game, "head_bob");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight; 2]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let after_game = Prefs::load_from(&path).0;
+
+        let stored = |prefs: &Prefs| {
+            ["fov", "crosshair_opacity", "head_bob"]
+                .map(|key| prefs.game_value(key).map(str::to_owned))
+        };
+        assert_eq!(
+            stored(&after_display),
+            [Some("70"), Some("40"), Some("25")].map(|value| value.map(str::to_owned)),
+            "a Display apply writes the other rows as they were"
+        );
+        assert_eq!(
+            stored(&after_game),
+            [Some("70"), Some("20"), Some("35")].map(|value| value.map(str::to_owned))
+        );
+        let drawn = drawn_fov_degrees(&mut game);
+        assert!((drawn - 70.0).abs() < 1e-3, "live view: {drawn}");
+        assert_eq!(game.head_bob, head_bob_level(35));
+    }
+
+    #[test]
     fn respawn_resets_the_bob() {
         let mut game = bobbing_game(100);
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
