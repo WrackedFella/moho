@@ -360,27 +360,54 @@ impl Model {
     /// # Panics
     /// When `clip` is not an index into [`Model::clips`].
     pub fn pose(&self, clip: usize, time: f32) -> Pose {
+        self.compose(self.locals_of(clip, time))
+    }
+
+    /// The pose of `base` (clip, time) with every node from `from` down (the node and all
+    /// below it) taking its local from `action` (clip, time); other nodes keep the base's.
+    /// Locals are swapped, not globals, so the upper body rides the base's pelvis. A
+    /// `from` past the last node layers nothing, so the result is the base pose.
+    ///
+    /// # Panics
+    /// When a clip is not an index into [`Model::clips`].
+    pub fn layered_pose(&self, base: (usize, f32), action: (usize, f32), from: usize) -> Pose {
+        let mut locals = self.locals_of(base.0, base.1);
+        let action_locals = self.locals_of(action.0, action.1);
+        let mut in_region = vec![false; self.nodes.len()];
+        for (index, node) in self.nodes.iter().enumerate() {
+            in_region[index] = index == from || node.parent.is_some_and(|p| in_region[p]);
+            if in_region[index] {
+                locals[index] = action_locals[index];
+            }
+        }
+        self.compose(locals)
+    }
+
+    /// Each node's local at `time` of `clip`: nodes no channel targets keep `local` exactly,
+    /// targeted nodes replace the animated properties of their decomposed `local`.
+    fn locals_of(&self, clip: usize, time: f32) -> Vec<Affine3A> {
         let animated = self.clips[clip].locals_at(&self.nodes, time);
+        self.nodes
+            .iter()
+            .zip(animated)
+            .map(|(node, animated)| {
+                animated.map_or(node.local, |(scale, rotation, translation)| {
+                    Affine3A::from_scale_rotation_translation(scale, rotation, translation)
+                })
+            })
+            .collect()
+    }
+
+    /// Globals from the chosen `locals`, parent-first in walk order.
+    fn compose(&self, locals: Vec<Affine3A>) -> Pose {
         let mut globals: Vec<Affine3A> = Vec::with_capacity(self.nodes.len());
-        for (node, animated) in self.nodes.iter().zip(animated) {
-            let local = animated.map_or(node.local, |(scale, rotation, translation)| {
-                Affine3A::from_scale_rotation_translation(scale, rotation, translation)
-            });
+        for (node, local) in self.nodes.iter().zip(locals) {
             // The same product the loader forms for `rest`, so an unanimated chain
             // reproduces it bit for bit.
             let global = node.parent.map_or(local, |p| globals[p] * local);
             globals.push(global);
         }
         Pose::new(globals)
-    }
-
-    /// The pose of `base` (clip, time) with every node from `from` down (the node and all
-    /// below it) taking its local from `action` (clip, time); other nodes keep the base's.
-    ///
-    /// # Panics
-    /// When a clip is not an index into [`Model::clips`].
-    pub fn layered_pose(&self, base: (usize, f32), _action: (usize, f32), _from: usize) -> Pose {
-        self.pose(base.0, base.1)
     }
 
     /// Per joint of `skin`, `pose[joint] * inverse_bind`, in model space.
