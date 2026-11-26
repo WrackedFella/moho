@@ -5,7 +5,8 @@
 
 use std::f32::consts::PI;
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
+use moho_core::sim_math;
 use searchlight_rules::Grade;
 
 /// What the enemy knows this tick.
@@ -402,7 +403,7 @@ impl Brain {
 }
 
 pub(crate) fn flat_distance(a: Vec3, b: Vec3) -> f32 {
-    (b.x - a.x).hypot(b.z - a.z)
+    Vec2::new(b.x - a.x, b.z - a.z).length()
 }
 
 /// Wraps an angle into `[-PI, PI)`.
@@ -413,7 +414,7 @@ fn wrap(angle: f32) -> f32 {
 /// The turn this tick towards `point`, clamped to `max_turn`, and the full signed gap.
 fn turn_towards(percept: &Percept, point: Vec3, max_turn: f32) -> (f32, f32) {
     let offset = point - percept.position;
-    let gap = wrap(offset.x.atan2(offset.z) - percept.yaw);
+    let gap = wrap(sim_math::atan2(offset.x, offset.z) - percept.yaw);
     (gap.clamp(-max_turn, max_turn), gap)
 }
 
