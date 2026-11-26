@@ -249,16 +249,9 @@ const PLAYER_OUTLINE: [f32; 4] = [0.2, 1.0, 0.3, 1.0];
 const ENEMY_OUTLINE: [f32; 4] = [1.0, 0.2, 0.2, 1.0];
 const DUMMY_OUTLINE: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
 
-/// Marker ids of the hit-volume outlines start here; `character` 0 is the player, a target
-/// numbered `t` is character `t + 1`, and each has up to [`OUTLINE_SLOTS`] volumes.
+/// The hit-volume outlines take marker ids counting up from here, renumbered every frame
+/// because the markers are cleared before each placement.
 const OUTLINE_ID_BASE: u64 = 1 << 32;
-const OUTLINE_SLOTS: u64 = 16;
-/// Dummy outlines count up from here, clear of every character's range.
-const DUMMY_OUTLINE_BASE: u64 = OUTLINE_ID_BASE + (1 << 24);
-
-fn outline_id(character: u64, slot: usize) -> MarkerId {
-    MarkerId(OUTLINE_ID_BASE + character * OUTLINE_SLOTS + slot as u64)
-}
 
 /// One enemy as box segments: the six body parts and the gun, which flashes when it fires.
 #[derive(Debug)]
@@ -794,34 +787,32 @@ impl Stage {
             return;
         }
         self.outlines_placed = true;
-        let body = sim.character_body();
+        let enemy_volumes = dummy_hit_volumes_of(sim.character_body(), 0);
+        let player = sim.player();
+        let players = sim.player_hit_volumes().iter().map(|volume| {
+            let bounds = volume_bounds(player.position, player.yaw, volume);
+            (bounds, PLAYER_OUTLINE)
+        });
+        let enemies = (0..sim.enemy_count())
+            .filter_map(|index| sim.enemy_state(index))
+            .flat_map(|state| {
+                enemy_volumes.iter().map(move |volume| {
+                    let bounds = volume_bounds(state.position, state.yaw, volume);
+                    (bounds, ENEMY_OUTLINE)
+                })
+            });
+        let dummies = self
+            .segments
+            .iter()
+            .map(|segment| (segment.bounds, DUMMY_OUTLINE));
         let markers = self.scene.markers_mut();
         markers.clear();
-        let mut place = |id: MarkerId, bounds: (Vec3, Vec3), color: [f32; 4]| {
-            markers.upsert(
-                id,
-                Marker::new(bounds.0.to_array(), bounds.1.to_array(), color)
-                    .with_style(MarkerStyle::Outline),
-            );
-        };
-        let player = sim.player();
-        for (slot, volume) in sim.player_hit_volumes().iter().enumerate() {
-            let bounds = volume_bounds(player.position, player.yaw, volume);
-            place(outline_id(0, slot), bounds, PLAYER_OUTLINE);
-        }
-        for index in 0..sim.enemy_count() {
-            let Some(state) = sim.enemy_state(index) else {
-                continue;
-            };
-            let target = (self.dummy_count + index) as u64;
-            for (slot, volume) in dummy_hit_volumes_of(body, 0).iter().enumerate() {
-                let bounds = volume_bounds(state.position, state.yaw, volume);
-                place(outline_id(target + 1, slot), bounds, ENEMY_OUTLINE);
-            }
-        }
-        for (index, segment) in self.segments.iter().enumerate() {
-            let id = MarkerId(DUMMY_OUTLINE_BASE + index as u64);
-            place(id, segment.bounds, DUMMY_OUTLINE);
+        for (next, (bounds, color)) in
+            (OUTLINE_ID_BASE..).zip(players.chain(enemies).chain(dummies))
+        {
+            let outline = Marker::new(bounds.0.to_array(), bounds.1.to_array(), color)
+                .with_style(MarkerStyle::Outline);
+            markers.upsert(MarkerId(next), outline);
         }
     }
 
