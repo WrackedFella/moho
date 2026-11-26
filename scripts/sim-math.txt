@@ -4,3 +4,4 @@ moho_physics/src/world/slide.rs
 moho_physics/src/world/character.rs
 moho_physics/src/world/query.rs
 searchlight/src/brain.rs
+searchlight/src/lean.rs
