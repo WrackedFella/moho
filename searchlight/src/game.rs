@@ -7095,6 +7095,41 @@ mod tests {
     }
 
     #[test]
+    fn a_search_finishing_with_the_inventory_open_adds_the_body_list() {
+        let (mut game, mut clock) = game_beside_a_body();
+        let clock_for_ctx = GameClock::default();
+        let mut ctx = EventContext::new(&clock_for_ctx, None, None);
+        let using = SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &using);
+        game.route_input(&mut ctx, TAB, true, false);
+        game.route_input(&mut ctx, TAB, false, false);
+        assert_eq!(game.screen, Screen::Inventory);
+        let before = lists_on_top(&game);
+
+        for _ in 0..30 {
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        }
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+        let after = lists_on_top(&game);
+        game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+
+        assert_eq!(before, Some(3), "no body list while none is open");
+        assert_eq!(after, Some(4), "the body list joined the one screen");
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!game.stage.shell().menu_mut().is_open(), "no screen left");
+    }
+
+    /// How many lists the screen on top shows, or `None` when it is not a lists screen.
+    fn lists_on_top(game: &SearchlightGame) -> Option<usize> {
+        let mut shell = game.stage.shell();
+        shell.menu_mut().top_lists().map(|lists| lists.lists.len())
+    }
+
+    #[test]
     fn a_second_move_before_the_command_is_taken_is_dropped() {
         use crate::inventory::{BODY, INVENTORY, MAGAZINE_SLOTS};
 

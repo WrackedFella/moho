@@ -1270,7 +1270,7 @@ impl SearchlightSim {
                 dead.point.distance(eye) <= reach && passes_within(eye, end, dead.point, radius)
             })
             .map(|(&number, dead)| (number, (dead.point - eye).dot(view.forward).max(0.0)))
-            .filter(|&(_, along)| strike.is_none_or(|strike| strike.distance >= along))
+            .filter(|&(_, along)| strike.is_none_or(|strike| strike.distance >= along - radius))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(number, _)| number)
     }
@@ -4454,6 +4454,41 @@ mod tests {
         assert_eq!(far.body_in_view(), None);
         assert_eq!(opened_far, None);
         assert_eq!(far.looting(), None);
+    }
+
+    #[test]
+    fn a_body_looked_at_just_short_of_its_point_is_in_view() {
+        let mut sim = sim_with_a_body(loot_config(two_magazines()), &[]);
+        let pitch = sim.eye_height().atan2(BODY_AT.z - 0.3);
+
+        sim.tick(&turning(0.0, -pitch), DT);
+        sim.drain_feedback();
+        let (opened_on, _) = search(&mut sim, 30);
+
+        assert_eq!(
+            sim.body_in_view(),
+            Some(0),
+            "the floor ahead of it is not a wall"
+        );
+        assert!(opened_on.is_some(), "the search never finished");
+    }
+
+    #[test]
+    fn a_search_opens_exactly_search_ticks_after_the_press() {
+        for ticks in [1_u32, 2, 6, 10] {
+            let mut config = loot_config(two_magazines());
+            config.search_ticks = ticks;
+            let mut sim = sim_with_a_body(config, &[]);
+            look_down_at_the_body(&mut sim);
+
+            let (opened_on, _) = search(&mut sim, 30);
+
+            assert_eq!(
+                opened_on,
+                Some(usize::try_from(ticks).unwrap()),
+                "{ticks} ticks"
+            );
+        }
     }
 
     #[test]
