@@ -71,15 +71,7 @@ impl Loadout {
         to: Place,
     ) -> Result<(), MoveRefused> {
         let mut body = body;
-        let names_body = to == Place::Body
-            || matches!(
-                from,
-                Source::BodyCarried(_)
-                    | Source::BodyMagazineSlot(_)
-                    | Source::BodyRig
-                    | Source::BodyBackpack
-            );
-        if names_body && body.is_none() {
+        if (to == Place::Body || from.on_body()) && body.is_none() {
             return Err(MoveRefused::NoBody);
         }
         let is_magazine = self

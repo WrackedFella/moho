@@ -34,6 +34,7 @@ use moho_ui_shell::{
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
+use crate::control::ControlAction;
 use crate::controls::{Capture, ControlsDraft, label};
 use crate::debug_settings::{DebugSettings, GameRows};
 use crate::head_bob::{Bob, HeadBobLevel};
@@ -49,7 +50,7 @@ use crate::menu::{
     settings_categories_screen, settings_page,
 };
 use crate::mode::ArenaMode;
-use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
+use crate::sim::{Feedback, RoundTrace, SearchlightSim, UseTarget, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
 use crate::tuning::{SHIPPED_BODY, STRIP_FADE_TICKS};
 use crate::{TICK_HZ, hud};
@@ -1189,7 +1190,7 @@ impl SearchlightGame {
                     item: MenuAction::Item(row),
                     from,
                     to,
-                } if self.screen == Screen::Inventory => self.queue_move(row, from, to),
+                } => self.queue_move(row, from, to),
                 MenuEvent::Captured {
                     action: MenuAction::Rebind(action),
                     slot,
@@ -1502,27 +1503,33 @@ impl SearchlightGame {
     /// Shows the game's screen text: the prompt of the control in reach below the crosshair, and
     /// the rig strip while it is up. Only while playing and alive; otherwise shows none.
     fn refresh_screen_texts(&mut self, dead: bool) {
+        /// The use prompt that shows below the crosshair.
+        enum Prompt {
+            Use(ControlAction),
+            Search { searching: bool },
+        }
+
         let sim = self.mode.sim();
         let live = self.screen == Screen::Playing && !dead;
-        let control = live
-            .then(|| sim.control_in_reach())
-            .flatten()
-            .and_then(|index| self.mode.control_action(index));
         let searching = live && sim.searching().is_some();
-        let prompt = |key: &str| match control {
-            Some(action) => Some(hud::use_prompt(key, action)),
-            None if searching || (live && sim.body_in_view().is_some()) => {
-                Some(hud::search_prompt(key, searching))
-            }
-            None => None,
+        let prompt = match live.then(|| sim.use_target()).flatten() {
+            Some(UseTarget::Control(index)) => self.mode.control_action(index).map(Prompt::Use),
+            Some(UseTarget::Body(_)) => Some(Prompt::Search { searching }),
+            None => searching.then_some(Prompt::Search { searching: true }),
         };
-        let key = self
-            .input
-            .bindings()
-            .get(SearchlightAction::Use)
-            .first()
-            .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
-        let mut texts: Vec<ScreenText> = prompt(&key)
+        let mut texts: Vec<ScreenText> = prompt
+            .map(|prompt| {
+                let key = self
+                    .input
+                    .bindings()
+                    .get(SearchlightAction::Use)
+                    .first()
+                    .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+                match prompt {
+                    Prompt::Use(action) => hud::use_prompt(&key, action),
+                    Prompt::Search { searching } => hud::search_prompt(&key, searching),
+                }
+            })
             .map(|text| ScreenText {
                 text,
                 anchor: Anchor::Center,

@@ -43,6 +43,42 @@ fn standing_centre(body: &CharacterBody, floor: Vec3) -> Vec3 {
     floor + Vec3::Y * (body.standing.hull.length / 2.0)
 }
 
+/// The floor point `body` stands on with its capsule centred at `centre`.
+fn standing_floor(body: &CharacterBody, centre: Vec3) -> Vec3 {
+    centre - Vec3::Y * (body.standing.hull.length / 2.0)
+}
+
+/// Whether a body is being searched or its screen is open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LootState {
+    Idle,
+    /// A search of `body` with `left` ticks to go.
+    Searching {
+        body: u16,
+        left: u32,
+    },
+    /// The screen shows `body`'s contents.
+    Open {
+        body: u16,
+    },
+}
+
+/// What a use press acts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UseTarget {
+    /// The next-wave style control with this index.
+    Control(u16),
+    /// The dead enemy with this target number.
+    Body(u16),
+}
+
+/// What the player looks at within reach of using it.
+#[derive(Default)]
+struct Sight {
+    control: Option<u16>,
+    body: Option<u16>,
+}
+
 /// The target number of the dummy at `index` in a spawn list.
 ///
 /// # Panics
@@ -387,10 +423,8 @@ pub struct SearchlightSim {
     kills: u32,
     /// The bodies enemies left, by target number.
     bodies: BTreeMap<u16, DeadBody>,
-    /// The body whose screen is open, if any.
-    looting: Option<u16>,
-    /// The body being searched and the ticks of searching left, if a search is under way.
-    search: Option<(u16, u32)>,
+    /// Whether a body is being searched or its screen is open.
+    loot: LootState,
     /// What a restart rebuilds the characters from, in the same world.
     origin: (Spawns, SimConfig),
 }
@@ -542,8 +576,7 @@ impl SearchlightSim {
             outbox: Vec::new(),
             kills: 0,
             bodies: BTreeMap::new(),
-            looting: None,
-            search: None,
+            loot: LootState::Idle,
             origin: (spawns, config),
         }
     }
@@ -560,8 +593,7 @@ impl SearchlightSim {
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         self.traces.clear();
         if self.player_body.is_dead() {
-            self.looting = None;
-            self.search = None;
+            self.loot = LootState::Idle;
             if command.restart {
                 self.restart();
             }
@@ -609,51 +641,65 @@ impl SearchlightSim {
     /// Applies the inventory command, then advances the search or starts one on a use press.
     fn step_looting(&mut self, command: &SearchlightCommand) {
         match command.inventory {
-            Some(InventoryCommand::Close) => self.looting = None,
+            Some(InventoryCommand::Close) => {
+                if matches!(self.loot, LootState::Open { .. }) {
+                    self.loot = LootState::Idle;
+                }
+            }
             Some(InventoryCommand::Move { from, to }) => self.move_item(from, to),
             None => {}
         }
-        if let Some((body, left)) = self.search {
-            if self.body_in_view() != Some(body) {
-                self.search = None;
-                self.outbox.push(Feedback::SearchCancelled);
-            } else if left <= 1 {
-                self.open_body(body);
-            } else {
-                self.search = Some((body, left - 1));
+        match self.loot {
+            LootState::Searching { body, left } => {
+                if self.body_in_view() != Some(body) {
+                    self.loot = LootState::Idle;
+                    self.outbox.push(Feedback::SearchCancelled);
+                } else if left <= 1 {
+                    self.open_body(body);
+                } else {
+                    self.loot = LootState::Searching {
+                        body,
+                        left: left - 1,
+                    };
+                }
             }
-        } else if command.use_pressed
-            && self.control_in_reach().is_none()
-            && let Some(body) = self.body_in_view()
-        {
-            let searched = self.bodies.get(&body).is_some_and(|dead| dead.searched);
-            if searched || self.origin.1.search_ticks == 0 {
-                self.open_body(body);
-            } else {
-                self.search = Some((body, self.origin.1.search_ticks));
+            LootState::Idle | LootState::Open { .. } if command.use_pressed => {
+                if let Some(UseTarget::Body(body)) = self.use_target() {
+                    let searched = self.bodies.get(&body).is_some_and(|dead| dead.searched);
+                    let ticks = self.config().search_ticks;
+                    if searched || ticks == 0 {
+                        self.open_body(body);
+                    } else {
+                        self.loot = LootState::Searching { body, left: ticks };
+                    }
+                }
             }
+            LootState::Idle | LootState::Open { .. } => {}
         }
     }
 
     /// Marks `body` searched and opens its screen.
     fn open_body(&mut self, body: u16) {
-        self.search = None;
         if let Some(dead) = self.bodies.get_mut(&body) {
             dead.searched = true;
         }
-        self.looting = Some(body);
+        self.loot = LootState::Open { body };
         self.outbox.push(Feedback::SearchOpened { body });
+    }
+
+    /// Whether `point` lies within the search reach of `eye`.
+    fn within_search_reach(&self, eye: Vec3, point: Vec3) -> bool {
+        point.distance(eye) <= self.config().search_reach
     }
 
     /// Moves one item for the player, the body being looted taking part only while it lies
     /// within the search reach. A refused move changes nothing.
     fn move_item(&mut self, from: Source, to: Place) {
         let eye = self.player_eye();
-        let reach = self.origin.1.search_reach;
-        let looted = self.looting.filter(|number| {
+        let looted = self.looting().filter(|number| {
             self.bodies
                 .get(number)
-                .is_some_and(|dead| dead.point.distance(eye) <= reach)
+                .is_some_and(|dead| self.within_search_reach(eye, dead.point))
         });
         let remains = looted
             .and_then(|number| self.bodies.get_mut(&number))
@@ -935,7 +981,7 @@ impl SearchlightSim {
                 self.bodies.insert(
                     number,
                     DeadBody {
-                        point: centre - Vec3::Y * (self.body.standing.hull.length / 2.0),
+                        point: standing_floor(&self.body, centre),
                         remains: self.origin.1.enemy_remains.clone(),
                         searched: false,
                     },
@@ -1224,11 +1270,49 @@ impl SearchlightSim {
     /// The control the player is looking at within [`USE_REACH`], or `None` when none is, a wall
     /// or body is in front of it, or the player is dead.
     pub fn control_in_reach(&self) -> Option<u16> {
-        let (_, _, strike) = self.use_ray(USE_REACH)?;
-        match strike?.tag {
-            SurfaceTag::Control(index) => Some(index),
-            _ => None,
-        }
+        self.sight().control
+    }
+
+    /// What a use press would act on: the control in reach, which has priority, else the body in
+    /// view.
+    pub fn use_target(&self) -> Option<UseTarget> {
+        let sight = self.sight();
+        sight
+            .control
+            .map(UseTarget::Control)
+            .or(sight.body.map(UseTarget::Body))
+    }
+
+    /// The simulation's tuning, as it was built.
+    fn config(&self) -> &SimConfig {
+        &self.origin.1
+    }
+
+    /// The control and the body the player looks at, from one ray as long as either's reach.
+    fn sight(&self) -> Sight {
+        let (reach, radius) = (self.config().search_reach, self.config().body_radius);
+        let Some((eye, forward, strike)) = self.use_ray(USE_REACH.max(reach)) else {
+            return Sight::default();
+        };
+        let control = strike
+            .filter(|strike| strike.distance <= USE_REACH)
+            .and_then(|strike| match strike.tag {
+                SurfaceTag::Control(index) => Some(index),
+                _ => None,
+            });
+        let end = eye + forward * reach;
+        let body = self
+            .bodies
+            .iter()
+            .filter(|(_, dead)| {
+                self.within_search_reach(eye, dead.point)
+                    && passes_within(eye, end, dead.point, radius)
+            })
+            .map(|(&number, dead)| (number, (dead.point - eye).dot(forward).max(0.0)))
+            .filter(|&(_, along)| strike.is_none_or(|strike| strike.distance >= along - radius))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(number, _)| number);
+        Sight { control, body }
     }
 
     /// Where the player looks from and along, and what the world strikes within `range` of it
@@ -1255,18 +1339,7 @@ impl SearchlightSim {
     /// The body the player is looking at within the search reach, or `None` when none is, a
     /// wall or control is nearer, or the player is dead.
     pub fn body_in_view(&self) -> Option<u16> {
-        let (reach, radius) = (self.origin.1.search_reach, self.origin.1.body_radius);
-        let (eye, forward, strike) = self.use_ray(reach)?;
-        let end = eye + forward * reach;
-        self.bodies
-            .iter()
-            .filter(|(_, dead)| {
-                dead.point.distance(eye) <= reach && passes_within(eye, end, dead.point, radius)
-            })
-            .map(|(&number, dead)| (number, (dead.point - eye).dot(forward).max(0.0)))
-            .filter(|&(_, along)| strike.is_none_or(|strike| strike.distance >= along - radius))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(number, _)| number)
+        self.sight().body
     }
 
     /// The bodies enemies left, by target number.
@@ -1276,19 +1349,25 @@ impl SearchlightSim {
 
     /// The number of the body being searched, if a search is under way.
     pub fn searching(&self) -> Option<u16> {
-        self.search.map(|(body, _)| body)
+        match self.loot {
+            LootState::Searching { body, .. } => Some(body),
+            LootState::Idle | LootState::Open { .. } => None,
+        }
     }
 
     /// What the body whose screen is open holds, if any.
     pub fn looted_remains(&self) -> Option<&Remains> {
-        self.looting
+        self.looting()
             .and_then(|number| self.bodies.get(&number))
             .map(|dead| &dead.remains)
     }
 
     /// The number of the body whose screen is open, if any.
     pub fn looting(&self) -> Option<u16> {
-        self.looting
+        match self.loot {
+            LootState::Open { body } => Some(body),
+            LootState::Idle | LootState::Searching { .. } => None,
+        }
     }
 
     /// Everything the player carries.

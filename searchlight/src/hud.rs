@@ -120,13 +120,17 @@ pub fn use_prompt(key: &str, action: ControlAction) -> String {
     let what = match action {
         ControlAction::NextWave => "Next wave",
     };
-    format!("[{key}] {what}")
+    bracketed(key, what)
 }
 
 /// The prompt for a body in view: the `key` that searches it and `Search`, or `Searching` while
 /// the search is under way.
 pub fn search_prompt(key: &str, searching: bool) -> String {
-    let what = if searching { "Searching" } else { "Search" };
+    bracketed(key, if searching { "Searching" } else { "Search" })
+}
+
+/// A prompt line: the `key` in brackets, then what it does.
+fn bracketed(key: &str, what: &str) -> String {
     format!("[{key}] {what}")
 }
 

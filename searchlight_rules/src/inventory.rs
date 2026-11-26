@@ -58,6 +58,17 @@ pub enum Source {
     BodyBackpack,
 }
 
+impl Source {
+    /// Whether this source is on the body being looted.
+    #[must_use]
+    pub fn on_body(self) -> bool {
+        matches!(
+            self,
+            Self::BodyCarried(_) | Self::BodyMagazineSlot(_) | Self::BodyRig | Self::BodyBackpack
+        )
+    }
+}
+
 /// Where a move puts an item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Place {

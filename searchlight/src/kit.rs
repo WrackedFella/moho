@@ -40,14 +40,26 @@ pub fn load_enemy(
     roots: &ContentRoots,
     kit: &str,
 ) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitLoadError> {
+    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup))
+}
+
+/// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`.
+fn resolve_kit<T>(
+    roots: &ContentRoots,
+    kit: &str,
+    resolve: impl for<'d> FnOnce(
+        &'d KitDef,
+        &dyn Fn(&ItemId) -> Option<&'d ItemDef>,
+    ) -> Result<T, KitError>,
+) -> Result<T, KitLoadError> {
     let items = load_kind::<ItemDef>(roots, "items")?;
     let kits = load_kind::<KitDef>(roots, "kits")?;
-    kits.require(kit)?
-        .resolve_remains(|id: &ItemId| items.get(id.as_str()))
-        .map_err(|source| KitLoadError::Kit {
+    resolve(kits.require(kit)?, &|id: &ItemId| items.get(id.as_str())).map_err(|source| {
+        KitLoadError::Kit {
             kit: kit.to_owned(),
             source,
-        })
+        }
+    })
 }
 
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit`.
@@ -57,14 +69,7 @@ pub fn load_enemy(
 /// [`KitLoadError::Content`] when a file or entry is malformed or `kit` is undefined;
 /// [`KitLoadError::Kit`] when the kit names an unknown or unsuitable item.
 pub fn load(roots: &ContentRoots, kit: &str) -> Result<Kit, KitLoadError> {
-    let items = load_kind::<ItemDef>(roots, "items")?;
-    let kits = load_kind::<KitDef>(roots, "kits")?;
-    kits.require(kit)?
-        .resolve(|id: &ItemId| items.get(id.as_str()))
-        .map_err(|source| KitLoadError::Kit {
-            kit: kit.to_owned(),
-            source,
-        })
+    resolve_kit(roots, kit, |def, lookup| def.resolve(lookup))
 }
 
 #[cfg(test)]

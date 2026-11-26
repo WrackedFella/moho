@@ -108,11 +108,10 @@ pub fn tuning(kit: Kit) -> SimConfig {
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
 /// the ballistics the sim flies rounds with, so a looted round still fires.
 pub fn with_enemy_kit(
-    config: SimConfig,
+    mut config: SimConfig,
     remains: Remains,
     rounds: BTreeMap<ItemId, Ballistics>,
 ) -> SimConfig {
-    let mut config = config;
     for (round, ballistics) in rounds {
         config.rounds.entry(round).or_insert(ballistics);
     }
