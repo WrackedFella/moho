@@ -2863,7 +2863,16 @@ mod tests {
 
     #[test]
     fn a_look_finds_a_restored_object_before_the_first_step() {
-        let (mut world, id) = resting_box_world();
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        for _ in 0..2 {
+            let spare = world.spawn_loose(&flat_box_spawn());
+            world.remove_loose(spare).expect("the object is alive");
+        }
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            ..LooseSpawn::new(cube(0.2), 1.0)
+        });
+        assert_eq!(id, LooseId(2));
         run(&mut world, 300);
         let centre = read(&world, id).position;
         let query = look(centre + Vec3::Y * 1.6, Vec3::NEG_Y);
@@ -2911,6 +2920,8 @@ mod tests {
     fn a_restored_collider_matches_a_spawned_one() {
         for (name, shape) in every_shape_with_sphere() {
             let mut world = world_with_floor(&floor_mesh(0.0));
+            let spare = world.spawn_loose(&flat_box_spawn());
+            world.remove_loose(spare).expect("the object is alive");
             let id = world.spawn_loose(&LooseSpawn {
                 friction: 0.3,
                 restitution: 0.2,
@@ -2934,6 +2945,7 @@ mod tests {
                 "{name}: collision groups"
             );
             assert_eq!(is.user_data, was.user_data, "{name}: user data");
+            assert_eq!(is.compute_aabb(), was.compute_aabb(), "{name}: bounds");
             let (was, is) = (body_of(&world, id), body_of(&back, id));
             assert_eq!(is.linear_damping(), was.linear_damping(), "{name}");
             assert_eq!(is.angular_damping(), was.angular_damping(), "{name}");
@@ -3020,13 +3032,13 @@ mod tests {
         }
     }
 
-    /// A box with id 3 and a capsule with id 5, `next_id` 7. Every float is exact in binary.
+    /// One record of each shape, ids 0, 3, 5 and 6, `next_id` 7. Every float is exact in binary.
     fn pinned_fixture() -> LooseRecords {
         records(
             7,
             vec![
                 record(
-                    3,
+                    0,
                     LooseSpawn {
                         shape: LooseShape::Box {
                             half_extents: Vec3::new(0.5, 0.25, 0.125),
@@ -3043,7 +3055,7 @@ mod tests {
                     },
                 ),
                 record(
-                    5,
+                    3,
                     LooseSpawn {
                         shape: LooseShape::Capsule {
                             half_height: 0.5,
@@ -3060,20 +3072,59 @@ mod tests {
                         angular_velocity: Vec3::new(1.0, 0.0, 0.0),
                     },
                 ),
+                record(
+                    5,
+                    LooseSpawn {
+                        shape: LooseShape::Cylinder {
+                            half_height: 0.125,
+                            radius: 0.5,
+                        },
+                        mass: 4.0,
+                        friction: 0.25,
+                        restitution: 0.5,
+                        linear_damping: 0.25,
+                        angular_damping: 0.5,
+                        position: Vec3::new(-2.0, 0.125, 1.0),
+                        rotation: Quat::from_xyzw(1.0, 0.0, 0.0, 0.0),
+                        linear_velocity: Vec3::new(0.0, -1.0, 0.0),
+                        angular_velocity: Vec3::new(0.0, 0.0, 2.0),
+                    },
+                ),
+                record(
+                    6,
+                    LooseSpawn {
+                        shape: LooseShape::Sphere { radius: 0.75 },
+                        mass: 8.0,
+                        friction: 1.0,
+                        restitution: 0.125,
+                        linear_damping: 0.0,
+                        angular_damping: 0.0,
+                        position: Vec3::new(0.0, 0.75, -4.0),
+                        rotation: Quat::from_xyzw(0.0, 0.0, 1.0, 0.0),
+                        linear_velocity: Vec3::new(4.0, 0.0, 0.0),
+                        angular_velocity: Vec3::new(0.0, -0.5, 0.0),
+                    },
+                ),
             ],
         )
     }
 
     /// Next id 7, two objects; each is its id, the shape's variant index and fields, then the
     /// spawn's f32s in little-endian order.
-    const PINNED: [u8; 170] = [
-        7, 2, 3, 0, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 0, 62, 0, 0, 0, 64, 0, 0, 0, 63, 0, 0, 128,
+    const PINNED: [u8; 330] = [
+        7, 4, 0, 0, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 0, 62, 0, 0, 0, 64, 0, 0, 0, 63, 0, 0, 128,
         62, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 128, 63, 0, 0, 128, 191, 0, 0, 0, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        128, 64, 0, 0, 0, 193, 5, 1, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 128, 63, 0, 0, 64, 63, 0, 0,
+        128, 64, 0, 0, 0, 193, 3, 1, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 128, 63, 0, 0, 64, 63, 0, 0,
         0, 0, 0, 0, 0, 63, 0, 0, 128, 62, 0, 0, 0, 0, 0, 0, 0, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         128, 63, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0, 0, 128, 63, 0, 0,
-        0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 5, 2, 0, 0, 0, 62, 0, 0, 0, 63, 0, 0, 128, 64, 0, 0, 128, 62, 0, 0, 0,
+        63, 0, 0, 128, 62, 0, 0, 0, 63, 0, 0, 0, 192, 0, 0, 0, 62, 0, 0, 128, 63, 0, 0, 128, 63, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128, 191, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 64, 6, 3, 0, 0, 64, 63, 0, 0, 0, 65, 0, 0, 128, 63, 0, 0, 0, 62, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 63, 0, 0, 128, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 128,
+        63, 0, 0, 0, 0, 0, 0, 128, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 191, 0, 0, 0,
+        0,
     ];
 
     #[test]
@@ -3134,22 +3185,6 @@ mod tests {
     }
 
     #[test]
-    fn restore_accepts_ascending_ids_with_gaps_up_to_the_last_before_next() {
-        let spawn = flat_box_spawn();
-        let mut world = world_with_floor(&floor_mesh(0.0));
-
-        let outcome = world.restore_loose(&records(
-            4,
-            vec![record(0, spawn), record(2, spawn), record(3, spawn)],
-        ));
-
-        assert_eq!(outcome, Ok(()));
-        assert_eq!(world.loose_count(), 3);
-        assert!(world.loose(LooseId(1)).is_none());
-        assert_eq!(world.spawn_loose(&spawn), LooseId(4));
-    }
-
-    #[test]
     fn restore_rejects_a_bad_spawn_and_restores_nothing() {
         let valid = flat_box_spawn();
         let bad = LooseSpawn {
@@ -3160,19 +3195,19 @@ mod tests {
         let mut world = world_with_floor(&floor_mesh(0.0));
 
         let outcome = world.restore_loose(&records(
-            4,
+            7,
             vec![
                 record(0, valid),
-                record(1, valid),
-                record(2, bad),
                 record(3, valid),
+                record(5, bad),
+                record(6, valid),
             ],
         ));
 
         assert_eq!(
             outcome,
             Err(RestoreLooseError::BadSpawn {
-                id: LooseId(2),
+                id: LooseId(5),
                 reason: expected_reason,
             })
         );
