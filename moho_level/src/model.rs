@@ -916,6 +916,29 @@ mod tests {
         assert_ne!(child.translation, unturned.nodes()[2].translation);
     }
 
+    #[test]
+    fn a_turn_on_a_root_turns_every_descendant_and_keeps_the_roots_translation() {
+        let model = turn_chain();
+        let turn = Quat::from_rotation_x(0.9);
+        let unturned = model.compose(locals(&model), &[]);
+
+        let turned = model.compose(locals(&model), &[(0, turn)]);
+
+        let root = turned.nodes()[0];
+        assert_eq!(root.translation, unturned.nodes()[0].translation);
+        let expected = Mat3A::from_quat(turn) * unturned.nodes()[0].matrix3;
+        assert!(root.matrix3.abs_diff_eq(expected, 1e-5));
+        for index in 1..3 {
+            let want = root * unturned.nodes()[0].inverse() * unturned.nodes()[index];
+            let got = turned.nodes()[index];
+            assert!(
+                got.abs_diff_eq(want, 1e-4),
+                "node {index}: {got:?} != {want:?}"
+            );
+            assert_ne!(got.translation, unturned.nodes()[index].translation);
+        }
+    }
+
     /// Root, then three nested nodes `a`, `b` and `above`, each 1 m up from its parent, with the
     /// given Euler angles and scales (three of each per nested node).
     fn nested(angles: [f32; 9], scales: [f32; 9]) -> Model {

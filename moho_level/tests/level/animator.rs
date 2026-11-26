@@ -998,6 +998,87 @@ fn setting_a_non_finite_pitch_panics_in_debug_builds() {
 }
 
 #[test]
+fn pitch_over_a_whole_body_action_turns_the_action_pose_above_the_chain() {
+    let (_dir, model) = load_aimer();
+    let mut reloading = walker(&model);
+    for _ in 0..30 {
+        reloading.advance(&model, TICK);
+    }
+    reloading
+        .play_action(&model, "reload", Playback::Loop, Region::Whole)
+        .expect("reload exists");
+    reloading.advance(&model, TICK);
+    let pitching = aiming(&reloading, three_bone_chain(&model), degrees(30.0));
+    let above = below(&model, node_named(&model, "spine_03"));
+
+    let (pitched, action_pose) = (pitching.pose(&model), reloading.pose(&model));
+
+    assert_nodes_bit_equal(
+        &pitched,
+        &action_pose,
+        &lower_body(&model),
+        "legs follow the action",
+    );
+    let motion = shared_motion(&pitched, &action_pose, &above);
+    assert_rotation(motion, Quat::from_rotation_x(-degrees(30.0)));
+}
+
+#[test]
+fn a_node_listed_twice_adds_its_shares() {
+    let (_dir, model) = load_aimer();
+    let walking = walker(&model);
+    let twice = links(&model, &[("spine_01", 0.5), ("spine_01", 0.5)]);
+    let once = links(&model, &[("spine_01", 1.0)]);
+
+    let doubled = aiming(&walking, twice, degrees(30.0)).pose(&model);
+    let single = aiming(&walking, once, degrees(30.0)).pose(&model);
+
+    for (node, (a, b)) in doubled.nodes().iter().zip(single.nodes()).enumerate() {
+        assert!(a.abs_diff_eq(*b, 1e-6), "node {node}: {a:?} != {b:?}");
+    }
+}
+
+#[test]
+fn chain_order_does_not_change_the_pose() {
+    let (_dir, model) = load_aimer();
+    let walking = walker(&model);
+    let parent_first = three_bone_chain(&model);
+    let child_first: Vec<AimLink> = parent_first.iter().rev().copied().collect();
+
+    let a = aiming(&walking, parent_first, degrees(30.0));
+    let b = aiming(&walking, child_first, degrees(30.0));
+
+    assert_eq!(bits_of(&a, &model), bits_of(&b, &model));
+    assert_ne!(bits_of(&a, &model), bits_of(&walking, &model));
+}
+
+#[test]
+fn extreme_pitches_stay_finite_and_whole_turns_return_to_the_unpitched_pose() {
+    let (_dir, model) = load_aimer();
+    let walking = walker(&model);
+    let plain = walking.pose(&model);
+
+    for pitch in [
+        std::f32::consts::FRAC_PI_2,
+        -std::f32::consts::FRAC_PI_2,
+        6.0 * std::f32::consts::PI,
+    ] {
+        let pose = aiming(&walking, three_bone_chain(&model), pitch).pose(&model);
+        for m in pose.nodes() {
+            assert!(
+                m.to_cols_array().iter().all(|v| v.is_finite()),
+                "{pitch}: {m:?}"
+            );
+        }
+        if pitch > 6.0 {
+            for (node, (a, b)) in pose.nodes().iter().zip(plain.nodes()).enumerate() {
+                assert!(a.abs_diff_eq(*b, 1e-4), "node {node}: {a:?} != {b:?}");
+            }
+        }
+    }
+}
+
+#[test]
 #[should_panic(expected = "is not a node")]
 fn posing_with_a_link_past_the_last_node_panics() {
     let (_dir, model) = load_aimer();
