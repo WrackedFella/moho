@@ -3308,4 +3308,85 @@ mod tests {
 
         let _ = world.restore_loose(&records(1, Vec::new()));
     }
+
+    #[test]
+    fn a_long_spin_still_restores_with_a_bit_equal_rotation() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 50.0, 0.0),
+            angular_velocity: Vec3::new(40.0, 25.0, -33.0),
+            ..LooseSpawn::new(cuboid(FLAT_BOX), 0.2)
+        });
+        run(&mut world, 3000);
+        let bytes = postcard::to_allocvec(&world.loose_records()).expect("records serialise");
+        let saved: LooseRecords = postcard::from_bytes(&bytes).expect("records deserialise");
+        let mut fresh = world_with_floor(&floor_mesh(0.0));
+
+        let outcome = fresh.restore_loose(&saved);
+
+        assert_eq!(outcome, Ok(()));
+        assert_eq!(
+            read(&fresh, id).rotation.to_array().map(f32::to_bits),
+            read(&world, id).rotation.to_array().map(f32::to_bits)
+        );
+    }
+
+    #[test]
+    fn the_highest_ids_restore_and_an_id_equal_to_the_highest_next_id_is_bad() {
+        let spawn = flat_box_spawn();
+        let mut world = world_with_floor(&floor_mesh(0.0));
+
+        let outcome = world.restore_loose(&records(u64::MAX, vec![record(u64::MAX - 1, spawn)]));
+
+        assert_eq!(outcome, Ok(()));
+        assert!(world.loose(LooseId(u64::MAX - 1)).is_some());
+        assert_eq!(world.loose_records().next_id, LooseId(u64::MAX));
+        let mut other = world_with_floor(&floor_mesh(0.0));
+        assert_eq!(
+            other.restore_loose(&records(u64::MAX, vec![record(u64::MAX, spawn)])),
+            Err(RestoreLooseError::BadId(LooseId(u64::MAX)))
+        );
+        assert_eq!(other.loose_count(), 0);
+    }
+
+    #[test]
+    fn a_restored_object_can_be_removed_and_the_next_id_stays() {
+        let spawn = flat_box_spawn();
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world
+            .restore_loose(&records(5, vec![record(1, spawn), record(3, spawn)]))
+            .expect("the records restore");
+
+        let removal = world.remove_loose(LooseId(3));
+
+        assert_eq!(removal, Ok(()));
+        let after = world.loose_records();
+        assert_eq!(after.next_id, LooseId(5));
+        let ids: Vec<LooseId> = after.objects.iter().map(|o| o.id).collect();
+        assert_eq!(ids, [LooseId(1)]);
+        assert_eq!(world.remove_loose(LooseId(3)), Err(UnknownLoose));
+    }
+
+    #[test]
+    #[should_panic(expected = "already")]
+    fn a_second_restore_into_the_same_world_panics() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world
+            .restore_loose(&records(2, vec![record(0, flat_box_spawn())]))
+            .expect("the records restore");
+
+        let _ = world.restore_loose(&records(2, vec![record(1, flat_box_spawn())]));
+    }
+
+    #[test]
+    #[should_panic(expected = "already")]
+    fn restoring_empty_records_with_a_next_id_counts_as_issuing_ids() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world
+            .restore_loose(&records(3, Vec::new()))
+            .expect("empty records restore");
+
+        let _ = world.restore_loose(&records(0, Vec::new()));
+    }
 }
