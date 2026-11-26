@@ -17,7 +17,7 @@ use character::Character;
 pub use character::{
     CharacterHandle, CharacterRecord, CharacterSpawn, CharacterState, HitVolume, UnknownCharacter,
 };
-pub use loose::{LooseId, LooseShape, LooseSpawn, LooseState, UnknownLoose};
+pub use loose::{LooseId, LoosePose, LoosePoses, LooseShape, LooseSpawn, LooseState, UnknownLoose};
 pub use query::{HitTag, RayHit, RayQuery};
 
 pub struct PhysicsWorld {
@@ -87,6 +87,7 @@ impl PhysicsWorld {
     /// Step the physics simulation (advances dynamic rigid bodies).
     pub fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
+        self.remember_loose_poses();
         self.physics_pipeline.step(
             self.gravity,
             &self.integration_parameters,
