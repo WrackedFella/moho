@@ -14,8 +14,8 @@ use moho_physics::{
 };
 use searchlight_rules::{
     Accuracy, AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
-    HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig,
-    Shot, disc_offset, leaned_parts,
+    HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Remains,
+    Rifle, Rig, Shot, disc_offset, leaned_parts,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -132,6 +132,14 @@ pub struct SimConfig {
     pub lean: LeanTuning,
     /// How wide the player's shots scatter while moving and how quickly that settles.
     pub accuracy: AccuracyTuning,
+    /// Ticks a search of a dead enemy takes.
+    pub search_ticks: u32,
+    /// How far from the eye a body can be searched, in metres.
+    pub search_reach: f32,
+    /// How close to the use ray a body's point must pass for the body to be in view, in metres.
+    pub body_radius: f32,
+    /// What every enemy carried and wore, which it leaves as a body when it dies.
+    pub enemy_remains: Remains,
 }
 
 /// Something the player should see, hear or read, in the order it happened.
@@ -162,6 +170,22 @@ pub enum Feedback {
     Impact { point: Vec3, normal: Vec3 },
     /// The player died.
     PlayerDied,
+    /// A search finished, or a searched body was used again: the screen opens with the body
+    /// numbered `body`.
+    SearchOpened { body: u16 },
+    /// The body went out of view or reach before the search finished.
+    SearchCancelled,
+}
+
+/// A dead enemy's remains lying where it fell, until the run restarts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DeadBody {
+    /// The floor point the enemy died at.
+    pub point: Vec3,
+    /// What it carried and wore, less what the player has taken.
+    pub remains: Remains,
+    /// Whether the player has finished searching it, which makes using it again instant.
+    pub searched: bool,
 }
 
 /// The six hit volumes of the shipped-body player, the same boxes as a dummy's but tagged
@@ -361,6 +385,10 @@ pub struct SearchlightSim {
     outbox: Vec<Feedback>,
     /// Lethal player shots on enemies since the sim was built or last restarted.
     kills: u32,
+    /// The bodies enemies left, by target number.
+    bodies: BTreeMap<u16, DeadBody>,
+    /// The body whose screen is open, if any.
+    looting: Option<u16>,
     /// What a restart rebuilds the characters from, in the same world.
     origin: (Spawns, SimConfig),
 }
@@ -511,6 +539,8 @@ impl SearchlightSim {
             player_rng: SimRng::new(config.enemy.seed, PLAYER_SPREAD_STREAM),
             outbox: Vec::new(),
             kills: 0,
+            bodies: BTreeMap::new(),
+            looting: None,
             origin: (spawns, config),
         }
     }
@@ -1137,6 +1167,27 @@ impl SearchlightSim {
             SurfaceTag::Control(index) => Some(index),
             _ => None,
         }
+    }
+
+    /// The body the player is looking at within the search reach, or `None` when none is, a
+    /// wall or control is nearer, or the player is dead.
+    pub fn body_in_view(&self) -> Option<u16> {
+        panic!("not yet implemented: body_in_view")
+    }
+
+    /// The bodies enemies left, by target number.
+    pub fn bodies(&self) -> &BTreeMap<u16, DeadBody> {
+        &self.bodies
+    }
+
+    /// The number of the body whose screen is open, if any.
+    pub fn looting(&self) -> Option<u16> {
+        self.looting
+    }
+
+    /// Everything the player carries.
+    pub fn loadout(&self) -> &Loadout {
+        &self.loadout
     }
 
     /// The player's walking speed in m/s, before a lean slows it.
@@ -3890,6 +3941,376 @@ mod tests {
         );
         assert!(bare.rounds_in_flight().is_empty());
         assert_eq!(bare.drain_feedback(), [Feedback::Fired]);
+    }
+
+    use crate::input::InventoryCommand;
+    use crate::test_support::SEARCH_TICKS;
+    use searchlight_rules::{Item, Place, Source};
+
+    /// Where the enemy of a loot sim stands, and so lies once dead: 1.5 m ahead of the player.
+    const BODY_AT: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+    fn two_magazines() -> Remains {
+        Remains {
+            carried: vec![Item::Magazine(mag(30, 30)), Item::Magazine(mag(30, 30))],
+            ..Remains::default()
+        }
+    }
+
+    fn rag() -> Item {
+        Item::Other(ItemId::new("rag"))
+    }
+
+    /// Tuning where enemies stay put and see nothing, and each leaves `remains`.
+    fn loot_config(remains: Remains) -> SimConfig {
+        let mut config = test_config(rifle_with(30), vec![]);
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_remains = remains;
+        config
+    }
+
+    fn loot_arena(boxes: &[(Vec3, Vec3)]) -> Arc<Arena> {
+        arena_with(boxes, Vec3::ZERO, &[BODY_AT], &[Vec3::new(0.0, 0.0, 10.0)])
+    }
+
+    /// A sim with its one enemy standing 1.5 m ahead of the player, who faces +Z.
+    fn loot_sim(config: SimConfig, boxes: &[(Vec3, Vec3)]) -> SearchlightSim {
+        let mut sim = SearchlightSim::start(loot_arena(boxes), config);
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        sim
+    }
+
+    /// Like [`loot_sim`], with the enemy dead and its body lying where it stood.
+    fn sim_with_a_body(config: SimConfig, boxes: &[(Vec3, Vec3)]) -> SearchlightSim {
+        let mut sim = loot_sim(config, boxes);
+        sim.kill_enemy(0);
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        sim
+    }
+
+    /// Tilts the view down so the use ray passes 0.3 m over the body's floor point.
+    fn look_down_at_the_body(sim: &mut SearchlightSim) {
+        let pitch = (sim.eye_height() - 0.3).atan2(BODY_AT.z);
+        sim.tick(&turning(0.0, -pitch), DT);
+        sim.drain_feedback();
+    }
+
+    fn using() -> SearchlightCommand {
+        SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn asking(command: InventoryCommand) -> SearchlightCommand {
+        SearchlightCommand {
+            inventory: Some(command),
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn taking_the_first_item() -> SearchlightCommand {
+        asking(InventoryCommand::Move {
+            from: Source::BodyCarried(0),
+            to: Place::Inventory,
+        })
+    }
+
+    fn backing_away() -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                forward: -1.0,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn restart_now() -> SearchlightCommand {
+        SearchlightCommand {
+            restart: true,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn opened(feedback: &[Feedback]) -> bool {
+        feedback
+            .iter()
+            .any(|feedback| matches!(feedback, Feedback::SearchOpened { .. }))
+    }
+
+    /// Presses use on the first tick and then idles, up to `cap` ticks, until a tick reports the
+    /// screen opening. Returns that tick's index and all the feedback up to it, drained.
+    fn search(sim: &mut SearchlightSim, cap: usize) -> (Option<usize>, Vec<Feedback>) {
+        let mut all = Vec::new();
+        for tick in 0..cap {
+            let command = if tick == 0 { using() } else { idle() };
+            sim.tick(&command, DT);
+            let feedback = sim.drain_feedback();
+            let done = opened(&feedback);
+            all.extend(feedback);
+            if done {
+                return (Some(tick), all);
+            }
+        }
+        (None, all)
+    }
+
+    /// A sim whose search of the body finished and whose screen is open.
+    fn looting_sim(config: SimConfig) -> SearchlightSim {
+        let mut sim = sim_with_a_body(config, &[]);
+        look_down_at_the_body(&mut sim);
+        let (done, _) = search(&mut sim, 30);
+        assert!(done.is_some(), "the search never finished");
+        assert_eq!(sim.looting(), Some(0));
+        sim
+    }
+
+    #[test]
+    fn a_dead_enemy_leaves_a_body_at_its_floor_point() {
+        let markers = [BODY_AT, Vec3::new(4.0, 0.0, 6.0)];
+        let arena = arena_with(&[], Vec3::ZERO, &markers, &[Vec3::new(0.0, 0.0, 10.0)]);
+        let config = loot_config(two_magazines());
+        let mut sim = SearchlightSim::start(arena, config.clone());
+        sim.tick(&idle(), DT);
+        assert!(sim.bodies().is_empty(), "nothing has died yet");
+
+        sim.kill_enemy(0);
+        sim.tick(&idle(), DT);
+        sim.kill_enemy(1);
+        sim.tick(&idle(), DT);
+
+        let numbers: Vec<u16> = sim.bodies().keys().copied().collect();
+        assert_eq!(numbers, [0, 1]);
+        for (number, marker) in markers.iter().enumerate() {
+            let body = &sim.bodies()[&u16::try_from(number).unwrap()];
+            assert!(
+                body.point.distance(*marker) < 0.05,
+                "body {number} lies at {} not at {marker}",
+                body.point
+            );
+            assert_eq!(body.remains, config.enemy_remains);
+            assert!(!body.searched);
+        }
+    }
+
+    #[test]
+    fn a_finished_search_opens_the_bodys_two_magazines() {
+        let mut sim = sim_with_a_body(loot_config(two_magazines()), &[]);
+        look_down_at_the_body(&mut sim);
+
+        let (opened_on, feedback) = search(&mut sim, 30);
+
+        let tick = opened_on.expect("the search never finished");
+        let ticks = usize::try_from(SEARCH_TICKS).unwrap();
+        assert!(
+            (ticks - 1..=ticks + 1).contains(&tick),
+            "the search finished on tick {tick}, not after about {ticks}"
+        );
+        assert!(feedback.contains(&Feedback::SearchOpened { body: 0 }));
+        assert_eq!(sim.looting(), Some(0));
+        let carried = &sim.bodies()[&0].remains.carried;
+        assert_eq!(carried.len(), 2, "{carried:?}");
+        assert!(
+            carried
+                .iter()
+                .all(|item| matches!(item, Item::Magazine(m) if m.rounds() == 30)),
+            "{carried:?}"
+        );
+        assert!(sim.bodies()[&0].searched);
+    }
+
+    #[test]
+    fn use_on_a_living_enemy_starts_no_search() {
+        let mut dead = sim_with_a_body(loot_config(two_magazines()), &[]);
+        let mut living = loot_sim(loot_config(two_magazines()), &[]);
+        look_down_at_the_body(&mut dead);
+        look_down_at_the_body(&mut living);
+
+        let (dead_opened, _) = search(&mut dead, 30);
+        let (living_opened, feedback) = search(&mut living, 30);
+
+        assert!(
+            dead_opened.is_some(),
+            "a dead enemy in the same place is searched"
+        );
+        assert_eq!(living_opened, None);
+        assert!(
+            !feedback.contains(&Feedback::SearchCancelled),
+            "no search was started to cancel"
+        );
+        assert_eq!(living.looting(), None);
+        assert_eq!(living.enemies_alive(), 1);
+    }
+
+    #[test]
+    fn leaving_reach_cancels_the_search() {
+        let mut config = loot_config(two_magazines());
+        config.search_ticks = 90;
+        let mut sim = sim_with_a_body(config, &[]);
+        look_down_at_the_body(&mut sim);
+        assert_eq!(sim.body_in_view(), Some(0), "the body starts in view");
+
+        let mut feedback = Vec::new();
+        sim.tick(&using(), DT);
+        feedback.extend(sim.drain_feedback());
+        for _ in 0..60 {
+            sim.tick(&backing_away(), DT);
+            feedback.extend(sim.drain_feedback());
+        }
+        for _ in 0..100 {
+            sim.tick(&idle(), DT);
+            feedback.extend(sim.drain_feedback());
+        }
+
+        let cancelled = feedback
+            .iter()
+            .filter(|feedback| **feedback == Feedback::SearchCancelled)
+            .count();
+        assert_eq!(cancelled, 1, "{feedback:?}");
+        assert!(!opened(&feedback), "{feedback:?}");
+        assert_eq!(sim.looting(), None);
+    }
+
+    #[test]
+    fn using_a_searched_body_again_opens_it_the_same_tick() {
+        let mut sim = looting_sim(loot_config(two_magazines()));
+        sim.tick(&asking(InventoryCommand::Close), DT);
+        sim.drain_feedback();
+        assert_eq!(sim.looting(), None);
+
+        sim.tick(&using(), DT);
+
+        assert_eq!(
+            sim.drain_feedback(),
+            [Feedback::SearchOpened { body: 0 }],
+            "opened on the very tick of the press"
+        );
+        assert_eq!(sim.looting(), Some(0));
+    }
+
+    #[test]
+    fn restart_removes_bodies_and_restores_the_kit_and_inventory() {
+        let mut config = loot_config(two_magazines());
+        config.loadout = config
+            .loadout
+            .clone()
+            .with_backpack(ItemId::new("backpack_small"))
+            .with_inventory(vec![rag()]);
+        let start = config.loadout.clone();
+        let mut sim = looting_sim(config);
+        sim.tick(&taking_the_first_item(), DT);
+        assert_eq!(sim.loadout().inventory().len(), 2, "a magazine was taken");
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+        sim.tick(&restart_now(), DT);
+
+        assert!(sim.bodies().is_empty(), "{:?}", sim.bodies());
+        assert_eq!(sim.looting(), None);
+        assert_eq!(sim.loadout(), &start);
+        assert_eq!(sim.enemies_alive(), 1, "the enemy stands again");
+    }
+
+    #[test]
+    fn a_move_from_the_body_being_looted_applies_on_the_tick() {
+        let mut sim = looting_sim(loot_config(two_magazines()));
+
+        sim.tick(&taking_the_first_item(), DT);
+
+        assert_eq!(sim.loadout().inventory().len(), 1);
+        assert!(matches!(sim.loadout().inventory()[0], Item::Magazine(_)));
+        assert_eq!(sim.bodies()[&0].remains.carried.len(), 1);
+    }
+
+    #[test]
+    fn a_move_from_a_body_not_being_looted_is_refused() {
+        let mut config = loot_config(two_magazines());
+        config.loadout = config.loadout.clone().with_inventory(vec![rag()]);
+        let mut sim = sim_with_a_body(config, &[]);
+        assert!(sim.bodies().contains_key(&0), "the enemy left a body");
+        let (loadout, body) = (sim.loadout().clone(), sim.bodies()[&0].clone());
+
+        sim.tick(&taking_the_first_item(), DT);
+        sim.tick(
+            &asking(InventoryCommand::Move {
+                from: Source::Inventory(0),
+                to: Place::Body,
+            }),
+            DT,
+        );
+
+        assert_eq!(sim.loadout(), &loadout);
+        assert_eq!(sim.bodies()[&0], body);
+    }
+
+    #[test]
+    fn a_move_from_a_body_out_of_reach_is_refused() {
+        let mut sim = looting_sim(loot_config(two_magazines()));
+        for _ in 0..90 {
+            sim.tick(&backing_away(), DT);
+        }
+        let (loadout, body) = (sim.loadout().clone(), sim.bodies()[&0].clone());
+
+        sim.tick(&taking_the_first_item(), DT);
+
+        assert_eq!(sim.loadout(), &loadout);
+        assert_eq!(sim.bodies()[&0], body);
+    }
+
+    #[test]
+    fn close_ends_the_looting() {
+        let mut sim = looting_sim(loot_config(two_magazines()));
+        let (loadout, body) = (sim.loadout().clone(), sim.bodies()[&0].clone());
+
+        sim.tick(&asking(InventoryCommand::Close), DT);
+        sim.tick(&taking_the_first_item(), DT);
+
+        assert_eq!(sim.looting(), None);
+        assert_eq!(sim.loadout(), &loadout, "a closed screen moves nothing");
+        assert_eq!(sim.bodies()[&0], body);
+    }
+
+    #[test]
+    fn a_body_behind_a_wall_is_not_in_view() {
+        let wall = (Vec3::new(-3.0, 0.0, 0.7), Vec3::new(3.0, 4.0, 0.8));
+        let mut open = sim_with_a_body(loot_config(two_magazines()), &[]);
+        let mut walled = sim_with_a_body(loot_config(two_magazines()), &[wall]);
+        look_down_at_the_body(&mut open);
+        look_down_at_the_body(&mut walled);
+
+        let (opened_behind_the_wall, _) = search(&mut walled, 30);
+
+        assert_eq!(open.body_in_view(), Some(0));
+        assert_eq!(walled.body_in_view(), None);
+        assert_eq!(opened_behind_the_wall, None);
+        assert_eq!(walled.looting(), None);
+    }
+
+    #[test]
+    fn a_control_in_front_of_a_body_keeps_the_use() {
+        let post = (Vec3::new(-0.3, 0.0, 0.8), Vec3::new(0.3, 2.0, 1.2));
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[BODY_AT],
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[post],
+        );
+        let mut sim = SearchlightSim::start(arena, loot_config(two_magazines()));
+        sim.tick(&idle(), DT);
+        sim.kill_enemy(0);
+        sim.tick(&idle(), DT);
+        look_down_at_the_body(&mut sim);
+
+        let (opened_through_the_post, _) = search(&mut sim, 30);
+
+        assert_eq!(sim.control_in_reach(), Some(0));
+        assert_eq!(sim.body_in_view(), None);
+        assert_eq!(opened_through_the_post, None);
     }
 
     mod waves {

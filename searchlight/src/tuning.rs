@@ -1,7 +1,11 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
+use std::collections::BTreeMap;
+
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
-use searchlight_rules::{AccuracyTuning, BodyPart, BodyProfile, Kit, LeanTuning};
+use searchlight_rules::{
+    AccuracyTuning, Ballistics, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains,
+};
 
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
@@ -34,6 +38,16 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
 
 /// Ticks the rig strip stays up after a reload or switch.
 pub const STRIP_FADE_TICKS: u32 = 180;
+
+/// Ticks a search of a dead enemy takes: 1.5 s.
+pub const SEARCH_TICKS: u32 = 90;
+
+/// How far from the eye a body can be searched, in metres: the eye stands 1.63 m over the floor
+/// point a body lies at, so this reaches about 1.9 m along the floor.
+pub const SEARCH_REACH: f32 = 2.5;
+
+/// How close to the use ray a body's point must pass for the body to be in view, in metres.
+pub const BODY_RADIUS: f32 = 0.8;
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 pub fn tuning(kit: Kit) -> SimConfig {
@@ -84,7 +98,22 @@ pub fn tuning(kit: Kit) -> SimConfig {
             walk_spread: 0.03,
             settle_seconds: 0.35,
         },
+        search_ticks: SEARCH_TICKS,
+        search_reach: SEARCH_REACH,
+        body_radius: BODY_RADIUS,
+        enemy_remains: Remains::default(),
     }
+}
+
+/// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
+/// the ballistics the sim flies rounds with, so a looted round still fires.
+pub fn with_enemy_kit(
+    config: SimConfig,
+    remains: Remains,
+    rounds: BTreeMap<ItemId, Ballistics>,
+) -> SimConfig {
+    let _ = (config, remains, rounds);
+    panic!("not yet implemented: with_enemy_kit")
 }
 
 #[cfg(test)]

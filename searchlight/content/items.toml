@@ -1,6 +1,7 @@
 [rifle]
 class = "weapon"
 size = [2, 5]
+weight = 3.4
 condition = 100
 
 [rifle.weapon]
@@ -14,19 +15,35 @@ charge_ticks = 30
 [mag_rifle]
 class = "gear"
 size = [1, 2]
+weight = 0.25
 magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 
 [round_rifle_ball]
 class = "consumable"
 size = [1, 1]
+weight = 0.012
 round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
 
 [rig_chest]
 class = "gear"
 size = [3, 2]
+weight = 1.2
 rig = { magazine_slots = 3 }
+
+[backpack_small]
+class = "gear"
+size = [4, 4]
+weight = 0.9
+backpack = {}
+
+[bandage]
+class = "consumable"
+size = [1, 1]
+weight = 0.05
+uses = 1
 
 [crowbar]
 class = "tool"
 size = [1, 3]
+weight = 2.2
 condition = 100

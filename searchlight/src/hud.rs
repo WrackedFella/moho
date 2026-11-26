@@ -48,6 +48,8 @@ pub fn status_text(feedback: &Feedback) -> Option<String> {
         | Feedback::PlayerHit { .. }
         | Feedback::Impact { .. }
         | Feedback::EnemyDied { .. }
+        | Feedback::SearchOpened { .. }
+        | Feedback::SearchCancelled
         | Feedback::PlayerDied => None,
     }
 }
@@ -152,6 +154,8 @@ pub fn shows_strip(feedback: &Feedback) -> bool {
         | Feedback::PlayerHit { .. }
         | Feedback::Impact { .. }
         | Feedback::EnemyDied { .. }
+        | Feedback::SearchOpened { .. }
+        | Feedback::SearchCancelled
         | Feedback::PlayerDied => false,
     }
 }

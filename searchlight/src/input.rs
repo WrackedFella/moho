@@ -6,7 +6,7 @@ use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::{Action, LookSettings};
 use moho_physics::CharacterCommand;
-use searchlight_rules::{Grade, GravityScale, LeanSide};
+use searchlight_rules::{Grade, GravityScale, LeanSide, Place, Source};
 
 /// Everything the player can ask of the prototype.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -24,6 +24,7 @@ pub enum SearchlightAction {
     LeanLeft,
     LeanRight,
     Use,
+    Inventory,
 }
 
 impl Action for SearchlightAction {
@@ -41,6 +42,7 @@ impl Action for SearchlightAction {
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
         SearchlightAction::Use,
+        SearchlightAction::Inventory,
     ];
 
     fn name(self) -> &'static str {
@@ -58,6 +60,7 @@ impl Action for SearchlightAction {
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
             SearchlightAction::Use => "use",
+            SearchlightAction::Inventory => "inventory",
         }
     }
 
@@ -78,6 +81,9 @@ impl Action for SearchlightAction {
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
             SearchlightAction::Use => const { &[Binding::key(Key::F)] },
+            SearchlightAction::Inventory => {
+                const { &[Binding::key(Key::Tab), Binding::key(Key::I)] }
+            }
         }
     }
 }
@@ -123,6 +129,15 @@ pub fn build_action_map(
     map
 }
 
+/// What the inventory screen asks of the sim for one tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InventoryCommand {
+    /// Moves one item between the body, the inventory and the magazine slots.
+    Move { from: Source, to: Place },
+    /// Ends the looting and closes the screen.
+    Close,
+}
+
 /// One tick of player intent: movement plus the weapon edges that began this tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SearchlightCommand {
@@ -152,6 +167,8 @@ pub struct SearchlightCommand {
     pub use_pressed: bool,
     /// The check-gear key has been held past the hold threshold and is still down this tick.
     pub check_gear: bool,
+    /// What the inventory screen asks of the sim this tick, at most one.
+    pub inventory: Option<InventoryCommand>,
 }
 
 /// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
@@ -213,6 +230,7 @@ impl SearchlightCommand {
             lean: None,
             use_pressed: frame.pressed(SearchlightAction::Use),
             check_gear: frame.held(SearchlightAction::CheckGear),
+            inventory: None,
         }
     }
 }

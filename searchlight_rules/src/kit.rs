@@ -1,6 +1,7 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
 use crate::ballistics::Ballistics;
+use crate::inventory::Remains;
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
@@ -24,6 +25,24 @@ pub struct KitMagazine {
     pub rounds: Option<u32>,
 }
 
+/// An item in a kit's inventory: a magazine takes `round` (and `rounds`, full when absent),
+/// a round takes `count`, anything else takes none of the three.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KitItem {
+    /// The item.
+    pub item: ItemId,
+    /// For a magazine, the round item stacked in it.
+    #[serde(default)]
+    pub round: Option<ItemId>,
+    /// For a magazine, rounds held; a full magazine when absent.
+    #[serde(default)]
+    pub rounds: Option<u32>,
+    /// For a round, how many.
+    #[serde(default)]
+    pub count: Option<u32>,
+}
+
 /// A kit as defined in data.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +56,12 @@ pub struct KitDef {
     /// Magazines on the rig, stowed in order.
     #[serde(default)]
     pub magazines: Vec<KitMagazine>,
+    /// The backpack item worn.
+    #[serde(default)]
+    pub backpack: Option<ItemId>,
+    /// What is carried outside the hands, the rig and the backpack, in order.
+    #[serde(default)]
+    pub carried: Vec<KitItem>,
 }
 
 /// A resolved kit: the weapon's numbers and what the player carries.
@@ -104,9 +129,31 @@ pub enum KitError {
         /// The magazine's capacity.
         capacity: u32,
     },
+    /// A carried entry names fields its item does not take, or lacks one it needs.
+    #[error("the entry for item \"{id}\" has fields its item does not take")]
+    EntryFields {
+        /// The entry's item.
+        id: ItemId,
+    },
 }
 
 impl KitDef {
+    /// Resolves the kit's ids through `lookup` as the gear of a dead enemy: its rig with the
+    /// magazines stowed, its backpack, and its carried items with its rifle, and the magazine
+    /// in it, first. Also returns the ballistics of every round the kit names.
+    ///
+    /// # Errors
+    ///
+    /// The [`KitError`]s of [`Self::resolve`], and [`KitError::EntryFields`] for a carried
+    /// entry whose fields do not fit its item.
+    pub fn resolve_remains<'a>(
+        &self,
+        lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+    ) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitError> {
+        let _ = lookup;
+        panic!("not yet implemented: resolve_remains")
+    }
+
     /// Resolves the kit's ids through `lookup`.
     ///
     /// # Errors
@@ -190,6 +237,7 @@ impl KitDef {
 mod tests {
     use super::*;
     use crate::ballistics::Ballistics;
+    use crate::inventory::{Item, RoundStack};
     use crate::item::{ItemDef, ItemId, MagazineWell};
     use crate::test_support::id;
     use crate::weapon::{FireBehaviour, RifleDef};
@@ -232,7 +280,8 @@ mod tests {
             unreachable!("the literal above is an object");
         };
         defs.into_iter()
-            .map(|(name, def)| {
+            .map(|(name, mut def)| {
+                def["weight"] = json!(1.0);
                 let def = serde_json::from_value(def)
                     .unwrap_or_else(|e| panic!("fixture item {name} should load: {e}"));
                 (ItemId::new(name), def)
@@ -584,5 +633,273 @@ mod tests {
 
         let text = result.expect_err("a misspelt field is refused").to_string();
         assert!(text.contains("magzines"), "{text}");
+    }
+
+    fn loot_items() -> HashMap<ItemId, ItemDef> {
+        let mut items = items();
+        for (name, def) in [
+            (
+                "backpack_small",
+                json!({"class": "gear", "size": [3, 3], "weight": 1.5, "backpack": {}}),
+            ),
+            (
+                "bandage",
+                json!({"class": "consumable", "size": [1, 1], "weight": 0.1, "uses": 1}),
+            ),
+        ] {
+            let def = serde_json::from_value(def)
+                .unwrap_or_else(|e| panic!("fixture item {name} should load: {e}"));
+            items.insert(ItemId::new(name), def);
+        }
+        items
+    }
+
+    fn with_loot(backpack: Value, carried: Value) -> KitDef {
+        kit_def(json!({
+            "rig": "rig_chest",
+            "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_rifle", "round": "round_ball", "rounds": 12}],
+            "backpack": backpack,
+            "carried": carried
+        }))
+    }
+
+    fn resolve_loot(def: &KitDef) -> Result<Kit, KitError> {
+        let items = loot_items();
+        def.resolve(|item| items.get(item))
+    }
+
+    fn remains_of(def: &KitDef) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitError> {
+        let items = loot_items();
+        def.resolve_remains(|item| items.get(item))
+    }
+
+    #[test]
+    fn a_kit_resolves_its_backpack_and_carried_items_into_the_inventory() {
+        let def = with_loot(
+            json!("backpack_small"),
+            json!([
+                {"item": "bandage"},
+                {"item": "mag_rifle", "round": "round_ball", "rounds": 10},
+                {"item": "round_ball", "count": 20},
+                {"item": "mag_rifle", "round": "round_heavy"}
+            ]),
+        );
+
+        let kit = resolve_loot(&def).expect("the kit resolves");
+
+        assert_eq!(kit.loadout.backpack(), Some(&id("backpack_small")));
+        let inventory = kit.loadout.inventory();
+        assert_eq!(inventory.len(), 4, "{inventory:?}");
+        assert_eq!(inventory[0], Item::Other(id("bandage")));
+        assert!(
+            matches!(&inventory[1], Item::Magazine(m) if m.item() == &id("mag_rifle") && m.rounds() == 10),
+            "{:?}",
+            inventory[1]
+        );
+        assert_eq!(
+            inventory[2],
+            Item::Rounds(RoundStack {
+                round: id("round_ball"),
+                count: 20
+            })
+        );
+        assert!(
+            matches!(&inventory[3], Item::Magazine(m) if m.rounds() == 30),
+            "a magazine with no rounds listed is full: {:?}",
+            inventory[3]
+        );
+    }
+
+    #[test]
+    fn a_kit_with_no_backpack_and_nothing_carried_has_an_empty_inventory() {
+        let kit = resolve_loot(&start(two_full())).expect("the starting kit resolves");
+
+        assert_eq!(kit.loadout.backpack(), None);
+        assert_eq!(kit.loadout.inventory(), []);
+    }
+
+    #[test]
+    fn a_kit_naming_a_non_backpack_as_backpack_is_refused() {
+        for offender in ["crowbar", "rig_chest", "bandage"] {
+            let def = with_loot(json!(offender), json!([]));
+
+            let resolved = resolve_loot(&def).expect_err("not a backpack");
+            let remains = remains_of(&def).expect_err("not a backpack");
+
+            for error in [resolved, remains] {
+                assert!(
+                    matches!(
+                        &error,
+                        KitError::WrongKind { id: wrong, expected: "backpack" }
+                            if *wrong == id(offender)
+                    ),
+                    "{offender}: {error:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_kit_naming_an_unknown_backpack_or_carried_item_is_refused() {
+        let cases = [
+            with_loot(json!("nope"), json!([])),
+            with_loot(json!("backpack_small"), json!([{"item": "nope"}])),
+        ];
+        for def in cases {
+            let error = resolve_loot(&def).expect_err("an unknown item");
+
+            assert!(
+                matches!(&error, KitError::UnknownItem { id: unknown } if *unknown == id("nope")),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_carried_entry_whose_fields_do_not_fit_its_item_is_refused() {
+        let cases = [
+            (
+                "a magazine with a count",
+                json!({"item": "mag_rifle", "round": "round_ball", "count": 3}),
+            ),
+            ("a magazine with no round", json!({"item": "mag_rifle"})),
+            (
+                "a round with a round",
+                json!({"item": "round_ball", "round": "round_ball", "count": 3}),
+            ),
+            (
+                "a round with rounds",
+                json!({"item": "round_ball", "rounds": 3, "count": 3}),
+            ),
+            ("a round with no count", json!({"item": "round_ball"})),
+            (
+                "a tool with a count",
+                json!({"item": "crowbar", "count": 1}),
+            ),
+            (
+                "a tool with a round",
+                json!({"item": "crowbar", "round": "round_ball"}),
+            ),
+            (
+                "a tool with rounds",
+                json!({"item": "crowbar", "rounds": 1}),
+            ),
+            (
+                "a bandage with a count",
+                json!({"item": "bandage", "count": 2}),
+            ),
+        ];
+        for (label, entry) in cases {
+            let offender = entry["item"].as_str().expect("an item id").to_owned();
+            let def = with_loot(json!("backpack_small"), json!([entry]));
+
+            let resolved = resolve_loot(&def).expect_err(label);
+            let remains = remains_of(&def).expect_err(label);
+
+            for error in [resolved, remains] {
+                assert!(
+                    matches!(&error, KitError::EntryFields { id: named } if *named == id(&offender)),
+                    "{label}: {error:?}"
+                );
+                assert!(error.to_string().contains(&offender), "{label}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_carried_entry_with_a_wrong_kind_round_or_too_many_rounds_is_refused() {
+        let wrong_round = with_loot(
+            json!("backpack_small"),
+            json!([{"item": "mag_rifle", "round": "crowbar"}]),
+        );
+        let too_many = with_loot(
+            json!("backpack_small"),
+            json!([{"item": "mag_rifle", "round": "round_ball", "rounds": 31}]),
+        );
+
+        let kind = resolve_loot(&wrong_round).expect_err("a crowbar is not a round");
+        let capacity = resolve_loot(&too_many).expect_err("31 rounds do not fit 30");
+
+        assert!(
+            matches!(&kind, KitError::WrongKind { id: wrong, expected: "round" } if *wrong == id("crowbar")),
+            "{kind:?}"
+        );
+        assert!(
+            matches!(
+                &capacity,
+                KitError::OverCapacity {
+                    rounds: 31,
+                    capacity: 30,
+                    ..
+                }
+            ),
+            "{capacity:?}"
+        );
+    }
+
+    #[test]
+    fn a_kit_resolves_into_remains_with_its_rig_backpack_and_rifle_first() {
+        let def = with_loot(json!("backpack_small"), json!([{"item": "bandage"}]));
+
+        let (remains, rounds) = remains_of(&def).expect("the enemy kit resolves");
+
+        let rig = remains.rig.as_ref().expect("the enemy wears a rig");
+        assert_eq!(rig.item(), &id("rig_chest"));
+        assert_eq!(rig.slots().len(), 3);
+        let on_rig: Vec<u32> = rig.magazines().map(Magazine::rounds).collect();
+        assert_eq!(on_rig, [12]);
+        assert_eq!(remains.backpack, Some(id("backpack_small")));
+        assert_eq!(remains.carried.len(), 2, "{:?}", remains.carried);
+        let Item::Weapon(rifle) = &remains.carried[0] else {
+            panic!("the rifle comes first, got {:?}", remains.carried[0]);
+        };
+        assert_eq!(rifle.magazine().rounds(), 29);
+        assert!(rifle.is_chambered());
+        assert_eq!(remains.carried[1], Item::Other(id("bandage")));
+        assert_eq!(
+            rounds.keys().collect::<Vec<_>>(),
+            [&id("round_ball")],
+            "the kit names one round"
+        );
+    }
+
+    #[test]
+    fn remains_of_a_kit_with_no_backpack_have_none() {
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"}
+        }));
+
+        let (remains, _) = remains_of(&def).expect("the enemy kit resolves");
+
+        assert_eq!(remains.backpack, None);
+        assert_eq!(
+            remains.carried.len(),
+            1,
+            "only the rifle: {:?}",
+            remains.carried
+        );
+    }
+
+    #[test]
+    fn remains_carry_the_ballistics_of_every_round_in_the_kit() {
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_rifle", "round": "round_heavy", "rounds": 12}]
+        }));
+
+        let (_, rounds) = remains_of(&def).expect("the enemy kit resolves");
+
+        assert_eq!(
+            rounds.get(&id("round_heavy")),
+            Some(&Ballistics {
+                muzzle_velocity: 800.0,
+                drag: 2.5
+            })
+        );
+        assert_eq!(rounds.len(), 2);
     }
 }

@@ -1,9 +1,21 @@
 [start]
 rig = "rig_chest"
 weapon = "rifle"
+backpack = "backpack_small"
 loaded = { magazine = "mag_rifle", round = "round_rifle_ball" }
 magazines = [
     { magazine = "mag_rifle", round = "round_rifle_ball" },
     { magazine = "mag_rifle", round = "round_rifle_ball" },
     { magazine = "mag_rifle", round = "round_rifle_ball" },
+]
+
+[enemy]
+rig = "rig_chest"
+weapon = "rifle"
+loaded = { magazine = "mag_rifle", round = "round_rifle_ball" }
+magazines = [
+    { magazine = "mag_rifle", round = "round_rifle_ball", rounds = 12 },
+]
+carried = [
+    { item = "bandage" },
 ]

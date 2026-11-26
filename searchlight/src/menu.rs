@@ -642,6 +642,7 @@ mod tests {
             "Q",
             "E",
             "F",
+            "Tab",
         ]
         .map(|text| Some(text.to_owned()))
         .to_vec();

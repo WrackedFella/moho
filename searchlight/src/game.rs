@@ -878,6 +878,8 @@ enum Screen {
     MainMenu,
     Playing,
     Paused,
+    /// The inventory: takes input like a menu while the loop keeps running.
+    Inventory,
 }
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
@@ -1005,6 +1007,21 @@ impl SearchlightGame {
         self.input.discard_edges();
         self.input.reset_look();
         self.stage.release_cursor();
+    }
+
+    /// Whether `input` is bound to the inventory action.
+    fn is_inventory_key(&self, input: Input) -> bool {
+        self.input
+            .bindings()
+            .get(SearchlightAction::Inventory)
+            .iter()
+            .any(|binding| binding.input == input)
+    }
+
+    /// Opens the inventory screen over play.
+    fn open_inventory(&mut self) {
+        self.screen = Screen::Inventory;
+        panic!("not yet implemented: show the inventory lists and keep the loop running")
     }
 
     /// Opens the demo item lists over the pause menu, pausing first when in play.
@@ -1493,6 +1510,10 @@ impl SearchlightGame {
             Routing::Game => {
                 if pressed && !repeat && input == Input::Key(Key::Escape) {
                     self.pause();
+                    return routing;
+                }
+                if pressed && !repeat && self.is_inventory_key(input) {
+                    self.open_inventory();
                     return routing;
                 }
                 match input {
@@ -6668,6 +6689,162 @@ mod tests {
             Some("T"),
             "the saved file keeps the applied binding"
         );
+    }
+
+    use crate::input::InventoryCommand;
+
+    const TAB: Input = Input::Key(Key::Tab);
+
+    #[test]
+    fn the_inventory_key_opens_and_closes_the_inventory() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.route_input(&mut ctx, TAB, true, false);
+        game.event(&mut ctx, motion());
+        let open = (game.screen, ctx.requested_paused());
+        game.route_input(&mut ctx, TAB, true, false);
+        game.event(&mut ctx, motion());
+        let closed = (game.screen, ctx.requested_paused());
+
+        assert_eq!(open, (Screen::Inventory, Some(false)));
+        assert_eq!(closed, (Screen::Playing, Some(false)));
+    }
+
+    #[test]
+    fn the_second_inventory_binding_opens_it_too() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.route_input(&mut ctx, Input::Key(Key::I), true, false);
+
+        assert_eq!(game.screen, Screen::Inventory);
+    }
+
+    #[test]
+    fn a_held_inventory_key_repeating_does_not_open_it() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.route_input(&mut ctx, TAB, true, true);
+
+        assert_eq!(game.screen, Screen::Playing);
+    }
+
+    #[test]
+    fn escape_closes_the_inventory_and_sends_close() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        assert_eq!(game.screen, Screen::Inventory);
+
+        game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        let closing = game.command();
+        let after = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!ctx.exit_requested());
+        assert_eq!(closing.inventory, Some(InventoryCommand::Close));
+        assert_eq!(after.inventory, None, "the close is sent once");
+    }
+
+    #[test]
+    fn the_inventory_key_closing_the_screen_sends_close_too() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        assert_eq!(game.screen, Screen::Inventory);
+
+        game.route_input(&mut ctx, TAB, true, false);
+        let closing = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(closing.inventory, Some(InventoryCommand::Close));
+    }
+
+    #[test]
+    fn an_open_inventory_sends_no_movement_fire_or_look_but_keeps_the_host_levels() {
+        let mut game = game();
+        game.god_mode = true;
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        game.route_input(&mut ctx, TAB, true, false);
+        assert_eq!(game.screen, Screen::Inventory);
+
+        press(game.input_mut(), SearchlightAction::Fire);
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 0.0);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert!(!command.fire);
+        assert!(command.god_mode);
+    }
+
+    #[test]
+    fn an_enemy_hit_lands_while_the_inventory_is_open() {
+        let mut config = arena_config();
+        config.enemy.damage = 10;
+        let mode = ArenaMode::new(arena_arena(), config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let clock = GameClock::default();
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        assert_eq!(game.screen, Screen::Inventory);
+        let full = game.sim().player_body().health();
+
+        headless.advance(&mut game, Duration::ZERO);
+        for _ in 0..600 {
+            headless.advance(&mut game, Duration::from_secs(1) / 60);
+            if game.sim().player_body().health() < full {
+                break;
+            }
+        }
+
+        assert!(!headless.paused());
+        assert_eq!(game.screen, Screen::Inventory);
+        assert!(
+            game.sim().player_body().health() < full,
+            "the enemy's shots never landed"
+        );
+    }
+
+    #[test]
+    fn death_closes_the_inventory() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let clock = GameClock::default();
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        assert_eq!(game.screen, Screen::Inventory);
+
+        headless.advance(&mut game, Duration::ZERO);
+        for _ in 0..600 {
+            headless.advance(&mut game, Duration::from_secs(1) / 60);
+            if game.sim().player_body().is_dead() {
+                break;
+            }
+        }
+        headless.advance(&mut game, Duration::from_secs(1) / 60);
+
+        assert!(game.sim().player_body().is_dead(), "the player never died");
+        assert_eq!(game.screen, Screen::Playing);
     }
 }
 

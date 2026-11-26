@@ -14,7 +14,7 @@ use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId,
-    LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Remains, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -202,8 +202,20 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
             walk_spread: 0.03,
             settle_seconds: 0.35,
         },
+        search_ticks: SEARCH_TICKS,
+        search_reach: SEARCH_REACH,
+        body_radius: BODY_RADIUS,
+        enemy_remains: Remains::default(),
     }
 }
+
+/// Ticks a search takes in the test config.
+pub(crate) const SEARCH_TICKS: u32 = 6;
+/// How far from the eye a body can be searched in the test config, in metres: the eye is 1.63 m
+/// over the floor, so a body lying 1.5 m away is 2.2 m from it.
+pub(crate) const SEARCH_REACH: f32 = 3.0;
+/// How close to the use ray a body must lie in the test config, in metres.
+pub(crate) const BODY_RADIUS: f32 = 0.8;
 
 /// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
 pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {

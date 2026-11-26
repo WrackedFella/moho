@@ -1,7 +1,9 @@
 //! Loads the starting kit from item and kit definitions in the content roots.
 
+use std::collections::BTreeMap;
+
 use moho_core::content::{ContentError, ContentRoots, load_kind};
-use searchlight_rules::{ItemDef, ItemId, Kit, KitDef, KitError};
+use searchlight_rules::{Ballistics, ItemDef, ItemId, Kit, KitDef, KitError, Remains};
 use thiserror::Error;
 
 /// The id of the kit a run starts with.
@@ -23,6 +25,23 @@ pub enum KitLoadError {
         #[source]
         source: KitError,
     },
+}
+
+/// The id of the kit every enemy carries and wears.
+pub const ENEMY_KIT_ID: &str = "enemy";
+
+/// Loads `items` and `kits` through `roots` and resolves the kit `kit` as the gear of a dead
+/// enemy, with the ballistics of every round it names.
+///
+/// # Errors
+///
+/// As [`load`].
+pub fn load_enemy(
+    roots: &ContentRoots,
+    kit: &str,
+) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitLoadError> {
+    let _ = (roots, kit);
+    panic!("not yet implemented: load_enemy")
 }
 
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit`.
@@ -50,11 +69,15 @@ mod tests {
     use searchlight_rules::{ItemClass, ItemDef, ItemId, ItemKind, KitError, MagazineWell, Shot};
     use std::path::Path;
 
+    use crate::tuning::{tuning, with_enemy_kit};
+    use searchlight_rules::Item;
+
     const RIFLE: &str = r#"
 [rifle]
 class = "weapon"
 size = [2, 5]
 condition = 100
+weight = 3.0
 [rifle.weapon]
 well = "rifle"
 damage = 30
@@ -69,21 +92,25 @@ charge_ticks = 30
 class = "gear"
 size = [1, 2]
 magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
+weight = 0.25
 
 [round_ball]
 class = "consumable"
 size = [1, 1]
 round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
+weight = 0.01
 
 [rig_chest]
 class = "gear"
 size = [3, 2]
 rig = { magazine_slots = 3 }
+weight = 1.0
 
 [crowbar]
 class = "tool"
 size = [1, 3]
 condition = 100
+weight = 2.0
 "#;
 
     fn items_toml() -> String {
@@ -342,6 +369,7 @@ condition = 100
 class = "gear"
 size = [1, 2]
 magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
+weight = 0.2
 "#;
 
     #[test]
@@ -367,5 +395,184 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
             "{shots:?}"
         );
         assert_eq!(dry, [Shot::Dry]);
+    }
+
+    const LOOT_ITEMS: &str = r#"
+[round_heavy]
+class = "consumable"
+size = [1, 1]
+weight = 0.02
+round = { caliber = "5.56x45", muzzle_velocity = 800.0, drag = 2.5 }
+
+[bandage]
+class = "consumable"
+size = [1, 1]
+weight = 0.05
+uses = 1
+
+[backpack_small]
+class = "gear"
+size = [4, 4]
+weight = 0.9
+backpack = {}
+"#;
+
+    const ENEMY_KIT: &str = r#"
+[enemy]
+rig = "rig_chest"
+weapon = "rifle"
+loaded = { magazine = "mag_rifle", round = "round_ball" }
+magazines = [{ magazine = "mag_rifle", round = "round_heavy", rounds = 12 }]
+carried = [{ item = "bandage" }]
+"#;
+
+    fn loot_content(kits: &str) -> (tempfile::TempDir, ContentRoots) {
+        base_with(&format!("{}{LOOT_ITEMS}", items_toml()), kits)
+    }
+
+    #[test]
+    fn the_shipped_start_kit_wears_the_small_backpack_and_carries_nothing_else() {
+        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+
+        let kit = load(&roots, START_KIT_ID).expect("the shipped start kit loads");
+
+        assert_eq!(kit.loadout.backpack(), Some(&ItemId::new("backpack_small")));
+        assert!(kit.loadout.inventory().is_empty());
+    }
+
+    #[test]
+    fn the_shipped_enemy_kit_loads() {
+        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+
+        let (remains, rounds) =
+            load_enemy(&roots, ENEMY_KIT_ID).expect("the shipped enemy kit loads");
+
+        let rig = remains.rig.as_ref().expect("the enemy wears a rig");
+        assert_eq!(rig.item(), &ItemId::new("rig_chest"));
+        let on_rig: Vec<u32> = rig
+            .magazines()
+            .map(searchlight_rules::Magazine::rounds)
+            .collect();
+        assert_eq!(on_rig, [12]);
+        assert_eq!(remains.backpack, None);
+        assert_eq!(remains.carried.len(), 2, "{:?}", remains.carried);
+        let Item::Weapon(rifle) = &remains.carried[0] else {
+            panic!("the rifle comes first, got {:?}", remains.carried[0]);
+        };
+        assert_eq!(rifle.magazine().rounds(), 29);
+        assert!(rifle.is_chambered());
+        assert_eq!(remains.carried[1], Item::Other(ItemId::new("bandage")));
+        let ball = rounds
+            .get(&ItemId::new("round_rifle_ball"))
+            .expect("the enemy kit names the ball round");
+        assert_eq!(ball.muzzle_velocity, 940.0);
+        assert_eq!(ball.drag, 1.0);
+    }
+
+    #[test]
+    fn the_enemy_kits_rounds_join_the_ballistics_map() {
+        let (_dir, roots) = loot_content(&format!("{}{ENEMY_KIT}", start_kit(2)));
+        let kit = load(&roots, START_KIT_ID).expect("the start kit loads");
+        let (remains, rounds) = load_enemy(&roots, ENEMY_KIT_ID).expect("the enemy kit loads");
+
+        let config = with_enemy_kit(tuning(kit), remains.clone(), rounds);
+
+        let expected = BTreeMap::from([
+            (
+                ItemId::new("round_ball"),
+                Ballistics {
+                    muzzle_velocity: 940.0,
+                    drag: 1.0,
+                },
+            ),
+            (
+                ItemId::new("round_heavy"),
+                Ballistics {
+                    muzzle_velocity: 800.0,
+                    drag: 2.5,
+                },
+            ),
+        ]);
+        assert_eq!(config.rounds, expected);
+        assert_eq!(config.enemy_remains, remains);
+    }
+
+    #[test]
+    fn an_undefined_enemy_kit_is_a_missing_id_error() {
+        let (_dir, roots) = loot_content(&start_kit(2));
+
+        let Err(error) = load_enemy(&roots, ENEMY_KIT_ID) else {
+            panic!("an enemy kit that is not defined loaded");
+        };
+
+        assert!(
+            matches!(&error, KitLoadError::Content(ContentError::MissingId { id, .. }) if id == "enemy"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_enemy_kit_with_a_misfitting_carried_entry_fails_naming_the_kit_and_the_item() {
+        let kits = format!(
+            "{}{}",
+            start_kit(2),
+            ENEMY_KIT.replace(
+                "{ item = \"bandage\" }",
+                "{ item = \"bandage\", count = 3 }"
+            )
+        );
+        let (_dir, roots) = loot_content(&kits);
+
+        let Err(error) = load_enemy(&roots, ENEMY_KIT_ID) else {
+            panic!("a bandage with a count loaded");
+        };
+
+        let text = error.to_string();
+        assert!(text.starts_with("kit \"enemy\": "), "{text}");
+        assert!(text.contains("bandage"), "{text}");
+        assert!(
+            matches!(
+                &error,
+                KitLoadError::Kit { kit, source: KitError::EntryFields { id } }
+                    if kit == "enemy" && *id == ItemId::new("bandage")
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_item_without_a_weight_fails_the_load_naming_file_and_id() {
+        let items = items_toml().replace("weight = 2.0\n", "");
+        let (dir, roots) = base_with(&items, &start_kit(2));
+
+        let Err(error) = load(&roots, START_KIT_ID) else {
+            panic!("an item with no weight loaded");
+        };
+
+        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+            panic!("expected Invalid content, got {error:?}");
+        };
+        assert_eq!(file, &dir.path().join("items.toml"));
+        assert_eq!(id, "crowbar");
+        assert!(reason.contains("weight"), "{reason}");
+    }
+
+    #[test]
+    fn a_negative_or_non_finite_weight_fails_the_load_naming_the_item_and_the_field() {
+        for bad in ["-1.0", "nan", "inf", "-inf"] {
+            let items = items_toml().replace("weight = 2.0\n", &format!("weight = {bad}\n"));
+            let (dir, roots) = base_with(&items, &start_kit(2));
+
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a weight of {bad} loaded");
+            };
+
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{bad}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"));
+            assert_eq!(id, "crowbar");
+            assert!(reason.contains("weight"), "{bad}: {reason}");
+        }
     }
 }
