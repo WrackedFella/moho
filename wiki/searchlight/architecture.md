@@ -6,7 +6,7 @@
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `PartOffset`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -151,8 +151,9 @@ The wave's grades come from `searchlight_rules::GradeMix` (`WaveTuning::mix`, de
 
 ## 5 Enemies
 
-Each tick an enemy casts a sight ray from its eye to the player's aim point (the part chosen
-by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
+Each tick an enemy casts sight rays from its eye toward the player's leaned eye, head centre and
+torso centre ([posture](#8-posture)) and sets `Percept::target` to the player's aim point (the
+leaned centre of the part chosen by `SimConfig::enemy_aim_at`) only when one of those rays strikes a
 `SurfaceTag::Player`, so walls block sight. `Brain::think` returns an `Intent` (forward
 fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping, heading for the next corner of the navmesh path to the waypoint (the same `steer` as `Chase`; straight at the waypoint when there is no path), with arrival measured to the waypoint; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
