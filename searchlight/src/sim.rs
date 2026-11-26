@@ -213,16 +213,76 @@ fn lean_volumes(upright: &[HitVolume; 6], lean: Lean, tuning: &LeanTuning) -> [H
     leaned
 }
 
-/// STUB, to be replaced by the implementation: the seventh volume that closes the hip band of
-/// a leaning player, built from the six posed `volumes`.
-#[cfg(test)]
-fn hip_piece(_: &[HitVolume; 6]) -> HitVolume {
+/// How much shallower than the thinnest of the torso and legs the hip piece is, in metres, so a
+/// shot from the front or back meets any of those parts before the piece.
+const HIP_PIECE_DEPTH_MARGIN: f32 = 0.01;
+
+/// The seventh hit volume of a player who is not upright, reported as torso, spanning the hip
+/// band that `volumes` (the six posed volumes in [`BodyPart::ALL`] order) leave open: across
+/// from the outer edge of one leg to the other, up from the lower of the legs' tops and the
+/// torso's lowest bottom corner to the highest point of the torso's and arms' bottom edges.
+///
+/// Built from the posed boxes, not the standing constants, so any pose that moves the six
+/// parts gets a matching piece.
+fn hip_piece(volumes: &[HitVolume; 6]) -> HitVolume {
+    let of = |part: BodyPart| {
+        let slot = BodyPart::ALL
+            .iter()
+            .position(|&p| p == part)
+            .expect("BodyPart::ALL lists every part");
+        volumes[slot]
+    };
+    let bottom_corners = |volume: HitVolume| {
+        let half = volume.half_extents;
+        [-1.0_f32, 1.0].into_iter().flat_map(move |x| {
+            [-1.0_f32, 1.0].into_iter().map(move |z| {
+                volume.offset + volume.rotation * Vec3::new(x * half.x, -half.y, z * half.z)
+            })
+        })
+    };
+    let torso = of(BodyPart::Torso);
+    let legs = [of(BodyPart::LeftLeg), of(BodyPart::RightLeg)];
+    let arms = [of(BodyPart::LeftArm), of(BodyPart::RightArm)];
+
+    let left = legs
+        .iter()
+        .map(|leg| leg.offset.x - leg.half_extents.x)
+        .fold(f32::INFINITY, f32::min);
+    let right = legs
+        .iter()
+        .map(|leg| leg.offset.x + leg.half_extents.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let low = legs
+        .iter()
+        .map(|leg| leg.offset.y + leg.half_extents.y)
+        .chain(bottom_corners(torso).map(|corner| corner.y))
+        .fold(f32::INFINITY, f32::min);
+    let high = bottom_corners(torso)
+        .chain(arms.into_iter().flat_map(bottom_corners))
+        .map(|corner| corner.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let half_depth = legs
+        .iter()
+        .map(|leg| leg.half_extents.z)
+        .fold(torso.half_extents.z, f32::min)
+        - HIP_PIECE_DEPTH_MARGIN;
+
     HitVolume {
-        offset: Vec3::ZERO,
+        offset: Vec3::new((left + right) / 2.0, (low + high) / 2.0, 0.0),
         rotation: Quat::IDENTITY,
-        half_extents: Vec3::ZERO,
+        half_extents: Vec3::new((right - left) / 2.0, (high - low) / 2.0, half_depth),
         tag: SurfaceTag::Player(BodyPart::Torso).into(),
     }
+}
+
+/// The hit volumes the physics world holds for the player: the six `leaned` volumes, and the
+/// hip piece after them unless the lean is upright.
+fn player_world_volumes(leaned: &[HitVolume; 6], lean: Lean) -> Vec<HitVolume> {
+    let mut volumes = leaned.to_vec();
+    if lean.amount() != 0.0 {
+        volumes.push(hip_piece(leaned));
+    }
+    volumes
 }
 
 /// The six hit volumes every body shares, in [`BodyPart::ALL`] order, each tagged by `tag_of`
@@ -609,13 +669,22 @@ impl SearchlightSim {
         };
         let lean = self.lean.step(want, reach, dt, &self.lean_tuning);
         if lean != self.lean {
+            let count_changes = (lean.amount() == 0.0) != (self.lean.amount() == 0.0);
             self.lean = lean;
             self.leaned_volumes = lean_volumes(&self.upright_volumes, lean, &self.lean_tuning);
             // Takes effect at the next world step, so a tick's rays meet the lean of the tick
             // before.
             self.world
-                .set_hit_volumes(self.player, &self.leaned_volumes)
+                .set_hit_volumes(
+                    self.player,
+                    &player_world_volumes(&self.leaned_volumes, lean),
+                )
                 .expect("the sim never removes the player");
+            if count_changes {
+                // Rebuilt colliders are out of the query index until a step, and the player
+                // would have no hit volumes at all for the rest of the tick.
+                self.world.step(SETTLE_DT);
+            }
         }
     }
 
