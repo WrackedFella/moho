@@ -3763,14 +3763,9 @@ mod tests {
     }
 
     /// An entry as raw bits, so equality is bitwise and a NaN cannot hide a difference.
-    fn entry_bits(entry: &(LooseId, LooseState)) -> (u64, String, [u32; 13], bool) {
+    fn entry_bits(entry: &(LooseId, LooseState)) -> (u64, LooseShape, [u32; 13], bool) {
         let (id, state) = entry;
-        (
-            id.get(),
-            format!("{:?}", state.shape),
-            bits(state),
-            state.asleep,
-        )
+        (id.get(), state.shape, bits(state), state.asleep)
     }
 
     fn varied_spawns() -> Vec<LooseSpawn> {

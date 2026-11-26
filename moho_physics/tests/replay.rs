@@ -15,6 +15,9 @@ use moho_physics::{
 use moho_render_api::{WorldMesh, WorldMeshId};
 use serde::{Deserialize, Serialize};
 
+/// Whether a shape is one particular kind of loose shape.
+type IsShape = fn(&LooseShape) -> bool;
+
 const TICKS: usize = 600;
 const DT: f32 = 1.0 / 60.0;
 /// The cuboid's launch velocity; it slides to rest well before the noisy phase.
@@ -619,8 +622,7 @@ fn state_hash(snapshot: &Snapshot) -> u64 {
     );
     let box_words = bits3(snapshot.box_translation)
         .into_iter()
-        .chain(snapshot.box_rotation.to_array().map(f32::to_bits))
-        .chain(loose_words);
+        .chain(snapshot.box_rotation.to_array().map(f32::to_bits));
     let words = snapshot
         .characters
         .iter()
@@ -629,7 +631,8 @@ fn state_hash(snapshot: &Snapshot) -> u64 {
                 .into_iter()
                 .flat_map(|(_, bits)| bits)
         })
-        .chain(box_words);
+        .chain(box_words)
+        .chain(loose_words);
     words
         .flat_map(u32::to_le_bytes)
         .fold(OFFSET_BASIS, |hash, byte| {
@@ -742,11 +745,11 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
     );
     kinds(|e| matches!(e, CharacterEffect::SetLook { .. }), "SetLook");
 
-    let loose_inputs = || script.iter().flat_map(|t| &t.loose);
-    let drops = loose_inputs()
+    let scripted_loose = || script.iter().flat_map(|t| &t.loose);
+    let drops = scripted_loose()
         .filter(|input| matches!(input, LooseInput::Spawn(_)))
         .count();
-    let removals = loose_inputs()
+    let removals = scripted_loose()
         .filter(|input| matches!(input, LooseInput::Remove(_)))
         .count();
     assert_eq!(
@@ -754,25 +757,18 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
         (5, 2),
         "the script drops five and removes two"
     );
-    let drops_of = |pick: fn(&LooseShape) -> bool| {
-        loose_inputs().any(|input| matches!(input, LooseInput::Spawn(s) if pick(&s.shape)))
-    };
-    assert!(
-        drops_of(|s| matches!(s, LooseShape::Box { .. })),
-        "no box drop"
-    );
-    assert!(
-        drops_of(|s| matches!(s, LooseShape::Capsule { .. })),
-        "no capsule drop"
-    );
-    assert!(
-        drops_of(|s| matches!(s, LooseShape::Cylinder { .. })),
-        "no cylinder drop"
-    );
-    assert!(
-        drops_of(|s| matches!(s, LooseShape::Sphere { .. })),
-        "no sphere drop"
-    );
+    let shape_drops: [(&str, IsShape); 4] = [
+        ("box", |s| matches!(s, LooseShape::Box { .. })),
+        ("capsule", |s| matches!(s, LooseShape::Capsule { .. })),
+        ("cylinder", |s| matches!(s, LooseShape::Cylinder { .. })),
+        ("sphere", |s| matches!(s, LooseShape::Sphere { .. })),
+    ];
+    for (name, pick) in shape_drops {
+        assert!(
+            scripted_loose().any(|input| matches!(input, LooseInput::Spawn(s) if pick(&s.shape))),
+            "no {name} drop"
+        );
+    }
     assert_eq!(
         recorded.iter().map(|s| s.loose.len()).max(),
         Some(5),
