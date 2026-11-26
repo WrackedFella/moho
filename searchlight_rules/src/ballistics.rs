@@ -38,7 +38,8 @@ pub struct RoundStats {
 #[must_use]
 pub fn arrival_damage(damage: u32, muzzle_velocity: f32, speed: f32) -> u32 {
     let ratio = (speed / muzzle_velocity).min(1.0);
-    ((damage as f32 * ratio).round() as u32).max(1)
+    // `damage as f32` rounds up above 2^24, so the clamp keeps the result within `damage`.
+    ((damage as f32 * ratio).round() as u32).max(1).min(damage)
 }
 
 /// A round in the air.
@@ -381,6 +382,12 @@ mod tests {
                 damage
             );
         });
+    }
+
+    #[test]
+    fn arrival_damage_never_exceeds_a_damage_f32_cannot_hold_exactly() {
+        assert_eq!(arrival_damage(16_777_219, 900.0, 900.0), 16_777_219);
+        assert_eq!(arrival_damage(u32::MAX, 900.0, 900.0), u32::MAX);
     }
 
     #[test]
