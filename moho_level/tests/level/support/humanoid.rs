@@ -79,7 +79,18 @@ pub struct HumanoidSpec {
     pub reload: bool,
     /// Adds the `idle` clip after `reload` (or after `crouch` without it).
     pub idle: bool,
+    /// Extra spine bones `spine_02`, `spine_03`, ... chained under `spine_01`, each 0.1 m above
+    /// its parent; `neck_01` and both `upperarm_*` hang off the last one. The walk indices of
+    /// everything after `spine_01` shift up by this count, so the index constants above hold
+    /// only with 0; look nodes up by name otherwise.
+    pub extra_spine: usize,
+    /// Adds the `lean` clip last: `pelvis` is held turned 0.5 rad about +Z and `spine_01` 0.4 rad
+    /// about +Y, so the chain bones carry rotations of their own.
+    pub lean: bool,
 }
+
+/// How far each extra spine bone sits above its parent.
+pub const EXTRA_SPINE_STEP: f32 = 0.1;
 
 /// `reload` lasts this many seconds when the spec asks for it; `spine_01` rises and `hand_r`
 /// moves up, and `pelvis`, `thigh_l` and `calf_r` move too (an upper-body layer must ignore those),
@@ -124,6 +135,14 @@ struct Def {
     body: bool,
 }
 
+/// Index of the bone called `name` in `NODES`, which is also its index in the defs.
+fn position_of(name: &str) -> usize {
+    NODES
+        .iter()
+        .position(|n| n.0 == name)
+        .expect("the bone is in the table")
+}
+
 fn defs(spec: &HumanoidSpec) -> Vec<Def> {
     let mut defs: Vec<Def> = NODES
         .iter()
@@ -145,6 +164,22 @@ fn defs(spec: &HumanoidSpec) -> Vec<Def> {
             body: false,
         })
         .collect();
+    if spec.extra_spine > 0 {
+        let first = defs.len();
+        let spine_01 = position_of("spine_01");
+        for k in 0..spec.extra_spine {
+            defs.push(Def {
+                name: format!("spine_{:02}", k + 2),
+                parent: Some(if k == 0 { spine_01 } else { first + k - 1 }),
+                translation: [0.0, EXTRA_SPINE_STEP, 0.0],
+                body: false,
+            });
+        }
+        let last = first + spec.extra_spine - 1;
+        for name in ["neck_01", "upperarm_l", "upperarm_r"] {
+            defs[position_of(name)].parent = Some(last);
+        }
+    }
     for name in &spec.duplicate {
         defs.push(Def {
             name: (*name).to_owned(),
@@ -334,6 +369,25 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
             "channels": [
                 { "sampler": 0, "target": { "node": file(HAND_L), "path": "translation" } },
                 { "sampler": 1, "target": { "node": file(THIGH_L), "path": "translation" } },
+            ],
+        }));
+    }
+
+    if spec.lean {
+        let times = [0.0, 1.0];
+        let held = |q: Quat| [q.to_array(), q.to_array()].concat();
+        let (pelvis_in, pelvis_out) =
+            blob.keys(&times, &held(Quat::from_rotation_z(0.5)), "VEC4", 4);
+        let (spine_in, spine_out) = blob.keys(&times, &held(Quat::from_rotation_y(0.4)), "VEC4", 4);
+        animations.push(json!({
+            "name": "lean",
+            "samplers": [
+                { "input": pelvis_in, "output": pelvis_out, "interpolation": "LINEAR" },
+                { "input": spine_in, "output": spine_out, "interpolation": "LINEAR" },
+            ],
+            "channels": [
+                { "sampler": 0, "target": { "node": file(PELVIS), "path": "rotation" } },
+                { "sampler": 1, "target": { "node": file(1), "path": "rotation" } },
             ],
         }));
     }
