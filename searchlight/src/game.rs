@@ -2277,8 +2277,13 @@ mod tests {
             ("slows too far", spent_at_once),
         ] {
             let mut config = tracer_config();
-            config.rounds =
-                BTreeMap::from([(searchlight_rules::ItemId::new("test_round"), ballistics)]);
+            config.rounds = BTreeMap::from([(
+                searchlight_rules::ItemId::new("test_round"),
+                searchlight_rules::RoundStats {
+                    ballistics,
+                    damage: 30,
+                },
+            )]);
             let mut game = tracer_game(&[], config);
             let mut clock = GameClock::new(0.0, 1.0, 1.0);
             let mut renderer = TracerRenderer::default();

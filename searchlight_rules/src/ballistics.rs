@@ -22,6 +22,22 @@ pub struct Ballistics {
     pub drag: f32,
 }
 
+/// What a round is: how it flies and the damage it does at the muzzle.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RoundStats {
+    /// How the round flies.
+    pub ballistics: Ballistics,
+    /// Damage of a hit arriving at the muzzle velocity; at least 1.
+    pub damage: u32,
+}
+
+/// The damage of a hit by a round of base `damage` and `muzzle_velocity` arriving at `speed`.
+#[must_use]
+pub fn arrival_damage(damage: u32, muzzle_velocity: f32, speed: f32) -> u32 {
+    let _ = (damage, muzzle_velocity, speed);
+    todo!("scale the damage by the arrival speed")
+}
+
 /// A round in the air.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Flight {
@@ -141,6 +157,7 @@ impl FlightBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::{prop_assert, proptest};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -302,6 +319,68 @@ mod tests {
         let bounds = FlightBounds::around([Vec3::ZERO, Vec3::new(0.0, 1.0, 4.0)], 1.0);
 
         assert_eq!(bounds.reach(), 7.0);
+    }
+
+    #[test]
+    fn arrival_damage_is_in_proportion_to_speed() {
+        let cases = [
+            (30, 900.0, 900.0, 30),
+            (30, 900.0, 450.0, 15),
+            (30, 900.0, 90.0, 3),
+            (30, 900.0, 0.0, 1),
+            (30, 900.0, 140.0, 5),
+            (30, 900.0, 100.0, 3),
+            (100, 940.0, 470.0, 50),
+            (30, 900.0, 1800.0, 30),
+        ];
+        for (damage, muzzle_velocity, speed, expected) in cases {
+            let dealt = arrival_damage(damage, muzzle_velocity, speed);
+
+            assert_eq!(dealt, expected, "{damage} at {speed} of {muzzle_velocity}");
+        }
+    }
+
+    #[test]
+    fn arrival_damage_rounds_to_the_nearest_whole_point() {
+        assert_eq!(arrival_damage(10, 100.0, 24.0), 2, "2.4 rounds down");
+        assert_eq!(arrival_damage(10, 100.0, 26.0), 3, "2.6 rounds up");
+        assert_eq!(arrival_damage(10, 100.0, 25.0), 3, "2.5 rounds away from 0");
+    }
+
+    #[test]
+    fn arrival_damage_never_rounds_to_0() {
+        assert_eq!(arrival_damage(30, 900.0, 1.0), 1);
+        assert_eq!(arrival_damage(1, 900.0, 100.5), 1);
+        assert_eq!(arrival_damage(1, 900.0, 0.0), 1);
+        assert_eq!(arrival_damage(4, 1000.0, 110.0), 1);
+    }
+
+    #[test]
+    fn arrival_damage_never_exceeds_the_round_s_damage() {
+        proptest!(|(
+            damage in 1u32..=1000,
+            muzzle_velocity in 101.0f32..2000.0,
+            speed in 0.0f32..5000.0,
+        )| {
+            prop_assert!(arrival_damage(damage, muzzle_velocity, speed) <= damage);
+        });
+    }
+
+    #[test]
+    fn arrival_damage_is_monotonic_in_speed() {
+        proptest!(|(
+            damage in 1u32..=1000,
+            muzzle_velocity in 101.0f32..2000.0,
+            slower in 0.0f32..2000.0,
+            extra in 0.0f32..2000.0,
+        )| {
+            let faster = slower + extra;
+
+            let at_slower = arrival_damage(damage, muzzle_velocity, slower);
+            let at_faster = arrival_damage(damage, muzzle_velocity, faster);
+
+            prop_assert!(at_slower <= at_faster, "{at_slower} at {slower}, {at_faster} at {faster}");
+        });
     }
 
     #[test]

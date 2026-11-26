@@ -57,7 +57,6 @@ size = [2, 5]
 condition = 100
 [rifle.weapon]
 well = "rifle"
-damage = 30
 fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
@@ -73,7 +72,7 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 [round_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0, damage = 30 }
 
 [rig_chest]
 class = "gear"
@@ -154,7 +153,6 @@ condition = 100
                 .magazines()
                 .all(|m| m.capacity() == 30 && m.rounds() == 30)
         );
-        assert_eq!(kit.weapon.damage, 30);
         assert_eq!(kit.weapon.cooldown_ticks, 6);
         assert_eq!(kit.weapon.reload_ticks, 120);
         assert_eq!(kit.weapon.charge_ticks, 30);
@@ -171,9 +169,47 @@ condition = 100
             .rounds
             .get(&ItemId::new("round_rifle_ball"))
             .expect("the start kit names the ball round");
-        assert_eq!(ball.muzzle_velocity, 940.0);
-        assert_eq!(ball.drag, 1.0);
+        assert_eq!(ball.ballistics.muzzle_velocity, 940.0);
+        assert_eq!(ball.ballistics.drag, 1.0);
+        assert_eq!(ball.damage, 30);
         assert_eq!(kit.rounds.len(), 1);
+    }
+
+    #[test]
+    fn a_weapon_that_still_names_damage_fails_the_load_naming_the_weapon_and_the_field() {
+        let items = items_toml().replace(
+            "well = \"rifle\"\nfire",
+            "well = \"rifle\"\ndamage = 30\nfire",
+        );
+        let (dir, roots) = base_with(&items, &start_kit(2));
+
+        let Err(error) = load(&roots, START_KIT_ID) else {
+            panic!("a weapon that names damage loaded");
+        };
+
+        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+            panic!("expected Invalid content, got {error:?}");
+        };
+        assert_eq!(file, &dir.path().join("items.toml"));
+        assert_eq!(id, "rifle");
+        assert!(reason.contains("damage"), "{reason}");
+    }
+
+    #[test]
+    fn a_round_without_damage_fails_the_load_naming_the_round_and_the_field() {
+        let items = items_toml().replace(", damage = 30 }", " }");
+        let (dir, roots) = base_with(&items, &start_kit(2));
+
+        let Err(error) = load(&roots, START_KIT_ID) else {
+            panic!("a round without damage loaded");
+        };
+
+        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+            panic!("expected Invalid content, got {error:?}");
+        };
+        assert_eq!(file, &dir.path().join("items.toml"));
+        assert_eq!(id, "round_ball");
+        assert!(reason.contains("damage"), "{reason}");
     }
 
     #[test]

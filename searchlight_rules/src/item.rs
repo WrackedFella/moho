@@ -104,6 +104,8 @@ pub struct RoundSpec {
     pub muzzle_velocity: f32,
     /// Fraction of its velocity the round sheds per second, in 1/s; not negative.
     pub drag: f32,
+    /// Damage of a hit arriving at the muzzle velocity; at least 1.
+    pub damage: u32,
 }
 
 /// Why a round section was refused.
@@ -116,6 +118,9 @@ pub enum RoundSpecError {
     /// The drag is negative or not finite.
     #[error("drag must be 0 or more, got {0}")]
     Drag(f32),
+    /// The damage is 0.
+    #[error("damage must be at least 1, got {0}")]
+    Damage(u32),
 }
 
 /// Unvalidated wire form of a [`RoundSpec`].
@@ -125,6 +130,7 @@ struct RawRoundSpec {
     caliber: Caliber,
     muzzle_velocity: f32,
     drag: f32,
+    damage: u32,
 }
 
 impl TryFrom<RawRoundSpec> for RoundSpec {
@@ -141,6 +147,7 @@ impl TryFrom<RawRoundSpec> for RoundSpec {
             caliber: raw.caliber,
             muzzle_velocity: raw.muzzle_velocity,
             drag: raw.drag,
+            damage: raw.damage,
         })
     }
 }
@@ -324,7 +331,6 @@ mod tests {
     fn weapon_section() -> Value {
         json!({
             "well": "rifle",
-            "damage": 30,
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
@@ -333,7 +339,9 @@ mod tests {
     }
 
     fn round_section(muzzle_velocity: Value, drag: Value) -> Value {
-        json!({"caliber": "5.56x45", "muzzle_velocity": muzzle_velocity, "drag": drag})
+        json!({
+            "caliber": "5.56x45", "muzzle_velocity": muzzle_velocity, "drag": drag, "damage": 30
+        })
     }
 
     fn round_error(round: Value) -> String {
@@ -446,7 +454,6 @@ mod tests {
             rifle,
             RifleDef {
                 well: MagazineWell::new("rifle"),
-                damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,
@@ -504,6 +511,52 @@ mod tests {
         let text = round_error(json!({"caliber": "5.56x45", "muzzle_velocity": 940.0}));
 
         assert!(text.contains("drag"), "{text}");
+    }
+
+    #[test]
+    fn a_round_section_loads_its_damage() {
+        let item = parse(json!({
+            "class": "consumable", "size": [1, 1],
+            "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 45}
+        }))
+        .expect("a round with a damage loads");
+
+        let ItemKind::Round(spec) = item.kind else {
+            panic!("expected a round kind, got {:?}", item.kind);
+        };
+        assert_eq!(spec.damage, 45);
+    }
+
+    #[test]
+    fn a_round_without_damage_is_refused_naming_the_field() {
+        let text = round_error(json!({
+            "caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0
+        }));
+
+        assert!(text.contains("damage"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_damage_0_is_refused_naming_the_field() {
+        let text = round_error(json!({
+            "caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 0
+        }));
+
+        assert!(text.contains("damage must be at least 1, got 0"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_damage_1_is_accepted() {
+        let item = parse(json!({
+            "class": "consumable", "size": [1, 1],
+            "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 1}
+        }))
+        .expect("the smallest hit is valid");
+
+        let ItemKind::Round(spec) = item.kind else {
+            panic!("expected a round kind, got {:?}", item.kind);
+        };
+        assert_eq!(spec.damage, 1);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
-use crate::ballistics::Ballistics;
+use crate::ballistics::{Ballistics, RoundStats};
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
@@ -46,8 +46,8 @@ pub struct Kit {
     pub weapon: RifleDef,
     /// The rifle and rig, ready to play.
     pub loadout: Loadout,
-    /// The ballistics of every round the kit names.
-    pub rounds: BTreeMap<ItemId, Ballistics>,
+    /// The ballistics and damage of every round the kit names.
+    pub rounds: BTreeMap<ItemId, RoundStats>,
 }
 
 /// Why a kit could not be resolved.
@@ -154,9 +154,12 @@ impl KitDef {
                 })?;
             rounds.insert(
                 entry.round.clone(),
-                Ballistics {
-                    muzzle_velocity: round.muzzle_velocity,
-                    drag: round.drag,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: round.muzzle_velocity,
+                        drag: round.drag,
+                    },
+                    damage: round.damage,
                 },
             );
             Ok(magazine)
@@ -189,7 +192,7 @@ impl KitDef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ballistics::Ballistics;
+    use crate::ballistics::{Ballistics, RoundStats};
     use crate::item::{ItemDef, ItemId, MagazineWell};
     use crate::test_support::id;
     use crate::weapon::{FireBehaviour, RifleDef};
@@ -201,7 +204,7 @@ mod tests {
             "rifle": {
                 "class": "weapon", "size": [2, 5], "condition": 100,
                 "weapon": {
-                    "well": "rifle", "damage": 30, "fire": "semi_auto", "cooldown_ticks": 6,
+                    "well": "rifle", "fire": "semi_auto", "cooldown_ticks": 6,
                     "reload_ticks": 120, "charge_ticks": 30
                 }
             },
@@ -215,15 +218,19 @@ mod tests {
             },
             "round_ball": {
                 "class": "consumable", "size": [1, 1],
-                "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0}
+                "round": {
+                    "caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 30
+                }
             },
             "round_heavy": {
                 "class": "consumable", "size": [1, 1],
-                "round": {"caliber": "5.56x45", "muzzle_velocity": 800.0, "drag": 2.5}
+                "round": {
+                    "caliber": "5.56x45", "muzzle_velocity": 800.0, "drag": 2.5, "damage": 55
+                }
             },
             "round_9mm": {
                 "class": "consumable", "size": [1, 1],
-                "round": {"caliber": "9mm", "muzzle_velocity": 400.0, "drag": 3.0}
+                "round": {"caliber": "9mm", "muzzle_velocity": 400.0, "drag": 3.0, "damage": 20}
             },
             "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
@@ -296,7 +303,6 @@ mod tests {
             kit.weapon,
             RifleDef {
                 well: MagazineWell::new("rifle"),
-                damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,
@@ -322,20 +328,42 @@ mod tests {
         let expected = BTreeMap::from([
             (
                 id("round_ball"),
-                Ballistics {
-                    muzzle_velocity: 940.0,
-                    drag: 1.0,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: 940.0,
+                        drag: 1.0,
+                    },
+                    damage: 30,
                 },
             ),
             (
                 id("round_heavy"),
-                Ballistics {
-                    muzzle_velocity: 800.0,
-                    drag: 2.5,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: 800.0,
+                        drag: 2.5,
+                    },
+                    damage: 55,
                 },
             ),
         ]);
         assert_eq!(kit.rounds, expected);
+    }
+
+    #[test]
+    fn a_resolved_kit_carries_each_round_s_damage() {
+        let def = kit_def(json!({
+            "rig": "rig_chest",
+            "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_heavy"},
+            "magazines": [{"magazine": "mag_rifle", "round": "round_ball"}]
+        }));
+
+        let kit = resolve(&def).expect("the kit resolves");
+
+        let damage = |name: &str| kit.rounds[&id(name)].damage;
+        assert_eq!(damage("round_heavy"), 55);
+        assert_eq!(damage("round_ball"), 30);
     }
 
     #[test]
