@@ -6,7 +6,7 @@
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `PartOffset`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -151,8 +151,9 @@ The wave's grades come from `searchlight_rules::GradeMix` (`WaveTuning::mix`, de
 
 ## 5 Enemies
 
-Each tick an enemy casts a sight ray from its eye to the player's aim point (the part chosen
-by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
+Each tick an enemy casts sight rays from its eye toward the player's leaned eye, head centre and
+torso centre ([posture](#8-posture)) and sets `Percept::target` to the player's aim point (the
+leaned centre of the part chosen by `SimConfig::enemy_aim_at`) only when one of those rays strikes a
 `SurfaceTag::Player`, so walls block sight. `Brain::think` returns an `Intent` (forward
 fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping, heading for the next corner of the navmesh path to the waypoint (the same `steer` as `Chase`; straight at the waypoint when there is no path), with arrival measured to the waypoint; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
@@ -241,7 +242,7 @@ Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, wi
 `part_index` the position in `PARTS`; `Player(part)` is `PLAYER_BASE + part_index`, with
 `PLAYER_BASE` above every `Part` tag, and `Control(index)` is `CONTROL_BASE + index`, above every player tag (`tag.rs`). Dummies and enemies carry six hit volumes
 (`dummy_hit_volumes`), one per `BodyPart`, tagged with the target number; the player carries the
-same boxes tagged `Player` (`player_hit_volumes`). The leg volumes reach the feet of the configured
+same boxes tagged `Player` (`player_hit_volumes`), moved by the lean ([posture](#8-posture)). The leg volumes reach the feet of the configured
 hull, and the game draws dummies and enemies from the sim's own `character_body()`.
 
 ## 7 Arena contract
@@ -275,8 +276,16 @@ Flow per tick:
    blends `player_lean`. Reach comes from one level ray per side from the upright eye, so a wall beside
    the player stops the lean short; with no lean wanted and none held it is `LeanReach::FULL`.
 3. The player's eye (`SearchlightSim::player_eye`) is the upright eye shifted along the player's right by
-   `lean * shift`. The player's shots leave from it, after the lean has stepped that tick. Enemy sight and
-   the player's hit volumes do not follow the lean yet.
+   `lean * shift`. The player's shots leave from it, after the lean has stepped that tick.
+4. The hit volumes follow the lean. `leaned_parts` returns one `PartOffset` per part in `BodyPart::ALL`
+   order: head, torso and arms roll rigidly by `lean * roll` about the hip pivot, then slide sideways so the
+   head centre sits `lean * shift` to the player's right (`BODY_RIGHT`, `-X` in the body frame, which faces
+   +Z at yaw 0); the legs stay. The sim keeps the upright volumes and a leaned copy, and when the lean
+   changes lays the offsets over the upright set (`lean_volumes`) and replaces the player's hit volumes in
+   the physics world, so shots from enemies hit the leaned body.
+5. Enemy aim and sight use the leaned body: the aim point is the centre of the configured aim part
+   (`leaned_centre`), and an enemy sees the player when a ray from its eye toward the player's leaned eye,
+   leaned head centre or leaned torso centre first strikes the player.
 
 The lean is blended between the last two ticks at draw time like the player's position; `SearchlightGame::frame`
 shifts the eye with `lean_offset` and rolls the view by `lean * roll` through `rolled_view_matrix`. A restart
