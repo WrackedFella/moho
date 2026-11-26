@@ -25,6 +25,7 @@ flowchart LR
 | See how the crates fit together | [architecture/overview](architecture/overview.md) |
 | Follow one frame from input to pixels | [architecture/frame-loop](architecture/frame-loop.md) |
 | Publish or handle an event | [architecture/events](architecture/events.md), then [best practices](reference/event-bus-best-practices.md) |
+| Keep simulation math deterministic | [architecture/determinism](architecture/determinism.md), [overview: simulation math](architecture/overview.md) |
 | Know where a key press goes | [architecture/input-and-state](architecture/input-and-state.md) |
 | Understand chunk load, light, mesh, unload | [architecture/world-streaming](architecture/world-streaming.md) |
 | Work on Searchlight | [searchlight/architecture](searchlight/architecture.md) |
@@ -48,6 +49,7 @@ flowchart LR
 - [Frame loop](architecture/frame-loop.md): winit callbacks, per-frame order, redraw.
 - [Events](architecture/events.md): bus modes, the channel hand-off, event families.
 - [Input and state](architecture/input-and-state.md): dispatcher priorities, `GameState`.
+- [Determinism](architecture/determinism.md): replay levels, the engine's guarantees and rules, the sim-math gate.
 - [World streaming](architecture/world-streaming.md): chunk lifecycle.
 - [Rendering](architecture/rendering.md): render API boundary, pass order, markers, effects.
 - [Console](architecture/console.md): debug console data flow.

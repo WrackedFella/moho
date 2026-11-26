@@ -1,6 +1,8 @@
 use crate::MeshRenderer;
 use crate::shadow::ShadowSystem;
-use crate::types::{DrawKey, GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex, VertexSource};
+use crate::types::{
+    DrawKey, GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Passes, Vertex, VertexSource,
+};
 use moho_render_api::WorldMesh;
 use wgpu::util::DeviceExt;
 
@@ -596,7 +598,7 @@ impl<'a> Renderer<'a> {
             mesh,
             texture,
             source: VertexSource::Mesh,
-            casts_shadow: true,
+            passes: Passes::Both,
         };
         self.queue_draw(key, instances);
     }
@@ -615,7 +617,26 @@ impl<'a> Renderer<'a> {
             mesh,
             texture: crate::textures::WHITE_TEXTURE,
             source: VertexSource::Mesh,
-            casts_shadow: false,
+            passes: Passes::MainOnly,
+        };
+        self.queue_draw(key, instances);
+    }
+
+    /// Queue a previously-registered mesh for the shadow pass only: it casts a shadow and is
+    /// not drawn in view.
+    pub fn enqueue_shadow_only_draw(
+        &mut self,
+        mesh: u32,
+        instances: &[moho_render_api::InstanceGpu],
+    ) {
+        if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
+            return;
+        }
+        let key = DrawKey {
+            mesh,
+            texture: crate::textures::WHITE_TEXTURE,
+            source: VertexSource::Mesh,
+            passes: Passes::ShadowOnly,
         };
         self.queue_draw(key, instances);
     }

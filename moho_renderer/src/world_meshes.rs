@@ -60,6 +60,8 @@ pub struct WorldMeshes {
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Placements that cast no shadow, kept apart so the ordinary draw lists are unchanged.
     unshadowed: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Placements that cast a shadow and are not drawn in view.
+    shadow_only: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Skinned placements in call order.
     skinned: Vec<SkinnedPlacement>,
     /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
@@ -172,7 +174,16 @@ impl WorldMeshes {
     /// Unshadowed placements of live ids as `(backend handle, instance)`, in id order and
     /// call order.
     pub fn unshadowed_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        self.unshadowed.iter().flat_map(move |(id, placements)| {
+        self.placed_draws(&self.unshadowed)
+    }
+
+    /// The placements in `map` of live ids as `(backend handle, instance)`, in id order and
+    /// call order.
+    fn placed_draws<'a>(
+        &'a self,
+        map: &'a BTreeMap<WorldMeshId, Vec<Placement>>,
+    ) -> impl Iterator<Item = (u32, InstanceGpu)> + 'a {
+        map.iter().flat_map(move |(id, placements)| {
             let handle = self.live.get(id).map(|live| live.handle);
             handle.into_iter().flat_map(move |handle| {
                 placements.iter().map(move |placement| {
@@ -183,10 +194,27 @@ impl WorldMeshes {
         })
     }
 
+    /// Append a placement of the mesh under `id` for this frame that casts a shadow and is
+    /// not drawn in view, listed by [`shadow_only_draws`](Self::shadow_only_draws) only.
+    pub fn place_shadow_only(&mut self, id: WorldMeshId, transform: glam::Affine3A) {
+        self.shadow_only.entry(id).or_default().push(Placement {
+            transform,
+            material: 0,
+            texture: None,
+        });
+    }
+
+    /// Shadow-only placements of live ids as `(backend handle, instance)`, in id order and
+    /// call order.
+    pub fn shadow_only_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
+        self.placed_draws(&self.shadow_only)
+    }
+
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
         self.unshadowed.clear();
+        self.shadow_only.clear();
         self.skinned.clear();
     }
 
@@ -920,6 +948,116 @@ mod tests {
         meshes.clear_placements();
 
         assert_eq!(meshes.unshadowed_draws().count(), 0);
+    }
+
+    #[test]
+    fn shadow_only_placements_are_listed_apart_from_drawn_and_unshadowed() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_shadow_only(A, at(2.0));
+
+        let handle = backend.handle_with_index_count(3);
+        assert_eq!(draws(&meshes).len(), 0, "not in draws");
+        assert_eq!(meshes.textured_draws().count(), 0, "not in textured_draws");
+        assert_eq!(
+            meshes.unshadowed_draws().count(),
+            0,
+            "not in unshadowed_draws"
+        );
+        let shadow_only: Vec<(u32, InstanceGpu)> = meshes.shadow_only_draws().collect();
+        assert_eq!(shadow_only.len(), 1);
+        assert_eq!(shadow_only[0].0, handle);
+        assert_eq!(shadow_only[0].1.model, model_of(at(2.0)));
+        assert_eq!(shadow_only[0].1.material, 0, "no material is named");
+    }
+
+    #[test]
+    fn shadow_only_placements_keep_id_order_then_call_order() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.flush(&mut backend);
+
+        meshes.place_shadow_only(B, at(1.0));
+        meshes.place_shadow_only(A, at(2.0));
+        meshes.place_shadow_only(A, at(3.0));
+
+        let drawn: Vec<(u32, [[f32; 4]; 4])> = meshes
+            .shadow_only_draws()
+            .map(|(handle, instance)| (handle, instance.model))
+            .collect();
+        let (a, b) = (
+            backend.handle_with_index_count(3),
+            backend.handle_with_index_count(6),
+        );
+        assert_eq!(
+            drawn,
+            vec![
+                (a, model_of(at(2.0))),
+                (a, model_of(at(3.0))),
+                (b, model_of(at(1.0)))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_shadow_only_placement_on_a_missing_id_is_skipped() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_shadow_only(B, at(1.0));
+        meshes.place_shadow_only(A, at(2.0));
+
+        let drawn: Vec<[[f32; 4]; 4]> = meshes
+            .shadow_only_draws()
+            .map(|(_, instance)| instance.model)
+            .collect();
+        assert_eq!(
+            drawn,
+            vec![model_of(at(2.0))],
+            "only the live id's placement"
+        );
+    }
+
+    #[test]
+    fn clear_placements_clears_shadow_only_placements() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place_shadow_only(A, at(1.0));
+        assert_eq!(meshes.shadow_only_draws().count(), 1);
+
+        meshes.clear_placements();
+
+        assert_eq!(meshes.shadow_only_draws().count(), 0);
+    }
+
+    #[test]
+    fn a_mesh_placed_normally_and_shadow_only_is_listed_once_in_each() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 3);
+        meshes.place_shadow_only(A, at(2.0));
+
+        let textured = textured(&meshes);
+        assert_eq!(textured.len(), 1);
+        assert_eq!(textured[0].2.model, model_of(at(1.0)));
+        assert_eq!(draws(&meshes).len(), 1);
+        let shadow_only: Vec<[[f32; 4]; 4]> = meshes
+            .shadow_only_draws()
+            .map(|(_, instance)| instance.model)
+            .collect();
+        assert_eq!(shadow_only, vec![model_of(at(2.0))]);
     }
 
     #[test]

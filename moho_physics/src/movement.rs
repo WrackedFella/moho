@@ -5,6 +5,7 @@
 
 use crate::world::CharacterState;
 use glam::Vec3;
+use moho_core::sim_math;
 use rapier3d::geometry::ColliderHandle;
 use serde::{Deserialize, Serialize};
 
@@ -747,7 +748,7 @@ fn lean_eye(
     let distance = from.distance + (to.distance - from.distance) * done;
     let roll = from.roll + (to.roll - from.roll) * done;
 
-    let (sin, cos) = state.yaw.sin_cos();
+    let (sin, cos) = sim_math::sin_cos(state.yaw);
     let offset = Vec3::new(-cos, 0.0, sin) * (state.lean * distance);
     if offset == Vec3::ZERO {
         state.roll = 0.0;
@@ -786,7 +787,7 @@ fn eye_offset(state: &CharacterState, body: &CharacterBody, settings: &MoveSetti
         body.pose(state.stance).eye_ahead(),
     );
     let ahead = ahead_from + (ahead_to - ahead_from) * done;
-    let (sin, cos) = state.yaw.sin_cos();
+    let (sin, cos) = sim_math::sin_cos(state.yaw);
     Vec3::new(sin * ahead, y, cos * ahead)
 }
 
@@ -854,7 +855,7 @@ pub fn step(
 
     change_stance(state, command.stance, &body, settings, queries);
 
-    let (sin, cos) = state.yaw.sin_cos();
+    let (sin, cos) = sim_math::sin_cos(state.yaw);
     let wish_vector =
         Vec3::new(sin, 0.0, cos) * command.forward + Vec3::new(-cos, 0.0, sin) * command.right;
     let wish = wish_vector.normalize_or_zero();

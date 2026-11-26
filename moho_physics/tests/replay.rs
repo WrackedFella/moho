@@ -4,6 +4,8 @@
 //! The tick loop is fixed: queue the tick's effects, `move_character` for each character in
 //! handle-creation order, then `PhysicsWorld::step`.
 
+use std::fmt::Write as _;
+
 use glam::{Quat, Vec3};
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
@@ -453,6 +455,34 @@ fn first_divergence(recorded: &[Snapshot], replayed: &[Snapshot]) -> Option<Dive
     None
 }
 
+/// FNV-1a 64 over the bits `first_divergence` compares: both characters' fields, then the
+/// box's translation and rotation. Hand-written so the hash is the same on every platform.
+fn state_hash(snapshot: &Snapshot) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let box_words = bits3(snapshot.box_translation)
+        .into_iter()
+        .chain(snapshot.box_rotation.to_array().map(f32::to_bits));
+    let words = snapshot
+        .characters
+        .iter()
+        .flat_map(|state| {
+            character_fields(state)
+                .into_iter()
+                .flat_map(|(_, bits)| bits)
+        })
+        .chain(box_words);
+    words
+        .flat_map(u32::to_le_bytes)
+        .fold(OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(PRIME)
+        })
+}
+
+fn hashes(snapshots: &[Snapshot]) -> Vec<u64> {
+    snapshots.iter().map(state_hash).collect()
+}
+
 fn encode(script: &[TickInput]) -> Vec<u8> {
     postcard::to_allocvec(script).expect("the script serialises")
 }
@@ -803,4 +833,55 @@ fn a_one_ulp_change_to_the_box_launch_velocity_breaks_the_replay() {
     let divergence = first_divergence(&recorded, &replayed)
         .expect("a one-ulp change to the box must show in the replay");
     assert_eq!(divergence.entity, "box", "{divergence:?}");
+}
+
+#[test]
+fn the_state_hash_is_identical_across_two_runs() {
+    let script = make_script();
+
+    let first = hashes(&run(&script));
+    let second = hashes(&run(&script));
+
+    assert_eq!(first.len(), TICKS);
+    assert_eq!(first, second);
+    let distinct: std::collections::HashSet<u64> = first.iter().copied().collect();
+    assert!(
+        distinct.len() > TICKS / 2,
+        "the hash barely changes across ticks: {} distinct of {TICKS}",
+        distinct.len()
+    );
+}
+
+#[test]
+fn a_one_ulp_change_to_the_box_launch_velocity_changes_the_state_hash() {
+    let script = make_script();
+    let recorded = hashes(&run(&script));
+    let nudged = Vec3::new(
+        flip_lowest_bit(BOX_VELOCITY.x),
+        BOX_VELOCITY.y,
+        BOX_VELOCITY.z,
+    );
+
+    let replayed = hashes(&run_in(build_scene(nudged), &script));
+
+    assert_eq!(recorded.len(), replayed.len());
+    assert!(
+        recorded.iter().zip(&replayed).any(|(a, b)| a != b),
+        "a one-ulp change to the box left every tick's hash unchanged"
+    );
+}
+
+/// CI sets `MOHO_REPLAY_HASH_OUT` so each platform leaves its per-tick hashes for comparison.
+#[test]
+fn the_recorded_run_writes_its_per_tick_hashes_when_asked() {
+    let recorded = hashes(&run(&make_script()));
+
+    assert_eq!(recorded.len(), TICKS);
+    if let Some(path) = std::env::var_os("MOHO_REPLAY_HASH_OUT") {
+        let mut lines = String::new();
+        for (tick, hash) in recorded.iter().enumerate() {
+            writeln!(lines, "{tick} {hash:016x}").expect("writing to a String cannot fail");
+        }
+        std::fs::write(&path, lines).expect("the replay hash file is writable");
+    }
 }

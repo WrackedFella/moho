@@ -17,7 +17,7 @@ use moho_renderer::RendererBackend;
 use winit::event::{DeviceEvent, WindowEvent};
 use winit::window::Window;
 
-pub use clock::GameClock;
+pub use clock::{GameClock, LoopRecord};
 pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
 pub use headless::HeadlessLoop;
 pub(crate) use loop_requests::LoopRequests;
@@ -50,6 +50,7 @@ pub struct FrameContext<'a> {
     frame_cap: Option<NonZeroU32>,
     frame_cap_requested: bool,
     window_mode: WindowMode,
+    next_tick: u64,
 }
 
 impl<'a> FrameContext<'a> {
@@ -72,7 +73,30 @@ impl<'a> FrameContext<'a> {
             frame_cap: None,
             frame_cap_requested: false,
             window_mode: WindowMode::Windowed,
+            next_tick: 0,
         }
+    }
+
+    /// Sets the index of the next tick [`FrameContext::loop_record`] reports.
+    #[must_use]
+    pub fn with_next_tick(mut self, next_tick: u64) -> Self {
+        self.next_tick = next_tick;
+        self
+    }
+
+    /// The loop's tick index and clock, for a save.
+    pub fn loop_record(&self) -> LoopRecord {
+        self.clock.record(self.next_tick)
+    }
+
+    /// Asks the loop to resume from `record` before its next tick.
+    pub fn resume_loop(&mut self, record: LoopRecord) {
+        self.requests.resume = Some(record);
+    }
+
+    /// The last resume the game asked for, if it asked.
+    pub fn requested_resume(&self) -> Option<LoopRecord> {
+        self.requests.resume
     }
 
     /// Sets the window mode [`FrameContext::window_mode`] reports.
@@ -189,6 +213,7 @@ pub struct EventContext<'a> {
     exit_requested: bool,
     requests: LoopRequests,
     window_mode: WindowMode,
+    next_tick: u64,
 }
 
 impl<'a> EventContext<'a> {
@@ -206,7 +231,30 @@ impl<'a> EventContext<'a> {
             exit_requested: false,
             requests: LoopRequests::default(),
             window_mode: WindowMode::Windowed,
+            next_tick: 0,
         }
+    }
+
+    /// Sets the index of the next tick [`EventContext::loop_record`] reports.
+    #[must_use]
+    pub fn with_next_tick(mut self, next_tick: u64) -> Self {
+        self.next_tick = next_tick;
+        self
+    }
+
+    /// The loop's tick index and clock, for a save.
+    pub fn loop_record(&self) -> LoopRecord {
+        self.clock.record(self.next_tick)
+    }
+
+    /// Asks the loop to resume from `record` before its next tick.
+    pub fn resume_loop(&mut self, record: LoopRecord) {
+        self.requests.resume = Some(record);
+    }
+
+    /// The last resume the game asked for, if it asked.
+    pub fn requested_resume(&self) -> Option<LoopRecord> {
+        self.requests.resume
     }
 
     /// Sets the window mode [`EventContext::window_mode`] reports.
@@ -570,6 +618,69 @@ mod tests {
         assert_eq!(paused, Some(true));
         assert_eq!(resumed, Some(false));
         assert_eq!(ctx.requested_speed(), Some(SimSpeed::X2));
+    }
+
+    #[test]
+    fn event_context_resume_reaches_the_requests() {
+        let clock = GameClock::default();
+        let record = GameClock::new(9.0, 120.0, 60.0).record(300);
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(ctx.requested_resume(), None);
+
+        ctx.resume_loop(record);
+
+        assert_eq!(ctx.requested_resume(), Some(record));
+        assert_eq!(ctx.loop_requests().resume, Some(record));
+    }
+
+    #[test]
+    fn frame_context_resume_reaches_the_requests() {
+        let clock = GameClock::default();
+        let first = GameClock::new(9.0, 120.0, 60.0).record(300);
+        let second = GameClock::new(10.0, 120.0, 60.0).record(7);
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        assert_eq!(ctx.requested_resume(), None);
+
+        ctx.resume_loop(first);
+        ctx.resume_loop(second);
+
+        assert_eq!(
+            ctx.requested_resume(),
+            Some(second),
+            "the last request wins"
+        );
+        assert_eq!(ctx.loop_requests().resume, Some(second));
+    }
+
+    #[test]
+    fn contexts_report_the_clock_and_the_tick_they_were_given() {
+        let mut clock = GameClock::new(9.0, 120.0, 60.0);
+        clock.set_time_scale(3.0);
+        let bare_frame = FrameContext::new(TICK, &clock, None, None);
+        let bare_event = EventContext::new(&clock, None, None);
+
+        let frame = FrameContext::new(TICK, &clock, None, None).with_next_tick(300);
+        let event = EventContext::new(&clock, None, None).with_next_tick(300);
+
+        assert_eq!(frame.loop_record(), clock.record(300));
+        assert_eq!(event.loop_record(), clock.record(300));
+        assert_eq!(bare_frame.loop_record().next_tick, 0);
+        assert_eq!(bare_event.loop_record().next_tick, 0);
+    }
+
+    #[test]
+    fn event_context_reports_its_tick_and_the_last_resume_wins() {
+        let clock = GameClock::new(9.0, 120.0, 60.0);
+        let first = GameClock::new(10.0, 120.0, 60.0).record(300);
+        let second = GameClock::new(11.0, 120.0, 60.0).record(500);
+        let mut ctx = EventContext::new(&clock, None, None).with_next_tick(7);
+
+        ctx.resume_loop(first);
+        ctx.resume_loop(second);
+
+        assert_eq!(ctx.loop_record().next_tick, 7);
+        assert_eq!(ctx.requested_resume(), Some(second));
+        assert_eq!(ctx.loop_requests().resume, Some(second));
     }
 
     #[test]
