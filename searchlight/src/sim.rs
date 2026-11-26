@@ -1224,52 +1224,46 @@ impl SearchlightSim {
     /// The control the player is looking at within [`USE_REACH`], or `None` when none is, a wall
     /// or body is in front of it, or the player is dead.
     pub fn control_in_reach(&self) -> Option<u16> {
-        if self.player_body.is_dead() {
-            return None;
-        }
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let strike = resolve_shot(
-            &self.world,
-            ShotRay {
-                origin: self.leaned_eye(&state),
-                direction: view.forward,
-                range: USE_REACH,
-                ignore: Some(self.player),
-            },
-        )?;
-        match strike.tag {
+        let (_, _, strike) = self.use_ray(USE_REACH)?;
+        match strike?.tag {
             SurfaceTag::Control(index) => Some(index),
             _ => None,
         }
     }
 
-    /// The body the player is looking at within the search reach, or `None` when none is, a
-    /// wall or control is nearer, or the player is dead.
-    pub fn body_in_view(&self) -> Option<u16> {
+    /// Where the player looks from and along, and what the world strikes within `range` of it
+    /// on that line; `None` while the player is dead.
+    fn use_ray(&self, range: f32) -> Option<(Vec3, Vec3, Option<Strike>)> {
         if self.player_body.is_dead() {
             return None;
         }
         let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let forward = first_person_view(&state, &state, 1.0, (0.0, 0.0)).forward;
         let eye = self.leaned_eye(&state);
-        let (reach, radius) = (self.origin.1.search_reach, self.origin.1.body_radius);
-        let end = eye + view.forward * reach;
         let strike = resolve_shot(
             &self.world,
             ShotRay {
                 origin: eye,
-                direction: view.forward,
-                range: reach,
+                direction: forward,
+                range,
                 ignore: Some(self.player),
             },
         );
+        Some((eye, forward, strike))
+    }
+
+    /// The body the player is looking at within the search reach, or `None` when none is, a
+    /// wall or control is nearer, or the player is dead.
+    pub fn body_in_view(&self) -> Option<u16> {
+        let (reach, radius) = (self.origin.1.search_reach, self.origin.1.body_radius);
+        let (eye, forward, strike) = self.use_ray(reach)?;
+        let end = eye + forward * reach;
         self.bodies
             .iter()
             .filter(|(_, dead)| {
                 dead.point.distance(eye) <= reach && passes_within(eye, end, dead.point, radius)
             })
-            .map(|(&number, dead)| (number, (dead.point - eye).dot(view.forward).max(0.0)))
+            .map(|(&number, dead)| (number, (dead.point - eye).dot(forward).max(0.0)))
             .filter(|&(_, along)| strike.is_none_or(|strike| strike.distance >= along - radius))
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(number, _)| number)
@@ -1283,6 +1277,13 @@ impl SearchlightSim {
     /// The number of the body being searched, if a search is under way.
     pub fn searching(&self) -> Option<u16> {
         self.search.map(|(body, _)| body)
+    }
+
+    /// What the body whose screen is open holds, if any.
+    pub fn looted_remains(&self) -> Option<&Remains> {
+        self.looting
+            .and_then(|number| self.bodies.get(&number))
+            .map(|dead| &dead.remains)
     }
 
     /// The number of the body whose screen is open, if any.

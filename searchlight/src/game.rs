@@ -1037,10 +1037,7 @@ impl SearchlightGame {
     fn pause(&mut self) {
         self.screen = Screen::Paused;
         self.stage.shell().menu_mut().push(pause_screen());
-        self.release_held_input();
-        self.input.discard_edges();
-        self.input.reset_look();
-        self.stage.release_cursor();
+        self.hand_input_to_screen();
     }
 
     /// Whether `input` is bound to the inventory action.
@@ -1062,11 +1059,20 @@ impl SearchlightGame {
     /// The lists the inventory screen shows: the player's side and, while one is open, the body.
     fn inventory_lists(&self) -> ItemLists<MenuAction> {
         let sim = self.mode.sim();
-        let body = sim
-            .looting()
-            .and_then(|number| sim.bodies().get(&number))
-            .map(|dead| &dead.remains);
-        inventory::lists(sim.loadout(), body)
+        inventory::lists(sim.loadout(), sim.looted_remains())
+    }
+
+    /// `command` with the host's levels and the inventory command the screen queued, the parts
+    /// of a tick's command that do not come from the player's hands.
+    fn with_host_levels(&mut self, command: SearchlightCommand) -> SearchlightCommand {
+        SearchlightCommand {
+            god_mode: self.god_mode,
+            forced_grade: self.forced_grade,
+            simple: self.simple,
+            round_gravity: self.round_gravity,
+            inventory: self.queued_inventory.take(),
+            ..command
+        }
     }
 
     /// Opens the inventory screen over play, the world still running behind it.
@@ -1074,10 +1080,7 @@ impl SearchlightGame {
         self.screen = Screen::Inventory;
         let lists = self.inventory_lists();
         self.stage.shell().menu_mut().push_lists(lists);
-        self.release_held_input();
-        self.input.discard_edges();
-        self.input.reset_look();
-        self.stage.release_cursor();
+        self.hand_input_to_screen();
     }
 
     /// Closes the inventory screen and tells the sim, which ends the looting.
@@ -1086,17 +1089,15 @@ impl SearchlightGame {
             tracing::debug!("inventory move dropped by a close in the same tick");
         }
         self.queued_inventory = Some(InventoryCommand::Close);
-        self.end_inventory();
+        self.enter_play();
     }
 
-    /// Takes the inventory screen down and gives play its input back.
-    fn end_inventory(&mut self) {
-        self.screen = Screen::Playing;
-        self.stage.shell().menu_mut().clear();
+    /// Drops what play held or looked at and frees the cursor for a screen to use.
+    fn hand_input_to_screen(&mut self) {
         self.release_held_input();
         self.input.discard_edges();
         self.input.reset_look();
-        self.stage.capture_cursor();
+        self.stage.release_cursor();
     }
 
     /// Queues the move of row `row` of list `from` onto list `to` for the next tick. One move is
@@ -1104,12 +1105,9 @@ impl SearchlightGame {
     /// equipment or a row that is gone.
     fn queue_move(&mut self, row: u32, from: ListId, to: ListId) {
         let sim = self.mode.sim();
-        let body = sim
-            .looting()
-            .and_then(|number| sim.bodies().get(&number))
-            .map(|dead| &dead.remains);
         let row = usize::try_from(row).expect("a row index fits usize");
-        let Some(source) = inventory::source_of(from, row, sim.loadout(), body) else {
+        let Some(source) = inventory::source_of(from, row, sim.loadout(), sim.looted_remains())
+        else {
             tracing::debug!(
                 list = from.0,
                 row,
@@ -1664,29 +1662,18 @@ impl Game for SearchlightGame {
             // The inventory screen leaves the world running: it keeps the host levels and sends
             // what the player asked of it, and nothing the player's hands would do.
             return if self.screen == Screen::Inventory && !self.loop_paused() {
-                SearchlightCommand {
-                    god_mode: self.god_mode,
-                    forced_grade: self.forced_grade,
-                    simple: self.simple,
-                    round_gravity: self.round_gravity,
-                    inventory: self.queued_inventory.take(),
-                    ..SearchlightCommand::default()
-                }
+                self.with_host_levels(SearchlightCommand::default())
             } else {
                 SearchlightCommand::default()
             };
         }
         let frame = self.input.end_tick();
         self.lean_side = resolve_lean(&frame, self.lean_side);
-        SearchlightCommand {
-            god_mode: self.god_mode,
-            forced_grade: self.forced_grade,
-            simple: self.simple,
-            round_gravity: self.round_gravity,
+        let command = SearchlightCommand {
             lean: self.lean_side,
-            inventory: self.queued_inventory.take(),
             ..SearchlightCommand::from_frame(&frame)
-        }
+        };
+        self.with_host_levels(command)
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
@@ -1821,7 +1808,7 @@ impl Game for SearchlightGame {
         let dead = self.mode.sim().player_body().is_dead();
         if self.screen == Screen::Inventory {
             if dead {
-                self.end_inventory();
+                self.enter_play();
             } else {
                 let lists = self.inventory_lists();
                 self.stage.shell().menu_mut().set_lists(lists);
