@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 use moho_core::rng::{SimRng, StreamId};
-use moho_core::sim_math::sin_cos;
+use moho_core::sim_math::{atan2, sin_cos};
 use moho_level::NavMesh;
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterHandle, CharacterSpawn, CharacterState, HitVolume,
@@ -65,14 +65,14 @@ pub(crate) fn dummy_at(body: &CharacterBody, index: usize, spawn: Vec3) -> (u16,
 /// # Panics
 /// If `route` is empty.
 fn nearest_waypoint(spawn: Vec3, route: &[Vec3]) -> (usize, f32) {
-    let flat = |waypoint: Vec3| (waypoint.x - spawn.x).hypot(waypoint.z - spawn.z);
+    let flat = |waypoint: Vec3| Vec2::new(waypoint.x - spawn.x, waypoint.z - spawn.z).length();
     let (index, waypoint) = route
         .iter()
         .copied()
         .enumerate()
         .min_by(|a, b| flat(a.1).total_cmp(&flat(b.1)))
         .expect("an arena with an enemy spawn has a patrol route");
-    (index, (waypoint.x - spawn.x).atan2(waypoint.z - spawn.z))
+    (index, atan2(waypoint.x - spawn.x, waypoint.z - spawn.z))
 }
 
 /// Radius of the shipped body's capsule, in metres; two shipped bodies touch at twice this.
@@ -1256,9 +1256,9 @@ impl SearchlightSim {
     /// Whether no occupant stands within two hull radii of `marker`, measured on the ground plane.
     fn marker_is_free(&self, marker: Vec3, occupants: &[Vec3]) -> bool {
         let clearance = 2.0 * self.body.standing.hull.radius;
-        occupants
-            .iter()
-            .all(|position| (position.x - marker.x).hypot(position.z - marker.z) >= clearance)
+        occupants.iter().all(|position| {
+            Vec2::new(position.x - marker.x, position.z - marker.z).length() >= clearance
+        })
     }
 
     /// The hull and eye the player and every target were built with.
