@@ -27,7 +27,8 @@ are removed:
 - rapier3d is built with `enhanced-determinism`, which keeps parry and the step off the
   platform math library; `scripts/check-physics-features.sh` (run by `just deny`) fails
   unless rapier3d and parry3d resolve it.
-- Character movement takes sine and cosine from `moho_core::sim_math`.
+- Character movement and the searchlight lean offset take sine and cosine from
+  `moho_core::sim_math`.
 
 This is the groundwork for L1. Cross-OS agreement is reported per CI run, not gated
 (section 6).
@@ -45,7 +46,7 @@ This is the groundwork for L1. Cross-OS agreement is reported per CI run, not ga
 ## 4 The sim-math gate
 
 `just check` runs `scripts/check-sim-math.sh` over the files in `scripts/sim-math.txt`
-(the `moho_physics` movement and world files). It prints the file and line of each
+(the `moho_physics` movement and world files, and `searchlight/src/lean.rs`). It prints the file and line of each
 method call or `f32::`/`f64::` path of a platform transcendental and fails.
 
 - The list is the boundary. Files outside it (camera, rendering, UI) are never scanned.
