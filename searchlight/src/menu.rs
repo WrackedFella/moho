@@ -148,15 +148,13 @@ pub fn pause_screen() -> MenuScreen<MenuAction> {
 
 /// The Head bob slider row, starting at `level`.
 pub fn head_bob_row(level: HeadBobLevel) -> MenuItem<MenuAction> {
-    MenuItem::GameSlider(GameSlider {
-        key: HeadBobLevel::KEY.to_owned(),
-        label: "Head bob".to_owned(),
-        min: HeadBobLevel::MIN,
-        max: HeadBobLevel::MAX,
-        step: HeadBobLevel::STEP,
-        unit: "%".to_owned(),
-        value: level.percent(),
-    })
+    game_slider(
+        HeadBobLevel::KEY,
+        "Head bob",
+        (HeadBobLevel::MIN, HeadBobLevel::MAX, HeadBobLevel::STEP),
+        "%",
+        level.percent(),
+    )
 }
 
 /// A game slider row of whole numbers, starting at `value`.
