@@ -22,7 +22,7 @@ use glam::{IVec3, Vec3};
 ///
 /// Base elevation is 64, max terrain height is 128 (chunk-Y 8 = y 128..143).
 /// MIN=0 preserves the full depth below sea level for future underground content.
-const MIN_CHUNK_Y: i32 = 0;
+pub(crate) const MIN_CHUNK_Y: i32 = 0;
 const MAX_CHUNK_Y: i32 = 8;
 
 pub struct ChunkStreamer {

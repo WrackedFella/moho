@@ -257,8 +257,39 @@ pub(crate) mod tests {
         }
     }
 
-    /// The flat meshes currently drawn, in draw order.
+    /// The chunk column whose cells a cap covers. A chunk owns the cells from half a block
+    /// into it to half a block into the next, so the cap's middle, less that half block,
+    /// falls in the owner's column.
+    fn owning_column(vertices: &[[f32; 3]]) -> (i32, i32) {
+        let middle = |axis: usize| {
+            let (lo, hi) = vertices.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| {
+                (lo.min(v[axis]), hi.max(v[axis]))
+            });
+            ((lo + hi) / 2.0 - 0.5).div_euclid(16.0) as i32
+        };
+        (middle(0), middle(2))
+    }
+
+    /// The flat meshes currently drawn, in draw order, of the chunk columns the grid
+    /// stores. The empty chunks drawn beside the ground are not counted.
     pub(crate) fn drawn_caps(app: &mut App, backend: &CaptureBackend) -> Vec<DrawnCap> {
+        let stored_columns: Vec<(i32, i32)> = app
+            .light_system
+            .as_ref()
+            .expect("light system")
+            .grid()
+            .chunk_positions()
+            .map(|pos| (pos.x, pos.z))
+            .collect();
+        every_drawn_cap(app, backend)
+            .into_iter()
+            .filter(|cap| stored_columns.contains(&owning_column(&cap.vertices)))
+            .collect()
+    }
+
+    /// Every flat mesh currently drawn, in draw order, whichever chunk owns it. For
+    /// assertions that nothing is left drawn.
+    pub(crate) fn every_drawn_cap(app: &mut App, backend: &CaptureBackend) -> Vec<DrawnCap> {
         app.scene
             .world_meshes_mut()
             .draws()
@@ -325,7 +356,10 @@ pub(crate) mod tests {
         let mut app = ground_app();
         let mut backend = CaptureBackend::default();
         app.scene.world_meshes_mut().flush(&mut backend);
-        assert!(drawn_caps(&mut app, &backend).is_empty(), "no cut, no cap");
+        assert!(
+            every_drawn_cap(&mut app, &backend).is_empty(),
+            "no cut, no cap"
+        );
 
         cut_and_draw(&mut app, &mut backend, Some(18.0));
 
@@ -348,17 +382,24 @@ pub(crate) mod tests {
         app.scene.world_meshes_mut().flush(&mut backend);
         let terrain_draws = app.scene.world_meshes_mut().draws().count();
         cut_and_draw(&mut app, &mut backend, Some(18.0));
-        let mut cap_handles: Vec<u32> = drawn_caps(&mut app, &backend)
+        let mut cap_handles: Vec<u32> = every_drawn_cap(&mut app, &backend)
             .iter()
             .map(|c| c.handle)
             .collect();
         cap_handles.sort_unstable();
-        assert_eq!(cap_handles.len(), 2, "the caps exist before the cut clears");
+        assert_eq!(
+            drawn_caps(&mut app, &backend).len(),
+            2,
+            "the caps exist before the cut clears"
+        );
 
         cut_and_draw(&mut app, &mut backend, None);
 
         assert_eq!(app.cut_caps.cut(), None);
-        assert!(drawn_caps(&mut app, &backend).is_empty(), "no cap is drawn");
+        assert!(
+            every_drawn_cap(&mut app, &backend).is_empty(),
+            "no cap is drawn"
+        );
         assert_eq!(
             app.scene.world_meshes_mut().draws().count(),
             terrain_draws,
@@ -443,7 +484,7 @@ pub(crate) mod tests {
         cut_and_draw(&mut app, &mut backend, Some(40.0));
 
         assert!(
-            drawn_caps(&mut app, &backend).is_empty(),
+            every_drawn_cap(&mut app, &backend).is_empty(),
             "no ground at 40, so no cap is left from the old cut"
         );
     }
@@ -458,7 +499,7 @@ pub(crate) mod tests {
             cut_and_draw(&mut app, &mut backend, Some(cut));
 
             assert!(
-                drawn_caps(&mut app, &backend).is_empty(),
+                every_drawn_cap(&mut app, &backend).is_empty(),
                 "a cut of {cut} leaves a cap"
             );
         }
