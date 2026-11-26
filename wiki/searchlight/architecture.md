@@ -63,7 +63,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, magazine size) and its rounds' muzzle velocity and drag load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (cooldown, reload, charge, magazine size) and its rounds' muzzle velocity, drag and damage load from
 `content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -236,7 +236,7 @@ Each ray or step segment goes through one route:
 1. `ShotRay` from the eye (or the step's start) with range and the shooter's `CharacterHandle` as `ignore`.
 2. `PhysicsWorld::cast_ray` returns the first collider hit and its `HitTag`.
 3. `SurfaceTag::try_from` decodes the tag; an unknown tag is logged and counts as a miss.
-4. A `Part` strike (dummy or enemy) or a `Player` strike applies damage through `Body` in `searchlight_rules`.
+4. A `Part` strike (dummy or enemy) or a `Player` strike applies damage through `Body` in `searchlight_rules`. A player's round does the round's `damage` scaled by `arrival_damage` to the speed it arrives at (never above its damage, never below 1); under Simple the full `damage`.
 
 Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, with
 `part_index` the position in `PARTS`; `Player(part)` is `PLAYER_BASE + part_index`, with
