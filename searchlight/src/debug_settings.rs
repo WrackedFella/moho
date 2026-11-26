@@ -14,6 +14,7 @@ use crate::input::SearchlightAction;
 
 const GOD_MODE: &str = "god_mode";
 const SIMPLE: &str = "simple";
+const ZOOM: &str = "zoom";
 
 /// The game's own settings rows, kept under `[game]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,7 +96,11 @@ impl DebugSettings {
 
     /// The magnification the prefs hold under `[debug]`; 10 when absent or invalid.
     pub fn zoom(&self) -> Magnification {
-        todo!()
+        self.prefs
+            .debug_value(ZOOM)
+            .and_then(|text| text.parse::<f32>().ok())
+            .and_then(|factor| Magnification::new(factor).ok())
+            .unwrap_or(Magnification::DEFAULT)
     }
 
     /// Stores the magnification under `[debug]` and saves the prefs file; the value is kept if
@@ -103,8 +108,11 @@ impl DebugSettings {
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
-    pub fn set_zoom(&mut self, _zoom: Magnification) -> io::Result<()> {
-        todo!()
+    pub fn set_zoom(&mut self, zoom: Magnification) -> io::Result<()> {
+        self.prefs
+            .set_debug_value(ZOOM, &zoom.get().to_string())
+            .expect("\"zoom\" with a number is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
     }
 
     /// The head bob the prefs hold under `[game]`: 50 % when absent or unparsable, and a stored

@@ -14,8 +14,12 @@ impl Magnification {
     pub const DEFAULT: Self = Self(10.0);
 
     /// The magnification for `factor`, which must be finite and 1 to 12.
-    pub fn new(_factor: f32) -> Result<Self, OutOfRange> {
-        todo!()
+    pub fn new(factor: f32) -> Result<Self, OutOfRange> {
+        if (1.0..=12.0).contains(&factor) {
+            Ok(Self(factor))
+        } else {
+            Err(OutOfRange)
+        }
     }
 
     /// The factor.
@@ -25,13 +29,16 @@ impl Magnification {
 }
 
 /// The vertical field of view in radians that shows objects `m` times larger than `base_rad`.
-pub fn aimed_fov_y(_base_rad: f32, _m: Magnification) -> f32 {
-    todo!()
+///
+/// An object's size on screen scales with `1 / tan(fov / 2)`, so the factor divides the tangent.
+pub fn aimed_fov_y(base_rad: f32, m: Magnification) -> f32 {
+    2.0 * ((base_rad / 2.0).tan() / m.0).atan()
 }
 
-/// What mouse look is multiplied by while aiming at `m`.
-pub fn look_scale(_m: Magnification) -> f32 {
-    todo!()
+/// What mouse look is multiplied by while aiming at `m`: the same on-screen turn per count at
+/// the crosshair as unzoomed.
+pub fn look_scale(m: Magnification) -> f32 {
+    1.0 / m.0
 }
 
 #[cfg(test)]

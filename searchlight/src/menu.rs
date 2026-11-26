@@ -716,7 +716,7 @@ mod tests {
         draft.capture(
             SearchlightAction::Fire,
             Slot::Primary,
-            Input::Mouse(MouseButton::Right),
+            Input::Mouse(MouseButton::Middle),
         );
 
         let rows = control_rows(&controls_screen(&draft));
@@ -731,7 +731,7 @@ mod tests {
         );
         assert_eq!(
             slots(SearchlightAction::Fire),
-            [Some(Binding::mouse(MouseButton::Right)), None]
+            [Some(Binding::mouse(MouseButton::Middle)), None]
         );
         assert_eq!(
             slots(SearchlightAction::CheckMagazine),

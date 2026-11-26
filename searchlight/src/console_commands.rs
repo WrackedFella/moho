@@ -29,8 +29,17 @@ pub enum ConsoleCommand {
 }
 
 /// Parses `zoom <factor>`.
-pub fn parse_zoom(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    todo!()
+pub fn parse_zoom(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let usage = || "Usage: zoom <factor> (1 to 12)".to_owned();
+    let [text] = args else {
+        return Err(usage());
+    };
+    let zoom = text
+        .parse::<f32>()
+        .ok()
+        .and_then(|factor| Magnification::new(factor).ok())
+        .ok_or_else(usage)?;
+    Ok((ConsoleCommand::Zoom(zoom), format!("Zoom: {}x", zoom.get())))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

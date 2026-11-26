@@ -32,6 +32,7 @@ use moho_ui_shell::{
     apply_engine_command, apply_engine_settings,
 };
 
+use crate::aim::{Magnification, aimed_fov_y, look_scale};
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::controls::{Capture, ControlsDraft, label};
@@ -40,6 +41,7 @@ use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{
     SearchlightAction, SearchlightCommand, build_action_map, look_from, look_to_turn, resolve_lean,
+    scale_look,
 };
 use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
@@ -834,8 +836,13 @@ impl Stage {
     }
 
     fn draw(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3)) {
+        self.draw_at(renderer, eye, self.fov_degrees);
+    }
+
+    /// Draws the arena from `eye` with a view `fov_degrees` tall.
+    fn draw_at(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3), fov_degrees: f32) {
         let aspect = self.aspect();
-        draw_scene(&mut self.scene, renderer, eye, (self.fov_degrees, aspect));
+        draw_scene(&mut self.scene, renderer, eye, (fov_degrees, aspect));
     }
 
     fn draw_backdrop(&mut self, renderer: &mut dyn RendererBackend) {
@@ -916,6 +923,10 @@ pub struct SearchlightGame {
     round_gravity: GravityScale,
     /// How much the view bobs while moving. Saved with the game's settings.
     head_bob: HeadBobLevel,
+    /// Aim was held as of the last tick: view state, read from the tick's frame once per tick.
+    aiming: bool,
+    /// How much a held Aim magnifies the view. Saved with the debug settings.
+    zoom: Magnification,
     /// The view bob after the last tick, and the tick before it for blending.
     bob: Bob,
     previous_bob: Bob,
@@ -955,6 +966,8 @@ impl SearchlightGame {
             simple: false,
             round_gravity: GravityScale::default(),
             head_bob: HeadBobLevel::DEFAULT,
+            aiming: false,
+            zoom: Magnification::DEFAULT,
             bob: Bob::REST,
             previous_bob: Bob::REST,
             debug_settings: None,
@@ -1225,6 +1238,32 @@ impl SearchlightGame {
         }
     }
 
+    fn save_zoom(&mut self) {
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_zoom(self.zoom)
+        {
+            tracing::warn!(%error, zoom = self.zoom.get(), "zoom not saved");
+        }
+    }
+
+    /// The look scale of the aim state: 1 unzoomed.
+    fn aim_look_scale(&self) -> f32 {
+        if self.aiming {
+            look_scale(self.zoom)
+        } else {
+            1.0
+        }
+    }
+
+    /// The vertical field of view the play view draws with, in degrees.
+    fn play_fov_degrees(&self) -> f32 {
+        if self.aiming {
+            aimed_fov_y(self.stage.fov_degrees.to_radians(), self.zoom).to_degrees()
+        } else {
+            self.stage.fov_degrees
+        }
+    }
+
     /// Saves the applied `settings`, sets the look from them and queues them for the next frame,
     /// which hands the renderer, audio and window theirs.
     fn settings_applied(&mut self, settings: EngineSettings) {
@@ -1257,6 +1296,7 @@ impl SearchlightGame {
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
         self.simple = settings.simple();
+        self.zoom = settings.zoom();
         self.apply_game_rows(settings.game_rows());
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
@@ -1319,7 +1359,10 @@ impl SearchlightGame {
                     self.save_head_bob();
                 }
                 ConsoleCommand::Items => self.open_items(),
-                ConsoleCommand::Zoom(_) => {}
+                ConsoleCommand::Zoom(zoom) => {
+                    self.zoom = zoom;
+                    self.save_zoom();
+                }
             }
         }
         if self.simple != simple_before
@@ -1547,17 +1590,23 @@ impl Game for SearchlightGame {
         if self.input_captured() {
             self.input.discard_edges();
             self.lean_side = None;
+            self.aiming = false;
             return SearchlightCommand::default();
         }
         let frame = self.input.end_tick();
         self.lean_side = resolve_lean(&frame, self.lean_side);
+        let mut command = SearchlightCommand::from_frame(&frame);
+        // The tick's look was sampled under the aim state before this read.
+        (command.movement.yaw_delta, command.movement.pitch_delta) =
+            look_to_turn(scale_look(frame.look(), self.aim_look_scale()));
+        self.aiming = frame.held(SearchlightAction::Aim);
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
             simple: self.simple,
             round_gravity: self.round_gravity,
             lean: self.lean_side,
-            ..SearchlightCommand::from_frame(&frame)
+            ..command
         }
     }
 
@@ -1705,7 +1754,7 @@ impl Game for SearchlightGame {
                 &self.previous,
                 &sim.player(),
                 alpha,
-                look_to_turn(self.input.pending_look()),
+                look_to_turn(scale_look(self.input.pending_look(), self.aim_look_scale())),
             );
             let tuning = sim.lean_tuning();
             let from = self.previous_lean.amount();
@@ -1714,12 +1763,14 @@ impl Game for SearchlightGame {
             let bob = self.previous_bob.blend(self.bob, alpha);
             let eye =
                 view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
-            self.stage.draw(
+            let fov = self.play_fov_degrees();
+            self.stage.draw_at(
                 renderer,
                 (
                     rolled_view_matrix(eye, view.forward, amount * tuning.roll),
                     eye,
                 ),
+                fov,
             );
         }
     }
@@ -6178,7 +6229,7 @@ mod tests {
     const KEY_R: Input = Input::Key(Key::R);
     const KEY_T: Input = Input::Key(Key::T);
     const KEY_Q: Input = Input::Key(Key::Q);
-    const RIGHT_BUTTON: Input = Input::Mouse(MouseButton::Right);
+    const MIDDLE_BUTTON: Input = Input::Mouse(MouseButton::Middle);
     const LEFT_BUTTON: Input = Input::Mouse(MouseButton::Left);
 
     #[test]
@@ -6190,18 +6241,18 @@ mod tests {
         let mut ctx = EventContext::new(&clock, None, None);
         open_controls(&mut game, &mut ctx);
         capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
-        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, RIGHT_BUTTON);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, MIDDLE_BUTTON);
         press_item(&mut game, &mut ctx, "Apply", is_apply);
         game.enter_play();
 
         let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
         let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
-        let fire_on_right = fires(tap(&mut game, &mut ctx, RIGHT_BUTTON));
+        let fire_on_middle = fires(tap(&mut game, &mut ctx, MIDDLE_BUTTON));
         let fire_on_left = fires(tap(&mut game, &mut ctx, LEFT_BUTTON));
 
         assert!(reload_on_t, "T reloads");
         assert!(!reload_on_r, "R no longer reloads");
-        assert!(fire_on_right, "the right button fires");
+        assert!(fire_on_middle, "the middle button fires");
         assert!(!fire_on_left, "the left button no longer fires");
         let (prefs, warnings) = Prefs::load_from(&path);
         let (_toggle_keys, without_fullscreen) =
@@ -6216,7 +6267,7 @@ mod tests {
         );
         assert_eq!(
             saved.get(SearchlightAction::Fire),
-            [Binding::mouse(MouseButton::Right)]
+            [Binding::mouse(MouseButton::Middle)]
         );
     }
 
@@ -6349,7 +6400,7 @@ mod tests {
         let mut ctx = EventContext::new(&clock, None, None);
         open_controls(&mut game, &mut ctx);
         capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
-        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, RIGHT_BUTTON);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, MIDDLE_BUTTON);
         focus_control(&game, SearchlightAction::Jump);
         press_keys(&mut game, &mut ctx, &[Key::Backspace]);
         press_item(&mut game, &mut ctx, "Apply", is_apply);
@@ -6364,7 +6415,7 @@ mod tests {
         let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
         let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
         let fire_on_left = fires(tap(&mut game, &mut ctx, LEFT_BUTTON));
-        let fire_on_right = fires(tap(&mut game, &mut ctx, RIGHT_BUTTON));
+        let fire_on_middle = fires(tap(&mut game, &mut ctx, MIDDLE_BUTTON));
 
         let expected: Vec<_> = SearchlightAction::ALL
             .iter()
@@ -6374,7 +6425,7 @@ mod tests {
         assert!(reload_on_r, "Reload is back on R");
         assert!(!reload_on_t, "T no longer reloads");
         assert!(fire_on_left, "Fire is back on the left button");
-        assert!(!fire_on_right, "the right button no longer fires");
+        assert!(!fire_on_middle, "the middle button no longer fires");
         let saved = saved_bindings(&path);
         for &action in SearchlightAction::ALL {
             assert_eq!(

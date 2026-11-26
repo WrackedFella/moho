@@ -60,7 +60,7 @@ impl Action for SearchlightAction {
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
             SearchlightAction::Use => "use",
-            SearchlightAction::Aim => "zoom",
+            SearchlightAction::Aim => "aim",
         }
     }
 
@@ -81,7 +81,7 @@ impl Action for SearchlightAction {
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
             SearchlightAction::Use => const { &[Binding::key(Key::F)] },
-            SearchlightAction::Aim => const { &[Binding::mouse(MouseButton::Middle)] },
+            SearchlightAction::Aim => const { &[Binding::mouse(MouseButton::Right)] },
         }
     }
 }
@@ -179,6 +179,12 @@ pub fn resolve_lean(
         .find(pressed)
         .or(previous.filter(held))
         .or_else(|| sides.into_iter().find(held))
+}
+
+/// `look` scaled by `scale`, the one place aim's look scale is applied so the command and the
+/// camera cannot drift apart.
+pub fn scale_look((look_x, look_y): (f32, f32), scale: f32) -> (f32, f32) {
+    (look_x * scale, look_y * scale)
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
