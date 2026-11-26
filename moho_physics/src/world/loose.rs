@@ -1,5 +1,5 @@
-use super::PhysicsWorld;
 use super::query::encode_loose;
+use super::PhysicsWorld;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
@@ -371,7 +371,10 @@ impl PhysicsWorld {
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let loose = self.loose.get(&id)?;
+        self.state_of(self.loose.get(&id)?)
+    }
+
+    fn state_of(&self, loose: &Loose) -> Option<LooseState> {
         let body = self.rigid_body_set.get(loose.body)?;
         Some(LooseState {
             shape: loose.spawn.shape,
@@ -384,8 +387,12 @@ impl PhysicsWorld {
     }
 
     /// Every live loose object, ascending id; never depends on handle or hash order.
+    ///
+    /// Each entry equals what [`PhysicsWorld::loose`] reads for its id.
     pub fn loose_states(&self) -> impl Iterator<Item = (LooseId, LooseState)> + '_ {
-        std::iter::from_fn(|| todo!("loose_states"))
+        self.loose
+            .iter()
+            .filter_map(|(&id, loose)| Some((id, self.state_of(loose)?)))
     }
 
     /// The object's pose at the last two ticks; `None` for an unknown id.
@@ -607,7 +614,7 @@ fn shrink(v: Vec3, cut: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh, x_wall_mesh};
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, x_wall_mesh, TEST_TAG};
     use crate::world::{HitTag, RayQuery};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
