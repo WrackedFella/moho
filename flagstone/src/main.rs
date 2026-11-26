@@ -164,8 +164,10 @@ struct App {
     /// `simulation.player_controller`, which is camera/movement-only — see
     /// `flagstone_game::pawn::Pawn`'s doc comment. Not saved yet.
     crew: flagstone_game::crew::Crew,
-    /// The pawn the player possesses: the one whose body is `physics.player`.
-    possessed: flagstone_game::pawn::PawnId,
+    /// The pawn the player possesses. `Some` only in first person, and while `Some` its body is
+    /// `physics.player`; in the strategy view `physics.player` still names the body last
+    /// possessed.
+    possessed: Option<flagstone_game::pawn::PawnId>,
 
     /// The window's physical size, which pointer positions are measured in.
     viewport: glam::UVec2,
@@ -181,20 +183,34 @@ struct App {
 }
 
 impl App {
+    /// The possessed pawn. Only for first-person paths, where a pawn is always possessed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when nothing is possessed (the strategy view). Code that can run there reads
+    /// `self.possessed.and_then(|id| self.crew.get(id))` instead; this accessor is for tests.
+    #[cfg(test)]
     fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
         self.crew
-            .get(self.possessed)
+            .get(self.possessed.expect("a pawn is possessed"))
             .expect("the possessed pawn is in the crew")
     }
 
+    /// The possessed pawn, mutably.
+    ///
+    /// # Panics
+    ///
+    /// Panics when nothing is possessed, as `possessed_pawn` does.
+    #[cfg(test)]
     fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
         self.crew
-            .get_mut(self.possessed)
+            .get_mut(self.possessed.expect("a pawn is possessed"))
             .expect("the possessed pawn is in the crew")
     }
 
     /// Starts the crew over with one pawn standing at `first` and one at each of `rest`,
-    /// each with a body of its own. The first is possessed: its body is the player's. The
+    /// each with a body of its own. The first one's body is the character the physics steps
+    /// as the player; the first pawn is possessed only if the camera is first person. The
     /// crew is never empty. Expects physics to be already reset.
     fn spawn_crew(
         &mut self,
@@ -206,8 +222,11 @@ impl App {
         self.selection = flagstone_game::selection::Selection::default();
         // The old crew's claims name pawns that no longer exist; new pawns reuse their ids.
         self.colony.marks.release_all();
-        self.possessed = self.crew.spawn(flagstone_game::pawn::Pawn::default());
-        self.physics.spawn_possessed(self.possessed, first);
+        let first_id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+        self.possessed = (self.simulation.camera_mode()
+            == flagstone_game::controller::CameraMode::FirstPerson)
+            .then_some(first_id);
+        self.physics.spawn_possessed(first_id, first);
         for spawn in rest {
             let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
             self.physics.spawn_pawn(id, spawn);
@@ -348,7 +367,7 @@ impl App {
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
             crew,
-            possessed,
+            possessed: Some(possessed),
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,

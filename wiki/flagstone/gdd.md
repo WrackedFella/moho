@@ -30,12 +30,11 @@ Each pillar is a filter: a feature that serves none of them is cut.
 |---|---|---|
 | Camera | Top-down or isometric: pan, zoom, rotate | First person from the possessed pawn |
 | Player does | Select, mark work, place buildings, set priorities | Walk, mine, build and carry as that pawn |
-| Pawn under control | None; pawns follow their own work | One; its own work is paused |
-| On leaving | n/a | Control returns to strategy mode; the pawn resumes its work. Re-entering without a selection possesses the last possessed pawn |
+| Pawn under control | None; pawns follow their own work | The selected pawn; it drops its job (the mark stays for others) while the rest keep working |
+| On leaving | n/a | Control returns to strategy mode; the pawn is idle again and takes the next mark from where it stands. Possessing with nothing selected does nothing |
 | HUD | Colony: resources, selection, build menu, time controls | Pawn: hotbar, held tool, pickup feedback |
 
-Today the only pawn is the player pawn, which sits inactive while the player is in strategy mode. Later every pawn
-acts on its own when not possessed. A possessed pawn follows the same rules as any other: there is no player-only
+Every pawn acts on its own when not possessed, in either mode. A possessed pawn follows the same rules as any other: there is no player-only
 game rule.
 
 ## 3 Core loop
