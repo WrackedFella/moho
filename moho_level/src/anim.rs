@@ -367,10 +367,10 @@ impl ClipPlayer {
 /// started on a tick then shows its first pose on that tick. An action started on tick 100
 /// as `Playback::Ticks(156)` (2.6 s at 60 Hz) shows its last pose on tick 256, and the base
 /// returns on tick 257. Advancing after the commands makes a timed clip end one tick early.
-#[derive(Clone, Debug, PartialEq)]
 ///
 /// It also holds an aim chain and an aim pitch the sim sets; [`Animator::advance`] leaves both
 /// alone, so set the pitch each tick from the eye, in that tick's commands.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Animator {
     base: ClipPlayer,
     action: Option<Action>,
@@ -493,27 +493,27 @@ impl Animator {
     /// When `model` has fewer clips than a player was made on, or when a turned link's node
     /// is not a node of `model`.
     pub fn pose(&self, model: &Model) -> Pose {
-        let turns: Vec<(usize, Quat)> = self
-            .aim
-            .iter()
-            .filter_map(|link| {
-                let angle = -self.pitch * link.share;
-                (angle != 0.0).then(|| {
-                    assert!(
-                        link.node < model.nodes().len(),
-                        "aim link {} is not a node (count {})",
-                        link.node,
-                        model.nodes().len()
-                    );
-                    (link.node, Quat::from_rotation_x(angle))
-                })
-            })
-            .collect();
         let action = self
             .action
             .as_ref()
             .map(|action| ((action.player.clip(), action.player.time()), action.region));
-        model.pose_turned((self.base.clip(), self.base.time()), action, &turns)
+        model.pose_turned(
+            (self.base.clip(), self.base.time()),
+            action,
+            &self.aim_turns(),
+        )
+    }
+
+    /// One `(node, turn)` per aim link whose angle is not exactly 0.
+    fn aim_turns(&self) -> Vec<(usize, Quat)> {
+        let mut turns = Vec::new();
+        for link in &self.aim {
+            let angle = -self.pitch * link.share;
+            if angle != 0.0 {
+                turns.push((link.node, Quat::from_rotation_x(angle)));
+            }
+        }
+        turns
     }
 }
 

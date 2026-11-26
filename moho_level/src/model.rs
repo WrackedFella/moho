@@ -360,7 +360,7 @@ impl Model {
     /// # Panics
     /// When `clip` is not an index into [`Model::clips`].
     pub fn pose(&self, clip: usize, time: f32) -> Pose {
-        self.compose(self.locals_of(clip, time), &[])
+        self.pose_turned((clip, time), None, &[])
     }
 
     /// The pose of `base` (clip, time) with every node from `from` down (the node and all
@@ -373,7 +373,7 @@ impl Model {
     /// When a clip is not an index into [`Model::clips`], or `from` is not an index into
     /// [`Model::nodes`].
     pub fn layered_pose(&self, base: (usize, f32), action: (usize, f32), from: usize) -> Pose {
-        self.compose(self.layered_locals(base, action, from), &[])
+        self.pose_turned(base, Some((action, Region::From(from))), &[])
     }
 
     /// The pose [`crate::anim::Animator::pose`] builds: `base`, or `action` over its region
@@ -388,6 +388,13 @@ impl Model {
         action: Option<((usize, f32), Region)>,
         turns: &[(usize, Quat)],
     ) -> Pose {
+        for &(node, _) in turns {
+            assert!(
+                node < self.nodes.len(),
+                "pose_turned: turn node {node} is not a node (count {})",
+                self.nodes.len()
+            );
+        }
         let locals = match action {
             None => self.locals_of(base.0, base.1),
             Some((action, Region::Whole)) => self.locals_of(action.0, action.1),
