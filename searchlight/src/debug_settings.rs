@@ -8,6 +8,7 @@ use moho_core::prefs::{Prefs, WindowMode};
 use moho_input::bindings::ActionBindings;
 use moho_ui_shell::{CONSOLE_BINDING, EngineSettings};
 
+use crate::aim::Magnification;
 use crate::head_bob::HeadBobLevel;
 use crate::input::SearchlightAction;
 
@@ -90,6 +91,20 @@ impl DebugSettings {
             .set_debug_value(SIMPLE, if on { "1" } else { "0" })
             .expect("\"simple\" with \"1\" or \"0\" is a name and value prefs always accepts");
         self.prefs.save_to(&self.path)
+    }
+
+    /// The magnification the prefs hold under `[debug]`; 10 when absent or invalid.
+    pub fn zoom(&self) -> Magnification {
+        todo!()
+    }
+
+    /// Stores the magnification under `[debug]` and saves the prefs file; the value is kept if
+    /// the save fails.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_zoom(&mut self, _zoom: Magnification) -> io::Result<()> {
+        todo!()
     }
 
     /// The head bob the prefs hold under `[game]`: 50 % when absent or unparsable, and a stored
@@ -278,6 +293,61 @@ mod tests {
         assert!(after_on);
         assert!(!after_off);
         assert!(!settings.simple());
+    }
+
+    fn zoom_of(factor: f32) -> Magnification {
+        Magnification::new(factor).expect("a factor from 1 to 12")
+    }
+
+    #[test]
+    fn zoom_reads_ten_when_absent_or_invalid() {
+        let read = |value: Option<&str>| {
+            let mut prefs = Prefs::default();
+            if let Some(value) = value {
+                prefs.set_debug_value("zoom", value).unwrap();
+            }
+            DebugSettings::new(prefs, PathBuf::from("unused.ini")).zoom()
+        };
+
+        assert_eq!(read(None), zoom_of(10.0));
+        for invalid in ["x", "0", "0.5", "13", "-5", "nan", "inf", "5x"] {
+            assert_eq!(read(Some(invalid)), zoom_of(10.0), "{invalid:?}");
+        }
+        for (stored, expected) in [("1", 1.0), ("5", 5.0), ("2.5", 2.5), ("12", 12.0)] {
+            assert_eq!(read(Some(stored)), zoom_of(expected), "{stored:?}");
+        }
+    }
+
+    #[test]
+    fn zoom_survives_a_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        settings.set_god_mode(true).unwrap();
+
+        settings.set_zoom(zoom_of(5.0)).unwrap();
+        let after_five = settings_at(&path);
+        settings.set_zoom(zoom_of(2.5)).unwrap();
+        let after_two_and_a_half = settings_at(&path);
+
+        assert_eq!(after_five.zoom(), zoom_of(5.0));
+        assert!(after_five.prefs().debug_value("zoom").is_some());
+        assert_eq!(after_two_and_a_half.zoom(), zoom_of(2.5));
+        assert_eq!(settings.zoom(), zoom_of(2.5));
+        assert!(after_five.god_mode(), "saving zoom keeps other values");
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_zoom_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let mut settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+
+        let saved = settings.set_zoom(zoom_of(4.0));
+
+        assert!(saved.is_err());
+        assert_eq!(settings.zoom(), zoom_of(4.0));
     }
 
     #[test]

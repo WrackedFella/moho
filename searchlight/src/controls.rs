@@ -216,6 +216,7 @@ pub fn label(action: SearchlightAction) -> &'static str {
         SearchlightAction::LeanLeft => "Lean left",
         SearchlightAction::LeanRight => "Lean right",
         SearchlightAction::Use => "Use",
+        SearchlightAction::Aim => "Aim",
     }
 }
 

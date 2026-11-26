@@ -1319,6 +1319,7 @@ impl SearchlightGame {
                     self.save_head_bob();
                 }
                 ConsoleCommand::Items => self.open_items(),
+                ConsoleCommand::Zoom(_) => {}
             }
         }
         if self.simple != simple_before
@@ -6685,6 +6686,371 @@ mod tests {
             Some("T"),
             "the saved file keeps the applied binding"
         );
+    }
+
+    /// The vertical field of view in degrees that shows objects `factor` times larger than a
+    /// view `base_degrees` tall, written out here independently of `aim`.
+    fn aimed_degrees(base_degrees: f32, factor: f32) -> f32 {
+        2.0 * ((base_degrees.to_radians() / 2.0).tan() / factor)
+            .atan()
+            .to_degrees()
+    }
+
+    fn zoom_factor(factor: f32) -> crate::aim::Magnification {
+        crate::aim::Magnification::new(factor).expect("a factor from 1 to 12")
+    }
+
+    fn hold_aim(game: &mut SearchlightGame) {
+        press(game.input_mut(), SearchlightAction::Aim);
+    }
+
+    fn release_aim(game: &mut SearchlightGame) {
+        match SearchlightAction::Aim.default_bindings()[0].input {
+            Input::Key(key) => game.input_mut().key(key, false),
+            Input::Mouse(button) => game.input_mut().mouse_button(button, false),
+            Input::Pad(_) => panic!("Aim defaults to a pad input"),
+        }
+    }
+
+    /// Runs one frame and returns the vertical field of view, in degrees, it drew with.
+    fn drawn_play_fov(game: &mut SearchlightGame, renderer: &mut ProjectionRenderer) -> f32 {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, Some(renderer), None);
+        game.frame(&mut ctx, ALPHA);
+        let projection = *renderer.projections.last().expect("a frame began");
+        (1.0 / projection.y_axis.y).atan().to_degrees() * 2.0
+    }
+
+    #[test]
+    fn holding_aim_draws_at_the_zoomed_field_of_view() {
+        let mut game = turning_game(false);
+        let mut renderer = ProjectionRenderer::default();
+        let before = drawn_play_fov(&mut game, &mut renderer);
+
+        hold_aim(&mut game);
+        game.command();
+        let aimed = drawn_play_fov(&mut game, &mut renderer);
+
+        assert!((before - 75.0).abs() < 1e-3, "before: {before}");
+        assert!(
+            (aimed - aimed_degrees(75.0, 10.0)).abs() < 1e-3,
+            "aimed: {aimed}"
+        );
+        assert!((aimed - 8.78).abs() < 0.01, "aimed: {aimed}");
+    }
+
+    #[test]
+    fn releasing_aim_restores_the_base_field_of_view_within_a_tick() {
+        let mut game = turning_game(false);
+        let mut renderer = ProjectionRenderer::default();
+        hold_aim(&mut game);
+        game.command();
+        let aimed = drawn_play_fov(&mut game, &mut renderer);
+
+        release_aim(&mut game);
+        game.command();
+        let released = drawn_play_fov(&mut game, &mut renderer);
+
+        assert!(aimed < 10.0, "the view was never zoomed: {aimed}");
+        assert!((released - 75.0).abs() < 1e-3, "released: {released}");
+    }
+
+    #[test]
+    fn aiming_turns_the_command_by_look_over_the_factor() {
+        let command_after_motion = |aiming: bool| {
+            let mut game = turning_game(false);
+            if aiming {
+                hold_aim(&mut game);
+                game.command();
+            }
+            let mut renderer = SettingsRenderer::default();
+            mouse(&mut game, 120.0, 40.0);
+            draw_frame(&mut game, &mut renderer);
+            game.command().movement
+        };
+
+        let plain = command_after_motion(false);
+        let aimed = command_after_motion(true);
+
+        assert!(plain.yaw_delta.abs() > 0.1, "{plain:?}");
+        assert!(plain.pitch_delta.abs() > 0.01, "{plain:?}");
+        assert!(
+            (aimed.yaw_delta - plain.yaw_delta / 10.0).abs() < 1e-6,
+            "{aimed:?} vs {plain:?}"
+        );
+        assert!(
+            (aimed.pitch_delta - plain.pitch_delta / 10.0).abs() < 1e-6,
+            "{aimed:?} vs {plain:?}"
+        );
+    }
+
+    #[test]
+    fn look_sampled_on_the_press_tick_is_unscaled_and_on_the_release_tick_scaled() {
+        let mut renderer = SettingsRenderer::default();
+        let mut plain = turning_game(false);
+        mouse(&mut plain, 120.0, 40.0);
+        draw_frame(&mut plain, &mut renderer);
+        let plain = plain.command().movement;
+        let mut game = turning_game(false);
+        hold_aim(&mut game);
+        mouse(&mut game, 120.0, 40.0);
+        draw_frame(&mut game, &mut renderer);
+
+        let on_press = game.command().movement;
+        mouse(&mut game, 120.0, 40.0);
+        draw_frame(&mut game, &mut renderer);
+        release_aim(&mut game);
+        let on_release = game.command().movement;
+
+        assert!(plain.yaw_delta.abs() > 0.1, "{plain:?}");
+        assert_eq!(on_press, plain, "sampled before aim was read");
+        assert!(
+            (on_release.yaw_delta - plain.yaw_delta / 10.0).abs() < 1e-6,
+            "{on_release:?} vs {plain:?}"
+        );
+        assert!(
+            (on_release.pitch_delta - plain.pitch_delta / 10.0).abs() < 1e-6,
+            "{on_release:?} vs {plain:?}"
+        );
+    }
+
+    #[test]
+    fn tick_lands_on_the_drawn_view_while_aiming() {
+        const MOTION: [(f64, f64); 3] = [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)];
+        let mut game = turning_game(false);
+        hold_aim(&mut game);
+        game.command();
+        let mut renderer = SettingsRenderer::default();
+        draw_frame(&mut game, &mut renderer);
+        let start = game.sim().player();
+
+        for (dx, dy) in MOTION {
+            mouse(&mut game, dx, dy);
+            draw_frame(&mut game, &mut renderer);
+        }
+        let drawn = *renderer.views.last().expect("a frame began");
+        let (look_x, look_y) = game.input.pending_look();
+        let (turn_x, turn_y) = (-look_x / 10.0, -look_y / 10.0);
+        let scaled = first_person_view(
+            &game.previous,
+            &game.sim().player(),
+            ALPHA,
+            (turn_x, turn_y),
+        )
+        .view_matrix();
+        let unscaled = expected_view(&game);
+        tick_once(&mut game);
+
+        assert!(look_x.abs() > 0.1, "the frames sampled no look");
+        assert!(
+            forward_of(drawn).distance(forward_of(scaled)) < 1e-5,
+            "the frame did not draw the scaled look"
+        );
+        assert!(
+            forward_of(drawn).distance(forward_of(unscaled)) > 1e-3,
+            "the frame drew the unscaled look"
+        );
+        let landed = game.sim().player();
+        assert!(
+            (landed.yaw - (start.yaw + turn_x)).abs() < 1e-6,
+            "{landed:?}"
+        );
+        assert!(
+            (landed.pitch - (start.pitch + turn_y)).abs() < 1e-6,
+            "{landed:?}"
+        );
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+    }
+
+    /// The commands of a session on the range with a shot at the dummy, the hits it caused as
+    /// `(tick, point)`, and the field of view the last frame drew with. Aim is held from the first
+    /// tick when `aiming`.
+    fn range_session(aiming: bool) -> (Vec<SearchlightCommand>, Vec<(usize, Vec3)>, f32) {
+        let mut game = range_game(0);
+        game.simple = true;
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        settle(&mut game, &mut clock);
+        game.mode.drain_feedback();
+        let (mut commands, mut hits) = (Vec::new(), Vec::new());
+
+        for tick in 0..20 {
+            if aiming && tick == 0 {
+                hold_aim(&mut game);
+            }
+            if tick == 3 {
+                press(game.input_mut(), SearchlightAction::Fire);
+            }
+            if tick == 4 {
+                match SearchlightAction::Fire.default_bindings()[0].input {
+                    Input::Mouse(button) => game.input_mut().mouse_button(button, false),
+                    other => panic!("Fire defaults to {other:?}"),
+                }
+            }
+            let command = game.command();
+            commands.push(command);
+            tick_with(&mut game, &mut clock, &command);
+            hits.extend(game.mode.drain_feedback().into_iter().filter_map(
+                |feedback| match feedback {
+                    Feedback::Hit { point, .. } => Some((tick, point)),
+                    _ => None,
+                },
+            ));
+        }
+        let fov = drawn_play_fov(&mut game, &mut ProjectionRenderer::default());
+        (commands, hits, fov)
+    }
+
+    #[test]
+    fn commands_recorded_while_aiming_replay_to_the_same_hits_without_aim() {
+        let (recorded, aimed_hits, aimed_fov) = range_session(true);
+        let mut replay = range_game(0);
+        replay.simple = true;
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        settle(&mut replay, &mut clock);
+        replay.mode.drain_feedback();
+        let mut replayed_hits = Vec::new();
+
+        for (tick, command) in recorded.iter().enumerate() {
+            tick_with(&mut replay, &mut clock, command);
+            replayed_hits.extend(
+                replay
+                    .mode
+                    .drain_feedback()
+                    .into_iter()
+                    .filter_map(|feedback| match feedback {
+                        Feedback::Hit { point, .. } => Some((tick, point)),
+                        _ => None,
+                    }),
+            );
+        }
+        let replay_fov = drawn_play_fov(&mut replay, &mut ProjectionRenderer::default());
+        let (unaimed_commands, unaimed_hits, _) = range_session(false);
+
+        assert!(!aimed_hits.is_empty(), "no shot hit the dummy");
+        assert!(
+            (aimed_fov - aimed_degrees(75.0, 10.0)).abs() < 1e-3,
+            "the recorded game never aimed: {aimed_fov}"
+        );
+        assert!((replay_fov - 75.0).abs() < 1e-3, "{replay_fov}");
+        assert_eq!(replayed_hits, aimed_hits);
+        assert_eq!(recorded, unaimed_commands, "aim changed a command");
+        assert_eq!(aimed_hits, unaimed_hits);
+    }
+
+    #[test]
+    fn zoom_command_sets_the_aimed_field_of_view_and_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let mut renderer = ProjectionRenderer::default();
+
+        type_into_console(&game, "zoom 5");
+        game.command();
+        let reply = console_lines(&game).last().cloned();
+        hold_aim(&mut game);
+        game.command();
+        let aimed = drawn_play_fov(&mut game, &mut renderer);
+        let (reloaded, warnings) = Prefs::load_from(&path);
+        let mut relaunched = game_with_debug(reloaded, &path);
+        hold_aim(&mut relaunched);
+        relaunched.command();
+        let after_relaunch = drawn_play_fov(&mut relaunched, &mut renderer);
+
+        assert_eq!(reply.as_deref(), Some("Zoom: 5x"));
+        assert!(
+            (aimed - aimed_degrees(75.0, 5.0)).abs() < 1e-3,
+            "aimed: {aimed}"
+        );
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            DebugSettings::new(Prefs::load_from(&path).0, path.clone()).zoom(),
+            zoom_factor(5.0)
+        );
+        assert!(
+            (after_relaunch - aimed_degrees(75.0, 5.0)).abs() < 1e-3,
+            "after a relaunch: {after_relaunch}"
+        );
+    }
+
+    /// A game on the flat arena started from `prefs` saved at `path`.
+    fn game_with_debug(prefs: Prefs, path: &Path) -> SearchlightGame {
+        game().with_debug_settings(DebugSettings::new(prefs, path.to_path_buf()))
+    }
+
+    #[test]
+    fn a_refused_zoom_keeps_the_previous_magnification() {
+        let mut game = game();
+        let mut renderer = ProjectionRenderer::default();
+        type_into_console(&game, "zoom 5");
+        game.command();
+
+        for line in ["zoom 13", "zoom 0", "zoom x", "zoom"] {
+            type_into_console(&game, line);
+            game.command();
+        }
+        hold_aim(&mut game);
+        game.command();
+        let aimed = drawn_play_fov(&mut game, &mut renderer);
+
+        assert!(
+            (aimed - aimed_degrees(75.0, 5.0)).abs() < 1e-3,
+            "aimed: {aimed}"
+        );
+    }
+
+    #[test]
+    fn opening_the_console_drops_aim() {
+        let mut game = turning_game(false);
+        let clock = GameClock::default();
+        let mut renderer = ProjectionRenderer::default();
+        hold_aim(&mut game);
+        game.command();
+        let aimed = drawn_play_fov(&mut game, &mut renderer);
+
+        open_the_console(&mut game, &clock);
+        game.command();
+        let behind_the_console = drawn_play_fov(&mut game, &mut renderer);
+        let mut ctx = EventContext::new(&clock, None, None);
+        let routing = game.route_input(&mut ctx, BACKTICK, true, false);
+        let resumed = drawn_play_fov(&mut game, &mut renderer);
+
+        assert!(aimed < 10.0, "the view was never zoomed: {aimed}");
+        assert!(
+            (behind_the_console - 75.0).abs() < 1e-3,
+            "behind the console: {behind_the_console}"
+        );
+        assert_eq!(routing, Routing::Closed);
+        assert!((resumed - 75.0).abs() < 1e-3, "resumed: {resumed}");
+    }
+
+    #[test]
+    fn the_crosshair_keeps_its_gap_while_aiming() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = ProjectionRenderer::default();
+        for _ in 0..2 {
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        }
+        hold_aim(&mut game);
+        game.command();
+        for _ in 0..10 {
+            tick_with(&mut game, &mut clock, &walk_command());
+        }
+
+        let aimed = drawn_play_fov(&mut game, &mut renderer);
+
+        let spread = game.sim().player_spread();
+        let gap = Crosshair::gap(spread, FOV_DEGREES.to_radians(), 600.0);
+        assert!(aimed < 10.0, "the view was never zoomed: {aimed}");
+        assert!(spread > 0.0, "the walking player's shot cone is closed");
+        assert!(gap > Crosshair::GAP + 1.0, "{gap}");
+        let mut crosshair = game
+            .stage
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+        assert_eq!(frame.meshes[0].vertices[4].pos[0], 400.0 + gap);
     }
 }
 

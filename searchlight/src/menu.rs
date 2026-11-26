@@ -642,6 +642,7 @@ mod tests {
             "Q",
             "E",
             "F",
+            "Mouse Right",
         ]
         .map(|text| Some(text.to_owned()))
         .to_vec();
