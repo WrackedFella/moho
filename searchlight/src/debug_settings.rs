@@ -14,6 +14,26 @@ use crate::input::SearchlightAction;
 const GOD_MODE: &str = "god_mode";
 const SIMPLE: &str = "simple";
 
+/// The game's own settings rows, kept under `[game]`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameRows {
+    /// Vertical field of view in degrees, 50 to 90.
+    pub fov: i32,
+    /// Crosshair opacity in percent, 0 to 100.
+    pub crosshair_opacity: i32,
+    pub head_bob: HeadBobLevel,
+}
+
+impl Default for GameRows {
+    fn default() -> Self {
+        Self {
+            fov: 75,
+            crosshair_opacity: 100,
+            head_bob: HeadBobLevel::DEFAULT,
+        }
+    }
+}
+
 /// The whole loaded prefs and where to save them, so a save keeps every other value.
 #[derive(Clone, Debug)]
 pub struct DebugSettings {
@@ -82,6 +102,19 @@ impl DebugSettings {
             .set_game_value(HeadBobLevel::KEY, &level.percent().to_string())
             .expect("\"head_bob\" with a number is a name and value prefs always accepts");
         self.prefs.save_to(&self.path)
+    }
+
+    /// The game rows the prefs hold. Not yet implemented: always the defaults.
+    pub fn game_rows(&self) -> GameRows {
+        GameRows::default()
+    }
+
+    /// Stores the game rows and saves the prefs file. Not yet implemented: stores nothing.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_game_rows(&mut self, _rows: GameRows) -> io::Result<()> {
+        Ok(())
     }
 
     /// Stores the engine's settings rows and saves the prefs file; every other value in the
@@ -430,6 +463,71 @@ mod tests {
 
         assert!(saved.is_err());
         assert_eq!(settings.head_bob(), level(15));
+    }
+
+    #[test]
+    fn game_rows_round_trip_through_the_prefs_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        settings.set_god_mode(true).unwrap();
+        let fresh = settings.game_rows();
+        let rows = GameRows {
+            fov: 60,
+            crosshair_opacity: 40,
+            head_bob: level(25),
+        };
+
+        settings.set_game_rows(rows).unwrap();
+        let reloaded = settings_at(&path);
+
+        assert_eq!((fresh.fov, fresh.crosshair_opacity), (75, 100));
+        assert_eq!(reloaded.game_rows(), rows);
+        assert_eq!(settings.game_rows(), rows);
+        assert_eq!(reloaded.prefs().game_value("fov"), Some("60"));
+        assert_eq!(reloaded.prefs().game_value("crosshair_opacity"), Some("40"));
+        assert_eq!(reloaded.prefs().game_value("head_bob"), Some("25"));
+        assert_eq!(reloaded.prefs().debug_value("fov"), None);
+        assert!(reloaded.god_mode(), "saving game rows keeps other values");
+    }
+
+    #[test]
+    fn an_unparsable_or_out_of_range_game_value_reads_as_default_or_clamped() {
+        let read = |fov: Option<&str>, opacity: Option<&str>| {
+            let mut prefs = Prefs::default();
+            if let Some(fov) = fov {
+                prefs.set_game_value("fov", fov).unwrap();
+            }
+            if let Some(opacity) = opacity {
+                prefs.set_game_value("crosshair_opacity", opacity).unwrap();
+            }
+            let rows = DebugSettings::new(prefs, PathBuf::from("unused.ini")).game_rows();
+            (rows.fov, rows.crosshair_opacity)
+        };
+
+        assert_eq!(read(None, None), (75, 100));
+        for unparsable in ["x", "fifty", "7.5", "5%", "--5"] {
+            assert_eq!(read(Some(unparsable), None).0, 75, "fov {unparsable:?}");
+            assert_eq!(
+                read(None, Some(unparsable)).1,
+                100,
+                "opacity {unparsable:?}"
+            );
+        }
+        for (stored, expected) in [("10", 50), ("-5", 50), ("49", 50), ("50", 50), ("90", 90)] {
+            assert_eq!(read(Some(stored), None).0, expected, "fov {stored:?}");
+        }
+        for (stored, expected) in [("91", 90), ("200", 90), ("62", 62)] {
+            assert_eq!(read(Some(stored), None).0, expected, "fov {stored:?}");
+        }
+        for (stored, expected) in [("-10", 0), ("0", 0), ("100", 100), ("150", 100)] {
+            assert_eq!(read(None, Some(stored)).1, expected, "opacity {stored:?}");
+        }
+        assert_eq!(
+            read(Some("200"), Some("x")),
+            (90, 100),
+            "each value is read on its own"
+        );
     }
 
     fn rebound() -> ActionBindings<SearchlightAction> {

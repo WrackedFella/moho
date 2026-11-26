@@ -5,6 +5,7 @@ use moho_input::Action;
 use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, MenuItem, MenuScreen};
 
 use crate::controls::{ControlsDraft, label};
+use crate::debug_settings::GameRows;
 use crate::head_bob::HeadBobLevel;
 use crate::input::SearchlightAction;
 use crate::item_lists::ItemAction;
@@ -34,6 +35,70 @@ pub enum MenuAction {
     Item(u32),
     /// An action a row of the item lists offers.
     ItemAction(ItemAction),
+    /// Opens a Settings page.
+    Page(SettingsPage),
+}
+
+/// A category of the Settings screen, in the order they are listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    Controls,
+    Mouse,
+    Audio,
+    Graphics,
+    Display,
+    Game,
+}
+
+impl SettingsPage {
+    pub const ALL: [SettingsPage; 6] = [
+        SettingsPage::Controls,
+        SettingsPage::Mouse,
+        SettingsPage::Audio,
+        SettingsPage::Graphics,
+        SettingsPage::Display,
+        SettingsPage::Game,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsPage::Controls => "Controls",
+            SettingsPage::Mouse => "Mouse",
+            SettingsPage::Audio => "Audio",
+            SettingsPage::Graphics => "Graphics",
+            SettingsPage::Display => "Display",
+            SettingsPage::Game => "Game",
+        }
+    }
+}
+
+/// The page `setting` is shown on. Not yet implemented: every row reads as Controls.
+pub fn page_of(_setting: EngineSetting) -> SettingsPage {
+    SettingsPage::Controls
+}
+
+/// The Settings categories screen. Not yet implemented: an empty screen.
+pub fn settings_categories_screen() -> MenuScreen<MenuAction> {
+    MenuScreen {
+        title: None,
+        items: vec![],
+        back: None,
+        settings: None,
+    }
+}
+
+/// One Settings page. Not yet implemented: an empty screen.
+pub fn settings_page(
+    _page: SettingsPage,
+    _engine: EngineSettings,
+    _game: &GameRows,
+) -> MenuScreen<MenuAction> {
+    MenuScreen {
+        title: None,
+        items: vec![],
+        back: None,
+        settings: None,
+    }
 }
 
 impl MenuAction {
@@ -59,6 +124,7 @@ impl MenuAction {
             MenuAction::Cancel => "Cancel",
             MenuAction::Item(_) => "Item",
             MenuAction::ItemAction(_) => "Item action",
+            MenuAction::Page(page) => page.label(),
         }
     }
 }
@@ -227,6 +293,226 @@ mod tests {
         assert_eq!(screen.title.as_deref(), Some("Settings"));
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(screen.settings, Some(settings));
+    }
+
+    fn page(page: SettingsPage) -> MenuScreen<MenuAction> {
+        let settings = EngineSettings::from_prefs(&Prefs::default());
+        settings_page(page, settings, &GameRows::default())
+    }
+
+    fn slider(
+        key: &str,
+        label: &str,
+        range: (i32, i32, i32),
+        unit: &str,
+        value: i32,
+    ) -> MenuItem<MenuAction> {
+        MenuItem::GameSlider(GameSlider {
+            key: key.to_owned(),
+            label: label.to_owned(),
+            min: range.0,
+            max: range.1,
+            step: range.2,
+            unit: unit.to_owned(),
+            value,
+        })
+    }
+
+    #[test]
+    fn the_categories_screen_lists_the_six_pages_in_order_then_back() {
+        let screen = settings_categories_screen();
+
+        let labels: Vec<&str> = screen
+            .items
+            .iter()
+            .map(|item| match item {
+                MenuItem::Button { label, .. } => label.as_str(),
+                other => panic!("the categories screen lists only buttons, not {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Controls", "Mouse", "Audio", "Graphics", "Display", "Game", "Back"
+            ]
+        );
+        assert_eq!(screen.title.as_deref(), Some("Settings"));
+        assert_eq!(screen.back, Some(MenuAction::Back));
+        assert_eq!(
+            screen.settings, None,
+            "no setting is staged on the categories"
+        );
+        assert_eq!(
+            SettingsPage::ALL.map(SettingsPage::label),
+            ["Controls", "Mouse", "Audio", "Graphics", "Display", "Game"]
+        );
+    }
+
+    #[test]
+    fn page_of_places_each_engine_row_on_its_page() {
+        let placed = EngineSetting::ALL.map(page_of);
+
+        assert_eq!(
+            placed,
+            [
+                SettingsPage::Mouse,
+                SettingsPage::Mouse,
+                SettingsPage::Mouse,
+                SettingsPage::Audio,
+                SettingsPage::Audio,
+                SettingsPage::Audio,
+                SettingsPage::Audio,
+                SettingsPage::Graphics,
+                SettingsPage::Graphics,
+                SettingsPage::Display,
+                SettingsPage::Display,
+                SettingsPage::Graphics,
+            ]
+        );
+    }
+
+    #[test]
+    fn audio_page_lists_only_the_audio_rows() {
+        let settings = EngineSettings::from_prefs(&Prefs::default());
+
+        let screen = settings_page(SettingsPage::Audio, settings, &GameRows::default());
+
+        assert_eq!(
+            screen.items,
+            vec![
+                MenuItem::Setting(EngineSetting::MasterVolume),
+                MenuItem::Setting(EngineSetting::SoundEffectVolume),
+                MenuItem::Setting(EngineSetting::MusicVolume),
+                MenuItem::Setting(EngineSetting::UiVolume),
+                MenuItem::Apply,
+                MenuAction::Back.button(),
+            ],
+            "master above the other volumes, then Apply and Back"
+        );
+        assert_eq!(screen.title.as_deref(), Some("Audio"));
+        assert_eq!(screen.back, Some(MenuAction::Back));
+        assert_eq!(screen.settings, Some(settings));
+    }
+
+    #[test]
+    fn the_mouse_graphics_and_display_pages_list_only_their_rows_in_listing_order() {
+        let mouse = page(SettingsPage::Mouse);
+        let graphics = page(SettingsPage::Graphics);
+        let display = page(SettingsPage::Display);
+
+        assert_eq!(
+            mouse.items,
+            vec![
+                MenuItem::Setting(EngineSetting::MouseSensitivity),
+                MenuItem::Setting(EngineSetting::MouseSmoothing),
+                MenuItem::Setting(EngineSetting::InvertMouseY),
+                MenuItem::Apply,
+                MenuAction::Back.button(),
+            ]
+        );
+        assert_eq!(
+            graphics.items,
+            vec![
+                MenuItem::Setting(EngineSetting::ShadowQuality),
+                MenuItem::Setting(EngineSetting::SsaoQuality),
+                MenuItem::Setting(EngineSetting::EffectsQuality),
+                MenuItem::Apply,
+                MenuAction::Back.button(),
+            ]
+        );
+        assert_eq!(
+            display.items,
+            vec![
+                MenuItem::Setting(EngineSetting::WindowMode),
+                MenuItem::Setting(EngineSetting::Resolution),
+                slider("fov", "Field of view", (50, 90, 1), "°", 75),
+                MenuItem::Apply,
+                MenuAction::Back.button(),
+            ]
+        );
+        assert_eq!(
+            [mouse.title, graphics.title, display.title].map(Option::unwrap_or_default),
+            ["Mouse", "Graphics", "Display"]
+        );
+    }
+
+    #[test]
+    fn the_game_page_lists_crosshair_opacity_then_head_bob_then_apply_and_back() {
+        let rows = GameRows {
+            fov: 60,
+            crosshair_opacity: 30,
+            head_bob: level(25),
+        };
+        let settings = EngineSettings::from_prefs(&Prefs::default());
+
+        let screen = settings_page(SettingsPage::Game, settings, &rows);
+
+        assert_eq!(
+            screen.items,
+            vec![
+                slider(
+                    "crosshair_opacity",
+                    "Crosshair opacity",
+                    (0, 100, 10),
+                    "%",
+                    30
+                ),
+                head_bob_row(level(25)),
+                MenuItem::Apply,
+                MenuAction::Back.button(),
+            ]
+        );
+        assert_eq!(screen.title.as_deref(), Some("Game"));
+        assert_eq!(screen.back, Some(MenuAction::Back));
+    }
+
+    #[test]
+    fn the_display_page_starts_the_field_of_view_slider_at_the_saved_value() {
+        let rows = GameRows {
+            fov: 90,
+            ..GameRows::default()
+        };
+        let settings = EngineSettings::from_prefs(&Prefs::default());
+
+        let screen = settings_page(SettingsPage::Display, settings, &rows);
+
+        assert!(
+            screen
+                .items
+                .contains(&slider("fov", "Field of view", (50, 90, 1), "°", 90))
+        );
+    }
+
+    #[test]
+    fn every_engine_setting_is_on_exactly_one_page() {
+        let pages = [
+            SettingsPage::Mouse,
+            SettingsPage::Audio,
+            SettingsPage::Graphics,
+            SettingsPage::Display,
+            SettingsPage::Game,
+        ];
+
+        for setting in EngineSetting::ALL {
+            let homes: Vec<SettingsPage> = pages
+                .into_iter()
+                .filter(|&at| page(at).items.contains(&MenuItem::Setting(setting)))
+                .collect();
+
+            assert_eq!(homes, vec![page_of(setting)], "{}", setting.label());
+        }
+        for key in ["fov", "crosshair_opacity", HeadBobLevel::KEY] {
+            let homes = pages
+                .into_iter()
+                .filter(|&at| {
+                    page(at).items.iter().any(
+                        |item| matches!(item, MenuItem::GameSlider(slider) if slider.key == key),
+                    )
+                })
+                .count();
+
+            assert_eq!(homes, 1, "the {key} row");
+        }
     }
 
     type ControlRow = (String, [Option<Binding>; 2]);
