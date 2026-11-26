@@ -669,7 +669,6 @@ impl SearchlightSim {
         };
         let lean = self.lean.step(want, reach, dt, &self.lean_tuning);
         if lean != self.lean {
-            let count_changes = (lean.amount() == 0.0) != (self.lean.amount() == 0.0);
             self.lean = lean;
             self.leaned_volumes = lean_volumes(&self.upright_volumes, lean, &self.lean_tuning);
             // Takes effect at the next world step, so a tick's rays meet the lean of the tick
@@ -680,11 +679,6 @@ impl SearchlightSim {
                     &player_world_volumes(&self.leaned_volumes, lean),
                 )
                 .expect("the sim never removes the player");
-            if count_changes {
-                // Rebuilt colliders are out of the query index until a step, and the player
-                // would have no hit volumes at all for the rest of the tick.
-                self.world.step(SETTLE_DT);
-            }
         }
     }
 
@@ -3256,6 +3250,69 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// An open-ground sim with a ball dropped high overhead, so it falls through every tick.
+    fn sim_with_a_falling_ball() -> (SearchlightSim, moho_physics::LooseId) {
+        let mut sim = open_sim();
+        let mut spawn =
+            moho_physics::LooseSpawn::new(moho_physics::LooseShape::Sphere { radius: 0.2 }, 1.0);
+        spawn.position = Vec3::new(4.0, 50.0, 4.0);
+        let ball = sim.world.spawn_loose(&spawn);
+        (sim, ball)
+    }
+
+    /// Everything the world holds that moves, as `sim` has it now.
+    fn dynamic_state(
+        sim: &SearchlightSim,
+        ball: moho_physics::LooseId,
+    ) -> (
+        CharacterState,
+        moho_physics::LooseState,
+        moho_physics::LoosePoses,
+    ) {
+        (
+            sim.player(),
+            sim.world.loose(ball).expect("the ball is in the world"),
+            sim.world
+                .loose_poses(ball)
+                .expect("the ball is in the world"),
+        )
+    }
+
+    #[test]
+    fn starting_and_ending_a_lean_advance_the_world_no_extra_tick() {
+        for side in [LeanSide::Right, LeanSide::Left] {
+            let (mut leaner, ball) = sim_with_a_falling_ball();
+            let (mut stander, _) = sim_with_a_falling_ball();
+            // The lean starts on tick 0 and, after 10 ticks held, ends once the blend is back
+            // at upright.
+            let mut ticks = 0;
+            let mut ended = false;
+            let mut started_or_ended_ticks = 0;
+
+            while ticks < 60 {
+                let want = if ticks < 10 { Some(side) } else { None };
+                let before = leaner.player_lean().amount();
+                leaner.tick(&leaning(want), DT);
+                stander.tick(&idle(), DT);
+                ticks += 1;
+                let after = leaner.player_lean().amount();
+                if (before == 0.0) != (after == 0.0) {
+                    started_or_ended_ticks += 1;
+                    ended |= after == 0.0;
+                }
+
+                assert_eq!(
+                    dynamic_state(&leaner, ball),
+                    dynamic_state(&stander, ball),
+                    "{side:?}, tick {ticks}: lean {before} -> {after}"
+                );
+            }
+
+            assert!(ended, "{side:?}: the lean never came back to upright");
+            assert_eq!(started_or_ended_ticks, 2, "{side:?}: one start and one end");
         }
     }
 
