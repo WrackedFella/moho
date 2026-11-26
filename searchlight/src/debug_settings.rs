@@ -24,6 +24,15 @@ pub struct GameRows {
     pub head_bob: HeadBobLevel,
 }
 
+impl GameRows {
+    pub const FOV_KEY: &'static str = "fov";
+    pub const FOV_MIN: i32 = 50;
+    pub const FOV_MAX: i32 = 90;
+    pub const CROSSHAIR_OPACITY_KEY: &'static str = "crosshair_opacity";
+    pub const CROSSHAIR_OPACITY_MIN: i32 = 0;
+    pub const CROSSHAIR_OPACITY_MAX: i32 = 100;
+}
+
 impl Default for GameRows {
     fn default() -> Self {
         Self {
@@ -104,17 +113,49 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
-    /// The game rows the prefs hold. Not yet implemented: always the defaults.
+    /// The game rows the prefs hold under `[game]`: an absent or unparsable value reads as its
+    /// default and an out-of-range one is clamped.
     pub fn game_rows(&self) -> GameRows {
-        GameRows::default()
+        let number = |key: &str, default: i32, min: i32, max: i32| {
+            self.prefs
+                .game_value(key)
+                .and_then(|text| text.parse::<i32>().ok())
+                .map_or(default, |value| value.clamp(min, max))
+        };
+        let defaults = GameRows::default();
+        GameRows {
+            fov: number(
+                GameRows::FOV_KEY,
+                defaults.fov,
+                GameRows::FOV_MIN,
+                GameRows::FOV_MAX,
+            ),
+            crosshair_opacity: number(
+                GameRows::CROSSHAIR_OPACITY_KEY,
+                defaults.crosshair_opacity,
+                GameRows::CROSSHAIR_OPACITY_MIN,
+                GameRows::CROSSHAIR_OPACITY_MAX,
+            ),
+            head_bob: self.head_bob(),
+        }
     }
 
-    /// Stores the game rows and saves the prefs file. Not yet implemented: stores nothing.
+    /// Stores the game rows under `[game]` and saves the prefs file; the values are kept if the
+    /// save fails.
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
-    pub fn set_game_rows(&mut self, _rows: GameRows) -> io::Result<()> {
-        Ok(())
+    pub fn set_game_rows(&mut self, rows: GameRows) -> io::Result<()> {
+        for (key, value) in [
+            (GameRows::FOV_KEY, rows.fov),
+            (GameRows::CROSSHAIR_OPACITY_KEY, rows.crosshair_opacity),
+            (HeadBobLevel::KEY, rows.head_bob.percent()),
+        ] {
+            self.prefs
+                .set_game_value(key, &value.to_string())
+                .expect("a game row name with a number is a name and value prefs always accepts");
+        }
+        self.prefs.save_to(&self.path)
     }
 
     /// Stores the engine's settings rows and saves the prefs file; every other value in the

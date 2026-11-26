@@ -72,32 +72,21 @@ impl SettingsPage {
     }
 }
 
-/// The page `setting` is shown on. Not yet implemented: every row reads as Controls.
-pub fn page_of(_setting: EngineSetting) -> SettingsPage {
-    SettingsPage::Controls
-}
-
-/// The Settings categories screen. Not yet implemented: an empty screen.
-pub fn settings_categories_screen() -> MenuScreen<MenuAction> {
-    MenuScreen {
-        title: None,
-        items: vec![],
-        back: None,
-        settings: None,
-    }
-}
-
-/// One Settings page. Not yet implemented: an empty screen.
-pub fn settings_page(
-    _page: SettingsPage,
-    _engine: EngineSettings,
-    _game: &GameRows,
-) -> MenuScreen<MenuAction> {
-    MenuScreen {
-        title: None,
-        items: vec![],
-        back: None,
-        settings: None,
+/// The page `setting` is shown on. The match has no wildcard arm, so an engine row added later
+/// does not compile until it is placed on a page.
+pub fn page_of(setting: EngineSetting) -> SettingsPage {
+    match setting {
+        EngineSetting::MouseSensitivity
+        | EngineSetting::MouseSmoothing
+        | EngineSetting::InvertMouseY => SettingsPage::Mouse,
+        EngineSetting::MasterVolume
+        | EngineSetting::SoundEffectVolume
+        | EngineSetting::MusicVolume
+        | EngineSetting::UiVolume => SettingsPage::Audio,
+        EngineSetting::ShadowQuality
+        | EngineSetting::SsaoQuality
+        | EngineSetting::EffectsQuality => SettingsPage::Graphics,
+        EngineSetting::WindowMode | EngineSetting::Resolution => SettingsPage::Display,
     }
 }
 
@@ -170,22 +159,101 @@ pub fn head_bob_row(level: HeadBobLevel) -> MenuItem<MenuAction> {
     })
 }
 
-/// Titled Settings, with the engine's rows starting from `settings`, the Head bob row starting
-/// at `head_bob`, then Apply and a Back button; Escape is Back.
-pub fn settings_screen(settings: EngineSettings, head_bob: HeadBobLevel) -> MenuScreen<MenuAction> {
-    let mut items: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
+/// A game slider row of whole numbers, starting at `value`.
+fn game_slider(
+    key: &str,
+    label: &str,
+    (min, max, step): (i32, i32, i32),
+    unit: &str,
+    value: i32,
+) -> MenuItem<MenuAction> {
+    MenuItem::GameSlider(GameSlider {
+        key: key.to_owned(),
+        label: label.to_owned(),
+        min,
+        max,
+        step,
+        unit: unit.to_owned(),
+        value,
+    })
+}
+
+/// The Field of view slider row, starting at `degrees`.
+fn fov_row(degrees: i32) -> MenuItem<MenuAction> {
+    game_slider(
+        GameRows::FOV_KEY,
+        "Field of view",
+        (GameRows::FOV_MIN, GameRows::FOV_MAX, 1),
+        "°",
+        degrees,
+    )
+}
+
+/// The Crosshair opacity slider row, starting at `percent`.
+fn crosshair_opacity_row(percent: i32) -> MenuItem<MenuAction> {
+    game_slider(
+        GameRows::CROSSHAIR_OPACITY_KEY,
+        "Crosshair opacity",
+        (
+            GameRows::CROSSHAIR_OPACITY_MIN,
+            GameRows::CROSSHAIR_OPACITY_MAX,
+            10,
+        ),
+        "%",
+        percent,
+    )
+}
+
+/// Titled Settings: a button for each page, in order, then Back; Escape is Back. The Controls
+/// button opens the Controls page.
+pub fn settings_categories_screen() -> MenuScreen<MenuAction> {
+    let mut items: Vec<MenuItem<MenuAction>> = SettingsPage::ALL
         .into_iter()
-        .map(MenuItem::Setting)
+        .map(|page| match page {
+            SettingsPage::Controls => MenuAction::Controls.button(),
+            other => MenuAction::Page(other).button(),
+        })
         .collect();
-    items.push(head_bob_row(head_bob));
-    items.push(MenuItem::Apply);
-    items.push(MenuAction::Controls.button());
     items.push(MenuAction::Back.button());
     MenuScreen {
         title: Some("Settings".to_owned()),
         items,
         back: Some(MenuAction::Back),
-        settings: Some(settings),
+        settings: None,
+    }
+}
+
+/// `page` titled with its label: the engine rows placed on it by [`page_of`] in listing order,
+/// starting from `engine`, then its game rows starting from `game`, then Apply and a Back
+/// button; Escape is Back.
+pub fn settings_page(
+    page: SettingsPage,
+    engine: EngineSettings,
+    game: &GameRows,
+) -> MenuScreen<MenuAction> {
+    let mut items: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
+        .into_iter()
+        .filter(|&setting| page_of(setting) == page)
+        .map(MenuItem::Setting)
+        .collect();
+    match page {
+        SettingsPage::Display => items.push(fov_row(game.fov)),
+        SettingsPage::Game => {
+            items.push(crosshair_opacity_row(game.crosshair_opacity));
+            items.push(head_bob_row(game.head_bob));
+        }
+        SettingsPage::Controls
+        | SettingsPage::Mouse
+        | SettingsPage::Audio
+        | SettingsPage::Graphics => {}
+    }
+    items.push(MenuItem::Apply);
+    items.push(MenuAction::Back.button());
+    MenuScreen {
+        title: Some(page.label().to_owned()),
+        items,
+        back: Some(MenuAction::Back),
+        settings: Some(engine),
     }
 }
 
@@ -279,18 +347,21 @@ mod tests {
     fn settings_puts_the_head_bob_row_after_the_engine_rows_and_before_apply() {
         let settings = EngineSettings::from_prefs(&Prefs::default());
 
-        let screen = settings_screen(settings, level(30));
+        let rows = GameRows {
+            head_bob: level(30),
+            ..GameRows::default()
+        };
 
-        let mut expected: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
-            .into_iter()
-            .map(MenuItem::Setting)
-            .collect();
-        expected.push(head_bob_row(level(30)));
-        expected.push(MenuItem::Apply);
-        expected.push(MenuAction::Controls.button());
-        expected.push(MenuAction::Back.button());
+        let screen = settings_page(SettingsPage::Game, settings, &rows);
+
+        let expected = vec![
+            crosshair_opacity_row(100),
+            head_bob_row(level(30)),
+            MenuItem::Apply,
+            MenuAction::Back.button(),
+        ];
         assert_eq!(screen.items, expected);
-        assert_eq!(screen.title.as_deref(), Some("Settings"));
+        assert_eq!(screen.title.as_deref(), Some("Game"));
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(screen.settings, Some(settings));
     }

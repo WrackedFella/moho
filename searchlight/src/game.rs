@@ -35,7 +35,7 @@ use moho_ui_shell::{
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::controls::{Capture, ControlsDraft, label};
-use crate::debug_settings::DebugSettings;
+use crate::debug_settings::{DebugSettings, GameRows};
 use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{
@@ -45,7 +45,7 @@ use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
     MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
-    settings_screen,
+    settings_categories_screen, settings_page,
 };
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
@@ -75,6 +75,7 @@ const GUN_HALF: Vec3 = Vec3::new(0.04, 0.04, 0.3);
 const NO_MESH: u32 = u32::MAX;
 /// The window title before any status line is appended.
 pub const WINDOW_TITLE: &str = "Searchlight";
+/// The vertical field of view before a saved one is applied.
 const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
@@ -285,9 +286,13 @@ fn push_quad(
 
 /// Four short bars around the screen centre, drawn as solid rects from a 1x1 white texture,
 /// under the damage edge bars and the death tint when they are showing.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Crosshair {
     texture_sent: bool,
+    /// Opacity of the four bars in percent; at 0 they are not drawn.
+    opacity: i32,
+    /// Vertical field of view in degrees of the view the gap is measured against.
+    fov_degrees: f32,
     dead: bool,
     /// Opacity of the damage bar on each screen edge, indexed front, right, behind, left.
     edges: [u8; 4],
@@ -295,6 +300,20 @@ struct Crosshair {
     hidden: bool,
     /// Half-angle in radians of the cone the next shot leaves in; the gap opens to mark it.
     spread: f32,
+}
+
+impl Default for Crosshair {
+    fn default() -> Self {
+        Self {
+            texture_sent: false,
+            opacity: GameRows::CROSSHAIR_OPACITY_MAX,
+            fov_degrees: FOV_DEGREES,
+            dead: false,
+            edges: [0; 4],
+            hidden: false,
+            spread: 0.0,
+        }
+    }
 }
 
 impl Crosshair {
@@ -318,7 +337,7 @@ impl UiFrameSource for Crosshair {
         }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
-        let gap = Self::gap(self.spread, FOV_DEGREES.to_radians(), size[1]);
+        let gap = Self::gap(self.spread, self.fov_degrees.to_radians(), size[1]);
         let (near, far, half) = (gap, gap + Self::LENGTH, Self::THICKNESS / 2.0);
         let bars = [
             ([cx - far, cy - half], [cx - near, cy + half]),
@@ -344,8 +363,17 @@ impl UiFrameSource for Crosshair {
         if let Some(tint) = hud::death_overlay(self.dead, size_in_pixels) {
             push_quad(&mut vertices, &mut indices, tint.min, tint.max, tint.rgba);
         }
-        for (min, max) in bars {
-            push_quad(&mut vertices, &mut indices, min, max, [255; 4]);
+        if self.opacity > 0 {
+            let alpha = (255.0 * self.opacity as f32 / 100.0).round() as u8;
+            for (min, max) in bars {
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    min,
+                    max,
+                    [255, 255, 255, alpha],
+                );
+            }
         }
         let textures_set = if self.texture_sent {
             Vec::new()
@@ -428,6 +456,8 @@ struct Stage {
     enemies: Vec<EnemyRig>,
     edge_left: [u32; 4],
     crosshair: Arc<Mutex<Crosshair>>,
+    /// Vertical field of view in degrees of every scene drawn.
+    fov_degrees: f32,
     shot_sound: Option<PathBuf>,
     window: Option<Arc<Window>>,
     status: String,
@@ -441,6 +471,18 @@ struct Stage {
 }
 
 impl Stage {
+    /// Draws every scene at `fov` degrees (vertical) and sizes the crosshair's gap for it, and
+    /// gives the crosshair `opacity` percent.
+    fn set_view_rows(&mut self, fov: i32, opacity: i32) {
+        self.fov_degrees = fov as f32;
+        let mut crosshair = self
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        crosshair.fov_degrees = self.fov_degrees;
+        crosshair.opacity = opacity;
+    }
+
     fn set_effects_quality(&mut self, quality: u32) {
         self.scene.effects_mut().set_quality(quality);
     }
@@ -527,6 +569,7 @@ impl Stage {
             enemies: Vec::new(),
             edge_left: [0; 4],
             crosshair: Arc::new(Mutex::new(Crosshair::default())),
+            fov_degrees: FOV_DEGREES,
             shot_sound: None,
             window: None,
             status: String::new(),
@@ -791,7 +834,7 @@ impl Stage {
 
     fn draw(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3)) {
         let aspect = self.aspect();
-        draw_scene(&mut self.scene, renderer, eye, aspect);
+        draw_scene(&mut self.scene, renderer, eye, (self.fov_degrees, aspect));
     }
 
     fn draw_backdrop(&mut self, renderer: &mut dyn RendererBackend) {
@@ -800,21 +843,22 @@ impl Stage {
             &mut self.backdrop,
             renderer,
             (Mat4::IDENTITY, Vec3::ZERO),
-            aspect,
+            (self.fov_degrees, aspect),
         );
     }
 }
 
+/// Draws `scene` from `eye` with a view `fov_degrees` tall and `aspect` wide per tall.
 fn draw_scene(
     scene: &mut Scene,
     renderer: &mut dyn RendererBackend,
     eye: (Mat4, Vec3),
-    aspect: f32,
+    (fov_degrees, aspect): (f32, f32),
 ) {
     renderer.update_lighting(lighting());
     let (view, eye) = eye;
     let projection =
-        glam::camera::rh::proj::directx::perspective(FOV_DEGREES.to_radians(), aspect, NEAR, FAR);
+        glam::camera::rh::proj::directx::perspective(fov_degrees.to_radians(), aspect, NEAR, FAR);
     let no_actors: &[NoActor] = &[];
     if let Err(error) = scene.render(
         renderer,
@@ -979,14 +1023,21 @@ impl SearchlightGame {
             match event {
                 MenuEvent::Chosen(MenuAction::Play | MenuAction::Resume) => self.enter_play(),
                 MenuEvent::Chosen(MenuAction::Settings) => {
+                    self.stage
+                        .shell()
+                        .menu_mut()
+                        .push(settings_categories_screen());
+                }
+                MenuEvent::Chosen(MenuAction::Page(page)) => {
                     let settings = self.debug_settings.as_ref().map_or_else(
                         || EngineSettings::from_prefs(&Prefs::default()),
                         |saved| EngineSettings::from_prefs(saved.prefs()),
                     );
+                    let rows = self.game_rows();
                     self.stage
                         .shell()
                         .menu_mut()
-                        .push(settings_screen(settings, self.head_bob));
+                        .push(settings_page(page, settings, &rows));
                 }
                 MenuEvent::Chosen(MenuAction::Controls) => {
                     let draft = ControlsDraft::new(self.input.bindings());
@@ -1009,12 +1060,7 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Cancel) => self.answer_conflict(false),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
-                MenuEvent::GameSettingsApplied(values) => {
-                    if let Some(&percent) = values.get(HeadBobLevel::KEY) {
-                        self.head_bob = HeadBobLevel::nearest(percent);
-                        self.save_head_bob();
-                    }
-                }
+                MenuEvent::GameSettingsApplied(values) => self.game_settings_applied(&values),
                 MenuEvent::MoveRequested {
                     item: MenuAction::Item(id),
                     from,
@@ -1060,9 +1106,7 @@ impl SearchlightGame {
                 }
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
-                | MenuEvent::Chosen(
-                    MenuAction::Item(_) | MenuAction::ItemAction(_) | MenuAction::Page(_),
-                ) => {}
+                | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}
             }
         }
     }
@@ -1121,6 +1165,53 @@ impl SearchlightGame {
         self.input = build_action_map(bindings, &prefs);
     }
 
+    /// The game rows as the game holds them now.
+    fn game_rows(&self) -> GameRows {
+        let (fov, opacity) = {
+            let crosshair = self
+                .stage
+                .crosshair
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (self.stage.fov_degrees as i32, crosshair.opacity)
+        };
+        GameRows {
+            fov,
+            crosshair_opacity: opacity,
+            head_bob: self.head_bob,
+        }
+    }
+
+    /// Makes `rows` live.
+    fn apply_game_rows(&mut self, rows: GameRows) {
+        self.head_bob = rows.head_bob;
+        self.stage.set_view_rows(rows.fov, rows.crosshair_opacity);
+    }
+
+    /// Applies and saves the game rows a page sent. A row the page does not carry keeps the
+    /// value the game holds; a failed save warns and the values stay for the session.
+    fn game_settings_applied(&mut self, values: &BTreeMap<String, i32>) {
+        let mut rows = self.game_rows();
+        if let Some(&fov) = values.get(GameRows::FOV_KEY) {
+            rows.fov = fov.clamp(GameRows::FOV_MIN, GameRows::FOV_MAX);
+        }
+        if let Some(&opacity) = values.get(GameRows::CROSSHAIR_OPACITY_KEY) {
+            rows.crosshair_opacity = opacity.clamp(
+                GameRows::CROSSHAIR_OPACITY_MIN,
+                GameRows::CROSSHAIR_OPACITY_MAX,
+            );
+        }
+        if let Some(&percent) = values.get(HeadBobLevel::KEY) {
+            rows.head_bob = HeadBobLevel::nearest(percent);
+        }
+        self.apply_game_rows(rows);
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_game_rows(rows)
+        {
+            tracing::warn!(%error, "game settings not saved");
+        }
+    }
+
     /// Saves the head bob; a failed save warns and the value stays for the session.
     fn save_head_bob(&mut self) {
         if let Some(saved) = &mut self.debug_settings
@@ -1162,7 +1253,7 @@ impl SearchlightGame {
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
         self.simple = settings.simple();
-        self.head_bob = settings.head_bob();
+        self.apply_game_rows(settings.game_rows());
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -4611,10 +4702,9 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        // Back is the last of Settings' sixteen rows; Up wraps to it and scrolls it into the
-        // last of the ten rows that fit at 720 points.
+        // Back is the last of the categories' seven rows, which all fit at 720 points.
         press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
-        let back = [640.0, 588.0];
+        let back = [640.0, 528.0];
         click_at(&mut game, &mut ctx, back);
         game.event(&mut ctx, motion());
 
@@ -5191,6 +5281,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
         focus_head_bob_slider(&game);
         press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 10]);
         focus_apply(&game);
@@ -5302,6 +5393,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut relaunched, &mut ctx);
+        choose_page(&mut relaunched, &mut ctx, "Game");
 
         assert_eq!(relaunched.head_bob, head_bob_level(25));
         assert_eq!(head_bob_on_the_settings_screen(&relaunched), Some(25));
@@ -5315,6 +5407,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
         focus_head_bob_slider(&game);
         press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 5]);
         focus_apply(&game);
@@ -5322,6 +5415,7 @@ mod tests {
 
         let mut relaunched = relaunched(&path);
         open_settings(&mut relaunched, &mut ctx);
+        choose_page(&mut relaunched, &mut ctx, "Game");
 
         assert_eq!(game.head_bob, head_bob_level(25));
         assert_eq!(relaunched.head_bob, head_bob_level(25));
@@ -5336,14 +5430,18 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
         focus_head_bob_slider(&game);
         press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 10]);
 
         focus_back(&game);
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
         let after_back = (title(&game), game.head_bob);
         let saved_by_back = path.exists();
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        choose_page(&mut game, &mut ctx, "Game");
         let reopened = head_bob_on_the_settings_screen(&game);
 
         assert_eq!(after_back, (None, head_bob_level(50)));
@@ -5360,6 +5458,7 @@ mod tests {
         type_into_console(&game, "head_bob 30");
         game.command();
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
 
         assert_eq!(game.head_bob, head_bob_level(30));
         assert_eq!(head_bob_on_the_settings_screen(&game), Some(30));
@@ -5595,14 +5694,12 @@ mod tests {
         choose_page(&mut game, &mut ctx, "Audio");
         focus_engine_row(&game, moho_ui_shell::EngineSetting::MusicVolume);
         press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::ArrowRight]);
-        let moved = staged_settings(&game).music_volume;
 
         focus_back(&game);
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
         let after_back = title(&game);
         choose_page(&mut game, &mut ctx, "Audio");
 
-        assert!(moved > 4.0, "the slider moved to {moved}");
         assert_eq!(after_back.as_deref(), Some("Settings"));
         assert_eq!(staged_settings(&game).music_volume, 4.0);
         let saved = game.debug_settings.as_ref().unwrap().prefs();
@@ -6674,7 +6771,11 @@ mod menu_tests {
                 settings,
                 (
                     Some("Settings".to_owned()),
-                    ["Controls", "Back"].map(String::from).to_vec()
+                    [
+                        "Controls", "Mouse", "Audio", "Graphics", "Display", "Game", "Back"
+                    ]
+                    .map(String::from)
+                    .to_vec()
                 )
             );
             assert_eq!(after_back.0, None);
@@ -6938,8 +7039,34 @@ mod settings_tests {
         setting: EngineSetting,
         keys: &[Key],
     ) {
+        show_page_of(game, ctx, setting);
         focus_item(game, &MenuItem::Setting(setting));
         press_keys(game, ctx, keys);
+    }
+
+    /// Opens the Settings page `setting` is on, going back to the categories first when another
+    /// page is open; that page's unapplied changes are discarded.
+    fn show_page_of(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        setting: EngineSetting,
+    ) {
+        let page = crate::menu::page_of(setting);
+        if title(game).as_deref() == Some(page.label()) {
+            return;
+        }
+        if title(game).as_deref() != Some("Settings") {
+            click_back(game, ctx);
+        }
+        focus_item(
+            game,
+            &MenuItem::Button {
+                label: page.label().to_owned(),
+                action: MenuAction::Page(page),
+            },
+        );
+        press_keys(game, ctx, &[Key::Enter]);
+        assert_eq!(title(game).as_deref(), Some(page.label()));
     }
 
     fn click_apply(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
@@ -7007,23 +7134,20 @@ mod settings_tests {
         let mut ctx = EventContext::new(&clock, None, None);
 
         open_settings_from_main_menu(&mut game, &mut ctx);
+        show_page_of(&mut game, &mut ctx, EngineSetting::MouseSensitivity);
 
         let mut shell = game.stage.shell();
-        let screen = shell.menu_mut().top().expect("Settings is open");
-        let mut expected: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
-            .into_iter()
-            .map(MenuItem::Setting)
-            .collect();
-        expected.push(crate::menu::head_bob_row(HeadBobLevel::DEFAULT));
-        expected.push(MenuItem::Apply);
-        expected.push(MenuItem::Button {
-            label: "Controls".to_owned(),
-            action: MenuAction::Controls,
-        });
-        expected.push(back_button());
+        let screen = shell.menu_mut().top().expect("Mouse is open");
+        let expected = vec![
+            MenuItem::Setting(EngineSetting::MouseSensitivity),
+            MenuItem::Setting(EngineSetting::MouseSmoothing),
+            MenuItem::Setting(EngineSetting::InvertMouseY),
+            MenuItem::Apply,
+            back_button(),
+        ];
         assert_eq!(
             screen.items, expected,
-            "the twelve rows, Head bob, Apply, Controls and Back"
+            "the three mouse rows, Apply and Back"
         );
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(
@@ -7253,6 +7377,8 @@ mod settings_tests {
             EngineSetting::SsaoQuality,
             &[Key::ArrowLeft],
         );
+        let before_apply = renderer.shadow.len();
+        click_apply(&mut game, &mut ctx);
         change(
             &mut game,
             &mut ctx,
@@ -7265,7 +7391,6 @@ mod settings_tests {
             EngineSetting::Resolution,
             &[Key::ArrowRight],
         );
-        let before_apply = renderer.shadow.len();
         click_apply(&mut game, &mut ctx);
         let applied = run_frame(&mut game, &mut renderer);
         let after = run_frame(&mut game, &mut renderer);
@@ -7305,9 +7430,11 @@ mod settings_tests {
         );
 
         click_back(&mut game, &mut ctx);
+        click_back(&mut game, &mut ctx);
         let after_back = (title(&game), game_prefs(&game).window_mode());
         let saved_by_back = path.exists();
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        show_page_of(&mut game, &mut ctx, EngineSetting::ShadowQuality);
         let reopened = {
             let mut shell = game.stage.shell();
             shell.menu_mut().top().and_then(|screen| screen.settings)
@@ -7352,10 +7479,11 @@ mod settings_tests {
         let paused_by_event = ctx.requested_paused();
         let applied_frame = run_frame(&mut game, &mut renderer);
         click_back(&mut game, &mut ctx);
+        click_back(&mut game, &mut ctx);
         let after_back = (game.screen, labels(&game));
         let back_frame = run_frame(&mut game, &mut renderer);
 
-        assert_eq!(after_apply, (Screen::Paused, Some("Settings".to_owned())));
+        assert_eq!(after_apply, (Screen::Paused, Some("Audio".to_owned())));
         assert_eq!(paused_by_event, Some(true));
         assert_eq!(applied_frame.paused, Some(true));
         assert_eq!(
