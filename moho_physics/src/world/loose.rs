@@ -371,19 +371,20 @@ impl PhysicsWorld {
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        self.state_of(self.loose.get(&id)?)
+        Some(self.state_of(self.loose.get(&id)?))
     }
 
-    fn state_of(&self, loose: &Loose) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(loose.body)?;
-        Some(LooseState {
+    /// Every live `Loose` owns a rigid body for its whole life, so the index cannot miss.
+    fn state_of(&self, loose: &Loose) -> LooseState {
+        let body = &self.rigid_body_set[loose.body];
+        LooseState {
             shape: loose.spawn.shape,
             position: body.translation(),
             rotation: *body.rotation(),
             linear_velocity: body.linvel(),
             angular_velocity: body.angvel(),
             asleep: body.is_sleeping(),
-        })
+        }
     }
 
     /// Every live loose object, ascending id; never depends on handle or hash order.
@@ -392,7 +393,7 @@ impl PhysicsWorld {
     pub fn loose_states(&self) -> impl Iterator<Item = (LooseId, LooseState)> + '_ {
         self.loose
             .iter()
-            .filter_map(|(&id, loose)| Some((id, self.state_of(loose)?)))
+            .map(|(&id, loose)| (id, self.state_of(loose)))
     }
 
     /// The object's pose at the last two ticks; `None` for an unknown id.
