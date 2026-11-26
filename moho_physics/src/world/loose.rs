@@ -3,8 +3,16 @@ use super::PhysicsWorld;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
-    Pose, RigidBodyBuilder, RigidBodyHandle,
+    Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle,
 };
+
+/// The pose a body holds right now.
+fn body_pose(body: &RigidBody) -> LoosePose {
+    LoosePose {
+        position: body.translation(),
+        rotation: *body.rotation(),
+    }
+}
 
 /// Membership bit that marks a loose collider. A collider whose only membership is this bit is
 /// ignored by characters: their filter tests with `And`, so it hides only colliders whose every
@@ -315,13 +323,9 @@ impl PhysicsWorld {
     /// The object's pose at the last two ticks; `None` for an unknown id.
     pub fn loose_poses(&self, id: LooseId) -> Option<LoosePoses> {
         let loose = self.loose.get(&id)?;
-        let body = self.rigid_body_set.get(loose.body)?;
         Some(LoosePoses {
             previous: loose.previous,
-            current: LoosePose {
-                position: body.translation(),
-                rotation: *body.rotation(),
-            },
+            current: body_pose(&self.rigid_body_set[loose.body]),
         })
     }
 
@@ -329,11 +333,7 @@ impl PhysicsWorld {
     /// would keep the pose from before it slept for ever.
     pub(super) fn remember_loose_poses(&mut self) {
         for loose in self.loose.values_mut() {
-            let body = &self.rigid_body_set[loose.body];
-            loose.previous = LoosePose {
-                position: body.translation(),
-                rotation: *body.rotation(),
-            };
+            loose.previous = body_pose(&self.rigid_body_set[loose.body]);
         }
     }
 
