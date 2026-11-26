@@ -8,11 +8,17 @@ name: Conflicts
 # the gate and pushes; the PR review then runs again on the new head. A conflict that
 # needs a decision is handed to a person with `needs-human`. Decision: claude-skills D0031.
 #
+# A PR opened after the last push to `dev` (or into a `dev` that already moved) would wait for
+# the next push, so opening or reopening a PR into `dev` also runs the scan.
+#
 # claude-code-action rejects a `push` event, so the push-triggered scan only dispatches this
 # workflow once per PR in conflict (`pr` input) and the dispatched run resolves that PR.
 # By hand: `gh workflow run conflicts.yml --ref dev` scans; `-f pr=<n>` resolves one PR.
 on:
   push:
+    branches: [dev]
+  pull_request:
+    types: [opened, reopened]
     branches: [dev]
   workflow_dispatch:
     inputs:
