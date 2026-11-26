@@ -1,6 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
-use crate::ballistics::{Ballistics, RoundStats};
+use crate::ballistics::RoundStats;
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
@@ -152,16 +152,7 @@ impl KitDef {
                     rounds: count,
                     capacity: spec.capacity,
                 })?;
-            rounds.insert(
-                entry.round.clone(),
-                RoundStats {
-                    ballistics: Ballistics {
-                        muzzle_velocity: round.muzzle_velocity,
-                        drag: round.drag,
-                    },
-                    damage: round.damage,
-                },
-            );
+            rounds.insert(entry.round.clone(), round.stats());
             Ok(magazine)
         };
 

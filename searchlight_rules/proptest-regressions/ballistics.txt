@@ -1,8 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 2f6586ead3041ae6b61b781da0bc5b9e5d31cec908b20bccc256ea2ae1a13762 # shrinks to damage = 1, muzzle_velocity = 101.0, slower = 0.0, extra = 0.0
-cc f2046473128f7520cb6788501967430a878f3b81b37cbf2ede4ffaa1654a06b3 # shrinks to damage = 1, muzzle_velocity = 101.0, speed = 0.0

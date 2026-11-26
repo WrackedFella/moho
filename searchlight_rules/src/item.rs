@@ -1,6 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
-use crate::ballistics::MIN_SPEED;
+use crate::ballistics::{Ballistics, MIN_SPEED, RoundStats};
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -152,6 +152,20 @@ impl TryFrom<RawRoundSpec> for RoundSpec {
             drag: raw.drag,
             damage: raw.damage,
         })
+    }
+}
+
+impl RoundSpec {
+    /// How the round flies and the damage it does at the muzzle.
+    #[must_use]
+    pub fn stats(&self) -> RoundStats {
+        RoundStats {
+            ballistics: Ballistics {
+                muzzle_velocity: self.muzzle_velocity,
+                drag: self.drag,
+            },
+            damage: self.damage,
+        }
     }
 }
 
