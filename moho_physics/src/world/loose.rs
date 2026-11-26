@@ -47,7 +47,9 @@ impl LooseId {
 /// What the world keeps per loose object besides its body.
 pub(super) struct Loose {
     body: RigidBodyHandle,
-    roll: Roll,
+    /// The spawn as given; its pose and velocity fields are those of the spawn, not the body's
+    /// current ones.
+    spawn: LooseSpawn,
 }
 
 /// How a shape rolls, which decides what the rest brake cuts.
@@ -134,18 +136,22 @@ impl LooseSpawn {
         }
     }
 
-    /// Panics on any field that would poison the simulation; see [`PhysicsWorld::spawn_loose`].
-    fn assert_valid(&self) {
-        assert!(
-            self.mass.is_finite() && self.mass > 0.0,
-            "mass must be positive and finite, got {}",
-            self.mass
-        );
+    /// Whether every field is fit for the simulation; the error names the first that is not.
+    fn check(&self) -> Result<(), String> {
+        if !(self.mass.is_finite() && self.mass > 0.0) {
+            return Err(format!(
+                "mass must be positive and finite, got {}",
+                self.mass
+            ));
+        }
         match self.shape {
-            LooseShape::Box { half_extents } => assert!(
-                half_extents.is_finite() && half_extents.min_element() > 0.0,
-                "half extents must be positive and finite, got {half_extents}"
-            ),
+            LooseShape::Box { half_extents } => {
+                if !(half_extents.is_finite() && half_extents.min_element() > 0.0) {
+                    return Err(format!(
+                        "half extents must be positive and finite, got {half_extents}"
+                    ));
+                }
+            }
             LooseShape::Capsule {
                 half_height,
                 radius,
@@ -153,42 +159,58 @@ impl LooseSpawn {
             | LooseShape::Cylinder {
                 half_height,
                 radius,
-            } => assert!(
-                half_height.is_finite() && half_height > 0.0 && radius.is_finite() && radius > 0.0,
-                "half height and radius must be positive and finite, got {half_height} and {radius}"
-            ),
-            LooseShape::Sphere { radius } => assert!(
-                radius.is_finite() && radius > 0.0,
-                "radius must be positive and finite, got {radius}"
-            ),
+            } => {
+                if !(half_height.is_finite()
+                    && half_height > 0.0
+                    && radius.is_finite()
+                    && radius > 0.0)
+                {
+                    return Err(format!(
+                        "half height and radius must be positive and finite, got {half_height} and {radius}"
+                    ));
+                }
+            }
+            LooseShape::Sphere { radius } => {
+                if !(radius.is_finite() && radius > 0.0) {
+                    return Err(format!("radius must be positive and finite, got {radius}"));
+                }
+            }
         }
-        assert!(
-            self.linear_velocity.is_finite() && self.angular_velocity.is_finite(),
-            "velocity must be finite, got linear {} and angular {}",
-            self.linear_velocity,
-            self.angular_velocity
-        );
+        if !(self.linear_velocity.is_finite() && self.angular_velocity.is_finite()) {
+            return Err(format!(
+                "velocity must be finite, got linear {} and angular {}",
+                self.linear_velocity, self.angular_velocity
+            ));
+        }
         for (name, value) in [
             ("friction", self.friction),
             ("restitution", self.restitution),
             ("linear damping", self.linear_damping),
             ("angular damping", self.angular_damping),
         ] {
-            assert!(
-                value.is_finite() && value >= 0.0,
-                "{name} must be non-negative and finite, got {value}"
-            );
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(format!(
+                    "{name} must be non-negative and finite, got {value}"
+                ));
+            }
         }
-        assert!(
-            self.position.is_finite(),
-            "position must be finite, got {}",
-            self.position
-        );
-        assert!(
-            self.rotation.is_finite() && self.rotation.is_normalized(),
-            "rotation must be finite and normalized, got {}",
-            self.rotation
-        );
+        if !self.position.is_finite() {
+            return Err(format!("position must be finite, got {}", self.position));
+        }
+        if !(self.rotation.is_finite() && self.rotation.is_normalized()) {
+            return Err(format!(
+                "rotation must be finite and normalized, got {}",
+                self.rotation
+            ));
+        }
+        Ok(())
+    }
+
+    /// Panics on any field that would poison the simulation; see [`PhysicsWorld::spawn_loose`].
+    fn assert_valid(&self) {
+        if let Err(reason) = self.check() {
+            panic!("{reason}");
+        }
     }
 }
 
@@ -253,6 +275,14 @@ impl PhysicsWorld {
     /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
+        let id = LooseId(self.next_loose);
+        self.next_loose += 1;
+        self.insert_loose(id, spawn);
+        id
+    }
+
+    /// Insert the body and collider of an already validated spawn under `id`.
+    fn insert_loose(&mut self, id: LooseId, spawn: &LooseSpawn) {
         let body = RigidBodyBuilder::dynamic()
             .pose(Pose::from_parts(spawn.position, spawn.rotation))
             .linvel(spawn.linear_velocity)
@@ -261,8 +291,6 @@ impl PhysicsWorld {
             .angular_damping(spawn.angular_damping)
             .build();
         let handle = self.rigid_body_set.insert(body);
-        let id = LooseId(self.next_loose);
-        self.next_loose += 1;
         let collider = spawn
             .shape
             .collider()
@@ -279,10 +307,9 @@ impl PhysicsWorld {
             id,
             Loose {
                 body: handle,
-                roll: spawn.shape.roll(),
+                spawn: *spawn,
             },
         );
-        id
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
@@ -307,20 +334,76 @@ impl PhysicsWorld {
         Ok(())
     }
 
-    /// Every live loose object as a record. Read at a tick boundary.
+    /// Every live loose object as a record, ascending id, with the next id the world will
+    /// issue. Read at a tick boundary.
+    ///
+    /// Shape, mass, material and damping are those the object was spawned with; the pose and
+    /// velocities are the body's now.
     pub fn loose_records(&self) -> LooseRecords {
-        todo!("ENG-F50-02: read every loose object as a record")
+        let objects = self
+            .loose
+            .iter()
+            .map(|(&id, loose)| {
+                let body = &self.rigid_body_set[loose.body];
+                LooseRecord {
+                    id,
+                    spawn: LooseSpawn {
+                        position: body.translation(),
+                        rotation: *body.rotation(),
+                        linear_velocity: body.linvel(),
+                        angular_velocity: body.angvel(),
+                        ..loose.spawn
+                    },
+                }
+            })
+            .collect();
+        LooseRecords {
+            next_id: LooseId(self.next_loose),
+            objects,
+        }
     }
 
-    /// Rebuild loose objects from `records`, ready for the next tick.
+    /// Rebuild loose objects from `records`, ready for the next tick; counts no tick.
+    ///
+    /// Every object comes back awake. The line supplies world meshes, gravity and rest slope
+    /// again; they are not in the records.
     ///
     /// # Errors
-    /// Checks every record before inserting any; on error the world is unchanged.
+    /// [`RestoreLooseError::BadId`] if ids do not ascend strictly or reach the next id;
+    /// [`RestoreLooseError::BadSpawn`] if a record fails the checks of
+    /// [`PhysicsWorld::spawn_loose`]. Every record is checked before any is inserted, so on
+    /// error the world is unchanged.
+    ///
     /// # Panics
     /// If the world already holds a loose object or has issued an id.
     pub fn restore_loose(&mut self, records: &LooseRecords) -> Result<(), RestoreLooseError> {
-        let _ = records;
-        todo!("ENG-F50-02: restore loose objects from records")
+        assert!(
+            self.loose.is_empty() && self.next_loose == 0,
+            "restore_loose needs a world that already holds no loose object and has issued no id"
+        );
+        let mut previous: Option<LooseId> = None;
+        for record in &records.objects {
+            let ascends = previous.is_none_or(|last| record.id > last);
+            if !ascends || record.id >= records.next_id {
+                return Err(RestoreLooseError::BadId(record.id));
+            }
+            previous = Some(record.id);
+        }
+        for record in &records.objects {
+            record
+                .spawn
+                .check()
+                .map_err(|reason| RestoreLooseError::BadSpawn {
+                    id: record.id,
+                    reason,
+                })?;
+        }
+        for record in &records.objects {
+            self.insert_loose(record.id, &record.spawn);
+        }
+        self.next_loose = records.next_id.0;
+        self.index_for_queries();
+        Ok(())
     }
 
     /// How many loose objects are alive.
@@ -362,7 +445,8 @@ impl PhysicsWorld {
         let cos_slope = self.rest_slope.cos();
 
         for loose in self.loose.values() {
-            let radius = match loose.roll {
+            let roll = loose.spawn.shape.roll();
+            let radius = match roll {
                 Roll::None => continue,
                 Roll::About { radius } | Roll::Ball { radius } => radius,
             };
@@ -373,7 +457,7 @@ impl PhysicsWorld {
                 continue;
             }
             let (spin, velocity) = (body.angvel(), body.linvel());
-            let (spin, velocity) = if let Roll::Ball { .. } = loose.roll {
+            let (spin, velocity) = if let Roll::Ball { .. } = roll {
                 // A ball rolls about any axis and cannot tip, so all its spin and all its
                 // travel across up is braked.
                 let vertical = up * velocity.dot(up);
