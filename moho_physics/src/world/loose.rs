@@ -2964,4 +2964,20 @@ mod tests {
         assert!(before.is_some(), "a live object has poses");
         assert_eq!(after, None);
     }
+
+    #[test]
+    fn an_id_never_spawned_has_no_poses() {
+        let mut larger = PhysicsWorld::new();
+        let mut smaller = PhysicsWorld::new();
+        larger.spawn_loose(&flat_box_spawn());
+        larger.spawn_loose(&flat_box_spawn());
+        let foreign = larger.spawn_loose(&flat_box_spawn());
+        let own = smaller.spawn_loose(&flat_box_spawn());
+
+        let from_larger_world = smaller.loose_poses(foreign);
+        let beyond_issued = smaller.loose_poses(LooseId::from_raw(own.get() + 1));
+
+        assert_eq!(from_larger_world, None);
+        assert_eq!(beyond_issued, None);
+    }
 }
