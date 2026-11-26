@@ -35,7 +35,7 @@ use moho_ui_shell::{
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::controls::{Capture, ControlsDraft, label};
-use crate::debug_settings::DebugSettings;
+use crate::debug_settings::{DebugSettings, GameRows};
 use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{
@@ -45,7 +45,7 @@ use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
     MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
-    settings_screen,
+    settings_categories_screen, settings_page,
 };
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
@@ -75,6 +75,7 @@ const GUN_HALF: Vec3 = Vec3::new(0.04, 0.04, 0.3);
 const NO_MESH: u32 = u32::MAX;
 /// The window title before any status line is appended.
 pub const WINDOW_TITLE: &str = "Searchlight";
+/// The vertical field of view before a saved one is applied.
 const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
@@ -285,9 +286,13 @@ fn push_quad(
 
 /// Four short bars around the screen centre, drawn as solid rects from a 1x1 white texture,
 /// under the damage edge bars and the death tint when they are showing.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Crosshair {
     texture_sent: bool,
+    /// Opacity of the four bars in percent; at 0 they are not drawn.
+    opacity: i32,
+    /// Vertical field of view in degrees of the view the gap is measured against.
+    fov_degrees: f32,
     dead: bool,
     /// Opacity of the damage bar on each screen edge, indexed front, right, behind, left.
     edges: [u8; 4],
@@ -295,6 +300,20 @@ struct Crosshair {
     hidden: bool,
     /// Half-angle in radians of the cone the next shot leaves in; the gap opens to mark it.
     spread: f32,
+}
+
+impl Default for Crosshair {
+    fn default() -> Self {
+        Self {
+            texture_sent: false,
+            opacity: GameRows::CROSSHAIR_OPACITY_MAX,
+            fov_degrees: FOV_DEGREES,
+            dead: false,
+            edges: [0; 4],
+            hidden: false,
+            spread: 0.0,
+        }
+    }
 }
 
 impl Crosshair {
@@ -318,7 +337,7 @@ impl UiFrameSource for Crosshair {
         }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
-        let gap = Self::gap(self.spread, FOV_DEGREES.to_radians(), size[1]);
+        let gap = Self::gap(self.spread, self.fov_degrees.to_radians(), size[1]);
         let (near, far, half) = (gap, gap + Self::LENGTH, Self::THICKNESS / 2.0);
         let bars = [
             ([cx - far, cy - half], [cx - near, cy + half]),
@@ -344,8 +363,17 @@ impl UiFrameSource for Crosshair {
         if let Some(tint) = hud::death_overlay(self.dead, size_in_pixels) {
             push_quad(&mut vertices, &mut indices, tint.min, tint.max, tint.rgba);
         }
-        for (min, max) in bars {
-            push_quad(&mut vertices, &mut indices, min, max, [255; 4]);
+        if self.opacity > 0 {
+            let alpha = (255.0 * self.opacity as f32 / 100.0).round() as u8;
+            for (min, max) in bars {
+                push_quad(
+                    &mut vertices,
+                    &mut indices,
+                    min,
+                    max,
+                    [255, 255, 255, alpha],
+                );
+            }
         }
         let textures_set = if self.texture_sent {
             Vec::new()
@@ -428,6 +456,8 @@ struct Stage {
     enemies: Vec<EnemyRig>,
     edge_left: [u32; 4],
     crosshair: Arc<Mutex<Crosshair>>,
+    /// Vertical field of view in degrees of every scene drawn.
+    fov_degrees: f32,
     shot_sound: Option<PathBuf>,
     window: Option<Arc<Window>>,
     status: String,
@@ -441,6 +471,18 @@ struct Stage {
 }
 
 impl Stage {
+    /// Draws every scene at `fov` degrees (vertical) and sizes the crosshair's gap for it, and
+    /// gives the crosshair `opacity` percent.
+    fn set_view_rows(&mut self, fov: i32, opacity: i32) {
+        self.fov_degrees = fov as f32;
+        let mut crosshair = self
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        crosshair.fov_degrees = self.fov_degrees;
+        crosshair.opacity = opacity;
+    }
+
     fn set_effects_quality(&mut self, quality: u32) {
         self.scene.effects_mut().set_quality(quality);
     }
@@ -527,6 +569,7 @@ impl Stage {
             enemies: Vec::new(),
             edge_left: [0; 4],
             crosshair: Arc::new(Mutex::new(Crosshair::default())),
+            fov_degrees: FOV_DEGREES,
             shot_sound: None,
             window: None,
             status: String::new(),
@@ -791,7 +834,7 @@ impl Stage {
 
     fn draw(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3)) {
         let aspect = self.aspect();
-        draw_scene(&mut self.scene, renderer, eye, aspect);
+        draw_scene(&mut self.scene, renderer, eye, (self.fov_degrees, aspect));
     }
 
     fn draw_backdrop(&mut self, renderer: &mut dyn RendererBackend) {
@@ -800,21 +843,22 @@ impl Stage {
             &mut self.backdrop,
             renderer,
             (Mat4::IDENTITY, Vec3::ZERO),
-            aspect,
+            (self.fov_degrees, aspect),
         );
     }
 }
 
+/// Draws `scene` from `eye` with a view `fov_degrees` tall and `aspect` wide per tall.
 fn draw_scene(
     scene: &mut Scene,
     renderer: &mut dyn RendererBackend,
     eye: (Mat4, Vec3),
-    aspect: f32,
+    (fov_degrees, aspect): (f32, f32),
 ) {
     renderer.update_lighting(lighting());
     let (view, eye) = eye;
     let projection =
-        glam::camera::rh::proj::directx::perspective(FOV_DEGREES.to_radians(), aspect, NEAR, FAR);
+        glam::camera::rh::proj::directx::perspective(fov_degrees.to_radians(), aspect, NEAR, FAR);
     let no_actors: &[NoActor] = &[];
     if let Err(error) = scene.render(
         renderer,
@@ -979,14 +1023,21 @@ impl SearchlightGame {
             match event {
                 MenuEvent::Chosen(MenuAction::Play | MenuAction::Resume) => self.enter_play(),
                 MenuEvent::Chosen(MenuAction::Settings) => {
+                    self.stage
+                        .shell()
+                        .menu_mut()
+                        .push(settings_categories_screen());
+                }
+                MenuEvent::Chosen(MenuAction::Page(page)) => {
                     let settings = self.debug_settings.as_ref().map_or_else(
                         || EngineSettings::from_prefs(&Prefs::default()),
                         |saved| EngineSettings::from_prefs(saved.prefs()),
                     );
+                    let rows = self.game_rows();
                     self.stage
                         .shell()
                         .menu_mut()
-                        .push(settings_screen(settings, self.head_bob));
+                        .push(settings_page(page, settings, &rows));
                 }
                 MenuEvent::Chosen(MenuAction::Controls) => {
                     let draft = ControlsDraft::new(self.input.bindings());
@@ -1009,12 +1060,7 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Cancel) => self.answer_conflict(false),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
-                MenuEvent::GameSettingsApplied(values) => {
-                    if let Some(&percent) = values.get(HeadBobLevel::KEY) {
-                        self.head_bob = HeadBobLevel::nearest(percent);
-                        self.save_head_bob();
-                    }
-                }
+                MenuEvent::GameSettingsApplied(values) => self.game_settings_applied(&values),
                 MenuEvent::MoveRequested {
                     item: MenuAction::Item(id),
                     from,
@@ -1119,6 +1165,53 @@ impl SearchlightGame {
         self.input = build_action_map(bindings, &prefs);
     }
 
+    /// The game rows as the game holds them now.
+    fn game_rows(&self) -> GameRows {
+        let (fov, opacity) = {
+            let crosshair = self
+                .stage
+                .crosshair
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            (self.stage.fov_degrees as i32, crosshair.opacity)
+        };
+        GameRows {
+            fov,
+            crosshair_opacity: opacity,
+            head_bob: self.head_bob,
+        }
+    }
+
+    /// Makes `rows` live.
+    fn apply_game_rows(&mut self, rows: GameRows) {
+        self.head_bob = rows.head_bob;
+        self.stage.set_view_rows(rows.fov, rows.crosshair_opacity);
+    }
+
+    /// Applies and saves the game rows a page sent. A row the page does not carry keeps the
+    /// value the game holds; a failed save warns and the values stay for the session.
+    fn game_settings_applied(&mut self, values: &BTreeMap<String, i32>) {
+        let mut rows = self.game_rows();
+        if let Some(&fov) = values.get(GameRows::FOV_KEY) {
+            rows.fov = fov.clamp(GameRows::FOV_MIN, GameRows::FOV_MAX);
+        }
+        if let Some(&opacity) = values.get(GameRows::CROSSHAIR_OPACITY_KEY) {
+            rows.crosshair_opacity = opacity.clamp(
+                GameRows::CROSSHAIR_OPACITY_MIN,
+                GameRows::CROSSHAIR_OPACITY_MAX,
+            );
+        }
+        if let Some(&percent) = values.get(HeadBobLevel::KEY) {
+            rows.head_bob = HeadBobLevel::nearest(percent);
+        }
+        self.apply_game_rows(rows);
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_game_rows(rows)
+        {
+            tracing::warn!(%error, "game settings not saved");
+        }
+    }
+
     /// Saves the head bob; a failed save warns and the value stays for the session.
     fn save_head_bob(&mut self) {
         if let Some(saved) = &mut self.debug_settings
@@ -1160,7 +1253,7 @@ impl SearchlightGame {
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
         self.simple = settings.simple();
-        self.head_bob = settings.head_bob();
+        self.apply_game_rows(settings.game_rows());
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -4609,10 +4702,9 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        // Back is the last of Settings' sixteen rows; Up wraps to it and scrolls it into the
-        // last of the ten rows that fit at 720 points.
+        // Back is the last of the categories' seven rows, which all fit at 720 points.
         press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
-        let back = [640.0, 588.0];
+        let back = [640.0, 528.0];
         click_at(&mut game, &mut ctx, back);
         game.event(&mut ctx, motion());
 
@@ -5189,6 +5281,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
         focus_head_bob_slider(&game);
         press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 10]);
         focus_apply(&game);
@@ -5300,6 +5393,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut relaunched, &mut ctx);
+        choose_page(&mut relaunched, &mut ctx, "Game");
 
         assert_eq!(relaunched.head_bob, head_bob_level(25));
         assert_eq!(head_bob_on_the_settings_screen(&relaunched), Some(25));
@@ -5313,6 +5407,7 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
         focus_head_bob_slider(&game);
         press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 5]);
         focus_apply(&game);
@@ -5320,6 +5415,7 @@ mod tests {
 
         let mut relaunched = relaunched(&path);
         open_settings(&mut relaunched, &mut ctx);
+        choose_page(&mut relaunched, &mut ctx, "Game");
 
         assert_eq!(game.head_bob, head_bob_level(25));
         assert_eq!(relaunched.head_bob, head_bob_level(25));
@@ -5334,14 +5430,18 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
         focus_head_bob_slider(&game);
         press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 10]);
 
         focus_back(&game);
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
         let after_back = (title(&game), game.head_bob);
         let saved_by_back = path.exists();
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        choose_page(&mut game, &mut ctx, "Game");
         let reopened = head_bob_on_the_settings_screen(&game);
 
         assert_eq!(after_back, (None, head_bob_level(50)));
@@ -5358,6 +5458,7 @@ mod tests {
         type_into_console(&game, "head_bob 30");
         game.command();
         open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
 
         assert_eq!(game.head_bob, head_bob_level(30));
         assert_eq!(head_bob_on_the_settings_screen(&game), Some(30));
@@ -5463,6 +5564,454 @@ mod tests {
         assert_eq!(game.head_bob, head_bob_level(25));
         let (saved, _) = Prefs::load_from(&path);
         assert_eq!(saved.game_value("head_bob"), Some("25"));
+    }
+
+    /// Opens the Settings page labelled `page` from the categories screen.
+    fn choose_page(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, page: &str) {
+        focus_row(
+            game,
+            page,
+            |item| matches!(item, MenuItem::Button { label, .. } if label == page),
+        );
+        press_keys(game, ctx, &[Key::Enter]);
+        assert_eq!(title(game).as_deref(), Some(page));
+    }
+
+    fn focus_engine_row(game: &SearchlightGame, setting: moho_ui_shell::EngineSetting) {
+        focus_row(game, setting.label(), |item| {
+            *item == MenuItem::Setting(setting)
+        });
+    }
+
+    fn focus_game_slider(game: &SearchlightGame, key: &str) {
+        focus_row(
+            game,
+            key,
+            |item| matches!(item, MenuItem::GameSlider(slider) if slider.key == key),
+        );
+    }
+
+    /// The engine settings the top screen stages.
+    fn staged_settings(game: &SearchlightGame) -> EngineSettings {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen.settings.expect("the page stages engine settings")
+    }
+
+    fn game_with_prefs(prefs: Prefs, path: &std::path::Path) -> SearchlightGame {
+        quiet_menu_game().with_debug_settings(DebugSettings::new(prefs, path.to_path_buf()))
+    }
+
+    /// Records the projection of every frame begun; the draw calls do nothing.
+    #[derive(Default)]
+    struct ProjectionRenderer {
+        projections: Vec<Mat4>,
+    }
+
+    impl RendererBackend for ProjectionRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            camera: (Mat4, Mat4, Vec3),
+        ) -> Result<(), moho_renderer::FrameError> {
+            self.projections.push(camera.1);
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    /// The vertical field of view, in degrees, the game's next arena frame is drawn with.
+    fn drawn_fov_degrees(game: &mut SearchlightGame) -> f32 {
+        let mut renderer = ProjectionRenderer::default();
+        game.stage.draw(&mut renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        let projection = renderer.projections.pop().expect("a frame began");
+        (1.0 / projection.y_axis.y).atan().to_degrees() * 2.0
+    }
+
+    #[test]
+    fn settings_opens_on_the_six_categories_in_order() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        open_settings(&mut game, &mut ctx);
+
+        assert_eq!(
+            labels(&game),
+            [
+                "Controls", "Mouse", "Audio", "Graphics", "Display", "Game", "Back"
+            ]
+        );
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("Settings is open");
+        assert_eq!(screen.items.len(), 7, "no setting row is shown yet");
+        assert_eq!(screen.settings, None);
+    }
+
+    #[test]
+    fn back_from_a_page_without_apply_leaves_the_saved_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        *prefs.music_volume_mut() = 4.0;
+        let mut game = game_with_prefs(prefs, &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Audio");
+        focus_engine_row(&game, moho_ui_shell::EngineSetting::MusicVolume);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::ArrowRight]);
+
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let after_back = title(&game);
+        choose_page(&mut game, &mut ctx, "Audio");
+
+        assert_eq!(after_back.as_deref(), Some("Settings"));
+        assert_eq!(staged_settings(&game).music_volume, 4.0);
+        let saved = game.debug_settings.as_ref().unwrap().prefs();
+        assert_eq!(saved.music_volume(), 4.0);
+        assert!(!path.exists(), "nothing was applied, so nothing was saved");
+    }
+
+    #[test]
+    fn applying_mouse_leaves_graphics_values_as_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_shadow_quality(1);
+        prefs.set_ssao_quality(2);
+        prefs.set_effects_quality(1);
+        let mut game = game_with_prefs(prefs, &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let before = staged_sensitivity(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Mouse");
+        focus_engine_row(&game, moho_ui_shell::EngineSetting::MouseSensitivity);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight; 5]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        choose_page(&mut game, &mut ctx, "Graphics");
+
+        let shown = staged_settings(&game);
+        assert_eq!(
+            (
+                shown.shadow_quality,
+                shown.ssao_quality,
+                shown.effects_quality
+            ),
+            (1, 2, 1)
+        );
+        assert!(shown.mouse_sensitivity > before, "the Mouse apply is kept");
+        let (reloaded, _) = Prefs::load_from(&path);
+        assert_eq!(
+            (
+                reloaded.shadow_quality(),
+                reloaded.ssao_quality(),
+                reloaded.effects_quality()
+            ),
+            (1, 2, 1)
+        );
+        assert!(reloaded.mouse_sensitivity() > before);
+    }
+
+    /// The sensitivity the Mouse page starts from, leaving Settings on its categories.
+    fn staged_sensitivity(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) -> f32 {
+        open_settings(game, ctx);
+        choose_page(game, ctx, "Mouse");
+        let sensitivity = staged_settings(game).mouse_sensitivity;
+        focus_back(game);
+        press_keys(game, ctx, &[Key::Enter]);
+        sensitivity
+    }
+
+    #[test]
+    fn escape_on_a_page_returns_to_the_categories() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Audio");
+
+        press_keys(&mut game, &mut ctx, &[Key::Escape]);
+
+        assert_eq!(title(&game).as_deref(), Some("Settings"));
+        assert_eq!(
+            labels(&game),
+            [
+                "Controls", "Mouse", "Audio", "Graphics", "Display", "Game", "Back"
+            ]
+        );
+    }
+
+    #[test]
+    fn applied_field_of_view_sets_the_projection_and_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut game = game_with_prefs(Prefs::default(), &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let before = drawn_fov_degrees(&mut game);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Display");
+        focus_game_slider(&game, "fov");
+
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 15]);
+        let unapplied = drawn_fov_degrees(&mut game);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        assert!(
+            (before - 75.0).abs() < 1e-3,
+            "starts at 75 degrees: {before}"
+        );
+        assert!((unapplied - 75.0).abs() < 1e-3, "unapplied: {unapplied}");
+        let applied = drawn_fov_degrees(&mut game);
+        assert!((applied - 60.0).abs() < 1e-3, "applied: {applied}");
+        let (reloaded, _) = Prefs::load_from(&path);
+        assert_eq!(reloaded.game_value("fov"), Some("60"));
+        let mut relaunched = relaunched(&path);
+        let after_relaunch = drawn_fov_degrees(&mut relaunched);
+        assert!(
+            (after_relaunch - 60.0).abs() < 1e-3,
+            "after a relaunch: {after_relaunch}"
+        );
+    }
+
+    #[test]
+    fn applying_display_keeps_the_crosshair_opacity_and_head_bob() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("crosshair_opacity", "40").unwrap();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let mut game = game_with_prefs(prefs, &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Display");
+        focus_game_slider(&game, "fov");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 5]);
+
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        let (reloaded, _) = Prefs::load_from(&path);
+        assert_eq!(reloaded.game_value("fov"), Some("70"));
+        assert_eq!(reloaded.game_value("crosshair_opacity"), Some("40"));
+        assert_eq!(reloaded.game_value("head_bob"), Some("25"));
+        assert_eq!(game.head_bob, head_bob_level(25));
+    }
+
+    #[test]
+    fn applying_game_saves_the_crosshair_opacity_and_keeps_the_field_of_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("fov", "60").unwrap();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let mut game = game_with_prefs(prefs, &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Game");
+        focus_game_slider(&game, "crosshair_opacity");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 3]);
+
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        let (reloaded, _) = Prefs::load_from(&path);
+        assert_eq!(reloaded.game_value("crosshair_opacity"), Some("70"));
+        assert_eq!(reloaded.game_value("fov"), Some("60"));
+        assert_eq!(reloaded.game_value("head_bob"), Some("25"));
+        assert_eq!(game.head_bob, head_bob_level(25));
+        let drawn = drawn_fov_degrees(&mut game);
+        assert!((drawn - 60.0).abs() < 1e-3, "the view stays at 60: {drawn}");
+    }
+
+    #[test]
+    fn crosshair_at_zero_opacity_draws_no_bars_but_keeps_edge_bars() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut hidden_prefs = Prefs::default();
+        hidden_prefs
+            .set_game_value("crosshair_opacity", "0")
+            .unwrap();
+        let hidden = game().with_debug_settings(DebugSettings::new(hidden_prefs, path.clone()));
+        let shown = game().with_debug_settings(DebugSettings::new(Prefs::default(), path));
+        let frame_of = |game: &SearchlightGame| {
+            let mut crosshair = game.stage.crosshair.lock().unwrap();
+            crosshair.dead = true;
+            crosshair.edges = [100, 0, 0, 0];
+            crosshair.ui_frame([800, 600]).expect("a frame")
+        };
+
+        let without_bars = frame_of(&hidden);
+        let with_bars = frame_of(&shown);
+
+        let [r, g, b] = EDGE_RGB;
+        let mesh = &without_bars.meshes[0];
+        assert_eq!(
+            mesh.vertices.len(),
+            8,
+            "the edge bar and the death tint, no crosshair bars"
+        );
+        assert_eq!(mesh.indices.len(), 12);
+        assert!(mesh.vertices[..4].iter().all(|v| v.color == [r, g, b, 100]));
+        assert_eq!(
+            with_bars.meshes[0].vertices.len(),
+            24,
+            "at full opacity the bars show"
+        );
+    }
+
+    #[test]
+    fn crosshair_bars_scale_their_alpha_with_the_opacity_and_keep_white() {
+        let bar_colors = |opacity: i32| {
+            let mut crosshair = Crosshair {
+                opacity,
+                ..Crosshair::default()
+            };
+            let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+            frame.meshes[0]
+                .vertices
+                .iter()
+                .map(|vertex| vertex.color)
+                .collect::<Vec<_>>()
+        };
+
+        for (opacity, alpha) in [(100, 255), (50, 128), (10, 26)] {
+            let colors = bar_colors(opacity);
+
+            assert_eq!(colors.len(), 16, "opacity {opacity}");
+            assert!(
+                colors.iter().all(|&color| color == [255, 255, 255, alpha]),
+                "opacity {opacity}: {colors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_saved_field_of_view_draws_the_first_frame_and_sizes_the_crosshair_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("fov", "50").unwrap();
+        let mut saved = game().with_debug_settings(DebugSettings::new(prefs, path.clone()));
+        let mut default = game().with_debug_settings(DebugSettings::new(Prefs::default(), path));
+        let spread = 0.05_f32;
+        let first_bar_left = |game: &SearchlightGame| {
+            let mut crosshair = game.stage.crosshair.lock().unwrap();
+            crosshair.spread = spread;
+            let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+            frame.meshes[0].vertices[0].pos[0]
+        };
+
+        let drawn_saved = drawn_fov_degrees(&mut saved);
+        let drawn_default = drawn_fov_degrees(&mut default);
+        let saved_left = first_bar_left(&saved);
+        let default_left = first_bar_left(&default);
+
+        assert!((drawn_saved - 50.0).abs() < 1e-3, "saved: {drawn_saved}");
+        assert!(
+            (drawn_default - 75.0).abs() < 1e-3,
+            "default: {drawn_default}"
+        );
+        let left_at =
+            |fov: f32| 400.0 - Crosshair::gap(spread, fov.to_radians(), 600.0) - Crosshair::LENGTH;
+        assert!((saved_left - left_at(50.0)).abs() < 1e-3, "{saved_left}");
+        assert!(
+            (default_left - left_at(75.0)).abs() < 1e-3,
+            "{default_left}"
+        );
+        assert!(
+            saved_left < default_left,
+            "a narrower view opens the gap wider"
+        );
+    }
+
+    #[test]
+    fn applying_the_game_page_after_display_keeps_the_applied_field_of_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, path) = settings_in(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("crosshair_opacity", "40").unwrap();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let mut game = game_with_prefs(prefs, &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        choose_page(&mut game, &mut ctx, "Display");
+        focus_game_slider(&game, "fov");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 5]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let after_display = Prefs::load_from(&path).0;
+
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        choose_page(&mut game, &mut ctx, "Game");
+        focus_game_slider(&game, "crosshair_opacity");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 2]);
+        focus_game_slider(&game, "head_bob");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight; 2]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let after_game = Prefs::load_from(&path).0;
+
+        let stored = |prefs: &Prefs| {
+            ["fov", "crosshair_opacity", "head_bob"]
+                .map(|key| prefs.game_value(key).map(str::to_owned))
+        };
+        assert_eq!(
+            stored(&after_display),
+            [Some("70"), Some("40"), Some("25")].map(|value| value.map(str::to_owned)),
+            "a Display apply writes the other rows as they were"
+        );
+        assert_eq!(
+            stored(&after_game),
+            [Some("70"), Some("20"), Some("35")].map(|value| value.map(str::to_owned))
+        );
+        let drawn = drawn_fov_degrees(&mut game);
+        assert!((drawn - 70.0).abs() < 1e-3, "live view: {drawn}");
+        assert_eq!(game.head_bob, head_bob_level(35));
     }
 
     #[test]
@@ -6334,7 +6883,11 @@ mod menu_tests {
                 settings,
                 (
                     Some("Settings".to_owned()),
-                    ["Controls", "Back"].map(String::from).to_vec()
+                    [
+                        "Controls", "Mouse", "Audio", "Graphics", "Display", "Game", "Back"
+                    ]
+                    .map(String::from)
+                    .to_vec()
                 )
             );
             assert_eq!(after_back.0, None);
@@ -6598,8 +7151,34 @@ mod settings_tests {
         setting: EngineSetting,
         keys: &[Key],
     ) {
+        show_page_of(game, ctx, setting);
         focus_item(game, &MenuItem::Setting(setting));
         press_keys(game, ctx, keys);
+    }
+
+    /// Opens the Settings page `setting` is on, going back to the categories first when another
+    /// page is open; that page's unapplied changes are discarded.
+    fn show_page_of(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        setting: EngineSetting,
+    ) {
+        let page = crate::menu::page_of(setting);
+        if title(game).as_deref() == Some(page.label()) {
+            return;
+        }
+        if title(game).as_deref() != Some("Settings") {
+            click_back(game, ctx);
+        }
+        focus_item(
+            game,
+            &MenuItem::Button {
+                label: page.label().to_owned(),
+                action: MenuAction::Page(page),
+            },
+        );
+        press_keys(game, ctx, &[Key::Enter]);
+        assert_eq!(title(game).as_deref(), Some(page.label()));
     }
 
     fn click_apply(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
@@ -6667,23 +7246,20 @@ mod settings_tests {
         let mut ctx = EventContext::new(&clock, None, None);
 
         open_settings_from_main_menu(&mut game, &mut ctx);
+        show_page_of(&mut game, &mut ctx, EngineSetting::MouseSensitivity);
 
         let mut shell = game.stage.shell();
-        let screen = shell.menu_mut().top().expect("Settings is open");
-        let mut expected: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
-            .into_iter()
-            .map(MenuItem::Setting)
-            .collect();
-        expected.push(crate::menu::head_bob_row(HeadBobLevel::DEFAULT));
-        expected.push(MenuItem::Apply);
-        expected.push(MenuItem::Button {
-            label: "Controls".to_owned(),
-            action: MenuAction::Controls,
-        });
-        expected.push(back_button());
+        let screen = shell.menu_mut().top().expect("Mouse is open");
+        let expected = vec![
+            MenuItem::Setting(EngineSetting::MouseSensitivity),
+            MenuItem::Setting(EngineSetting::MouseSmoothing),
+            MenuItem::Setting(EngineSetting::InvertMouseY),
+            MenuItem::Apply,
+            back_button(),
+        ];
         assert_eq!(
             screen.items, expected,
-            "the twelve rows, Head bob, Apply, Controls and Back"
+            "the three mouse rows, Apply and Back"
         );
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(
@@ -6913,6 +7489,8 @@ mod settings_tests {
             EngineSetting::SsaoQuality,
             &[Key::ArrowLeft],
         );
+        let before_apply = renderer.shadow.len();
+        click_apply(&mut game, &mut ctx);
         change(
             &mut game,
             &mut ctx,
@@ -6925,7 +7503,6 @@ mod settings_tests {
             EngineSetting::Resolution,
             &[Key::ArrowRight],
         );
-        let before_apply = renderer.shadow.len();
         click_apply(&mut game, &mut ctx);
         let applied = run_frame(&mut game, &mut renderer);
         let after = run_frame(&mut game, &mut renderer);
@@ -6965,9 +7542,11 @@ mod settings_tests {
         );
 
         click_back(&mut game, &mut ctx);
+        click_back(&mut game, &mut ctx);
         let after_back = (title(&game), game_prefs(&game).window_mode());
         let saved_by_back = path.exists();
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        show_page_of(&mut game, &mut ctx, EngineSetting::ShadowQuality);
         let reopened = {
             let mut shell = game.stage.shell();
             shell.menu_mut().top().and_then(|screen| screen.settings)
@@ -7012,10 +7591,11 @@ mod settings_tests {
         let paused_by_event = ctx.requested_paused();
         let applied_frame = run_frame(&mut game, &mut renderer);
         click_back(&mut game, &mut ctx);
+        click_back(&mut game, &mut ctx);
         let after_back = (game.screen, labels(&game));
         let back_frame = run_frame(&mut game, &mut renderer);
 
-        assert_eq!(after_apply, (Screen::Paused, Some("Settings".to_owned())));
+        assert_eq!(after_apply, (Screen::Paused, Some("Audio".to_owned())));
         assert_eq!(paused_by_event, Some(true));
         assert_eq!(applied_frame.paused, Some(true));
         assert_eq!(

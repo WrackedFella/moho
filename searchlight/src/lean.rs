@@ -1,11 +1,12 @@
 //! View maths for a lean: the sideways eye offset and the rolled view matrix.
 
 use glam::{Mat4, Quat, Vec3};
+use moho_core::sim_math;
 
 /// The horizontal eye offset for a lean of `shift` metres (positive right) at `yaw`.
 /// Right is `-X` at yaw 0.
 pub fn lean_offset(yaw: f32, shift: f32) -> Vec3 {
-    let (sin, cos) = yaw.sin_cos();
+    let (sin, cos) = sim_math::sin_cos(yaw);
     Vec3::new(-cos, 0.0, sin) * shift
 }
 
