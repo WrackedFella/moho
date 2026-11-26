@@ -3898,4 +3898,73 @@ mod tests {
             assert_eq!(back, spawn, "{name}");
         }
     }
+
+    #[test]
+    fn a_restored_list_keeps_the_saved_ids_and_a_new_spawn_follows_it() {
+        let shapes = [
+            cuboid(FLAT_BOX),
+            LooseShape::Sphere { radius: 0.2 },
+            CAPSULE,
+        ];
+        let spawns: Vec<LooseSpawn> = shapes
+            .iter()
+            .enumerate()
+            .map(|(i, &shape)| LooseSpawn {
+                position: Vec3::new(i as f32 + 0.5, 1.0 + i as f32, -2.0),
+                rotation: Quat::from_axis_angle(
+                    Vec3::new(1.0, 2.0, 3.0).normalize(),
+                    0.3 + i as f32,
+                ),
+                linear_velocity: Vec3::new(0.5 * i as f32, -1.0, 2.0),
+                angular_velocity: Vec3::new(0.1, 0.2 * i as f32, 0.3),
+                ..LooseSpawn::new(shape, 1.0)
+            })
+            .collect();
+        let saved = records(
+            12,
+            vec![
+                record(2, spawns[0]),
+                record(5, spawns[1]),
+                record(9, spawns[2]),
+            ],
+        );
+        let mut world = PhysicsWorld::new();
+        world.restore_loose(&saved).expect("the records restore");
+
+        let before = listed(&world);
+        let issued = world.spawn_loose(&valid_spawn());
+        let after = listed(&world);
+
+        let ids: Vec<u64> = before.iter().map(|(id, _)| id.get()).collect();
+        assert_eq!(ids, vec![2, 5, 9]);
+        for ((_, state), spawn) in before.iter().zip(&spawns) {
+            assert_eq!(state.shape, spawn.shape);
+            assert_eq!(state.position, spawn.position);
+            assert_eq!(state.rotation, spawn.rotation);
+            assert_eq!(state.linear_velocity, spawn.linear_velocity);
+            assert_eq!(state.angular_velocity, spawn.angular_velocity);
+            assert!(!state.asleep);
+        }
+        assert_eq!(issued.get(), 12);
+        let ids: Vec<u64> = after.iter().map(|(id, _)| id.get()).collect();
+        assert_eq!(ids, vec![2, 5, 9, 12]);
+    }
+
+    #[test]
+    fn a_removal_neither_shifts_the_list_nor_frees_an_id() {
+        let sphere = LooseShape::Sphere { radius: 0.2 };
+        let mut world = PhysicsWorld::new();
+        let a = world.spawn_loose(&LooseSpawn::new(cuboid(FLAT_BOX), 1.0));
+        let b = world.spawn_loose(&LooseSpawn::new(sphere, 1.0));
+        world.remove_loose(a).expect("the object is alive");
+
+        let c = world.spawn_loose(&LooseSpawn::new(CAPSULE, 1.0));
+
+        assert_eq!(c.get(), 2);
+        let list = listed(&world);
+        let ids: Vec<LooseId> = list.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec![b, c]);
+        assert_eq!(list[0].1.shape, sphere);
+        assert_eq!(list[1].1.shape, CAPSULE);
+    }
 }
