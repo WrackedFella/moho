@@ -131,7 +131,7 @@ pub struct SearchlightCommand {
     pub fire: bool,
     /// Reload was pressed this tick; on a key that also carries a hold, that is a tap's release.
     pub reload: bool,
-    /// Check magazine was pressed this tick.
+    /// Check magazine was pressed this tick; on a key that also carries a hold, that is a tap's release.
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,
@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn c_still_checks_on_press() {
+    fn a_c_tap_checks_the_magazine_on_release() {
         let mut map = fresh_map();
         map.key(Key::C, true);
         let down = SearchlightCommand::from_frame(&map.end_tick());
