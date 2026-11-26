@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 use moho_core::rng::{SimRng, StreamId};
+use moho_core::sim_math::sin_cos;
 use moho_level::NavMesh;
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterHandle, CharacterSpawn, CharacterState, HitVolume,
@@ -660,7 +661,9 @@ impl SearchlightSim {
             .iter()
             .position(|&p| p == part)
             .expect("BodyPart::ALL lists every part");
-        state.position + Quat::from_rotation_y(state.yaw) * self.leaned_volumes[slot].offset
+        let (sin, cos) = sin_cos(state.yaw / 2.0);
+        let facing = Quat::from_xyzw(0.0, sin, 0.0, cos);
+        state.position + facing * self.leaned_volumes[slot].offset
     }
 
     /// Where the enemies aim: the chosen part of the player's body as it stands now.
