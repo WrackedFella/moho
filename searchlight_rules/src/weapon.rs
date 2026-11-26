@@ -20,8 +20,6 @@ pub enum FireBehaviour {
 pub struct RifleDef {
     /// The magazine well the rifle takes.
     pub well: MagazineWell,
-    /// Damage of one hit.
-    pub damage: u32,
     /// How a pull becomes shots.
     pub fire: FireBehaviour,
     /// Ticks between one shot and the next allowed pull.
@@ -41,7 +39,6 @@ mod tests {
     fn valid() -> serde_json::Value {
         json!({
             "well": "rifle",
-            "damage": 30,
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
@@ -57,7 +54,6 @@ mod tests {
             rifle,
             RifleDef {
                 well: MagazineWell::new("rifle"),
-                damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,
@@ -74,6 +70,23 @@ mod tests {
         let error = serde_json::from_value::<RifleDef>(value).unwrap_err();
 
         assert!(error.to_string().contains("range"), "{error}");
+    }
+
+    #[test]
+    fn a_rifle_that_still_names_damage_is_refused() {
+        let value = json!({
+            "well": "rifle",
+            "damage": 30,
+            "fire": "semi_auto",
+            "cooldown_ticks": 6,
+            "reload_ticks": 120,
+            "charge_ticks": 30
+        });
+
+        let error = serde_json::from_value::<RifleDef>(value)
+            .expect_err("damage belongs to the round, not the weapon");
+
+        assert!(error.to_string().contains("damage"), "{error}");
     }
 
     #[test]

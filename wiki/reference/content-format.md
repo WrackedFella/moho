@@ -20,7 +20,6 @@ condition = 100
 
 [rifle.weapon]
 well = "rifle"
-damage = 30
 fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
@@ -34,7 +33,7 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 [round_rifle_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0, damage = 30 }
 ```
 
 `searchlight` keeps its base root at `searchlight/content/` (`searchlight::content_root`).
@@ -81,9 +80,9 @@ Item sections (`ItemKind`), each valid only on its class:
 
 | Section | Class | Fields |
 |---|---|---|
-| `weapon` | `weapon` | `well`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty); `searchlight_rules::RifleDef`. A weapon that still names a `range` is refused: a round's reach comes from its flight |
+| `weapon` | `weapon` | `well`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty); `searchlight_rules::RifleDef`. A weapon that still names a `range` or a `damage` is refused: a round's reach comes from its flight and its damage from the round |
 | `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity` |
-| `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, above `MIN_SPEED` = 100), `drag` (1/s, 0 or more); both required, a bad value fails the load naming the round and the field; `searchlight_rules::RoundSpec` |
+| `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, above `MIN_SPEED` = 100), `drag` (1/s, 0 or more), `damage` (at least 1: the hit's damage at muzzle velocity, scaled down in proportion to the speed the round arrives at, never below 1); all required, a bad value fails the load naming the round and the field; `searchlight_rules::RoundSpec` |
 | `rig` | `gear` | `magazine_slots` |
 
 A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a

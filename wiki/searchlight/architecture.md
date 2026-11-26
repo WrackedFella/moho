@@ -42,7 +42,7 @@ flowchart LR
 | `arena` | Loads a level file (`assets/arena.glb` by default) through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes and their glTF material names, spawns, route, cover points, controls, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) from the level meshes and the control posts, and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left. A level with no enemy spawn skips both failures: a navmesh error leaves an empty `NavMesh` and sets `nav_fallback`, and the route check does not run. `control_NN` markers become `ArenaControl`s (action plus a post mesh), and a marker with a missing or unlisted `action` fails with `ArenaError::BadControl`; optional `menu_camera_NN` markers become `Arena::menu_cameras` (`MenuCamera`: the marker's position as the eye, its rotation of +Z as the view direction, roll ignored), in numeric order of `NN`, and a non-numeric or repeated `NN` fails with `ArenaError::BadMenuCamera` |
 | `control` | `ControlAction` (`NextWave`): what a placed control does when used. `parse` maps a marker's `action` value to one; `honored_from(slot)` allows a host action only from slot 0 |
 | `kit` | `kit::load(roots, START_KIT_ID)`: loads `items` and `kits` through the content roots and resolves the `start` kit into a `searchlight_rules::Kit` (weapon numbers plus a ready `Loadout`); `KitLoadError` separates content errors from an invalid kit |
-| `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon, the rounds' ballistics from the kit, and the player's `Loadout` from the kit |
+| `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon, the rounds' ballistics and damage from the kit, and the player's `Loadout` from the kit |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `CheckGear` (hold C) sets `SearchlightCommand::check_gear` while held past the hold threshold, and a tap of C still checks the magazine; `Use` (default F) sets `SearchlightCommand::use_pressed` on the tick it goes down; `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure maths the game and sim share, with `lean_offset` taking its trig from `moho_core::sim_math` ([posture](#8-posture)) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
@@ -65,7 +65,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, magazine size) and its rounds' muzzle velocity and drag load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (cooldown, reload, charge, magazine size) and its rounds' muzzle velocity, drag and damage load from
 `content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -189,7 +189,7 @@ Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, 
 
 A player's shot is a round in flight ([ADR-0033](../../_todo/adr/0033-rounds-fly-as-stepped-segments.md)).
 Pulling the trigger on `Shot::Fired(round)` pushes a `round::RoundInFlight` (a `searchlight_rules::Flight`
-from the leaned eye along the view, the round's `Ballistics`, the shooter and where it stood). Each later tick
+from the leaned eye along the view, the round's `Ballistics` and `damage`, the shooter and where it stood). Each later tick
 `round::step_round` steps it once (`Flight::step`: semi-implicit Euler, linear drag, gravity from
 `GravityScale::gravity`, only correctly rounded IEEE operations) and casts the segment from the old
 position to the new one through the route below. A round ends on a strike, at or below `MIN_SPEED`, or
@@ -237,7 +237,7 @@ Each ray or step segment goes through one route:
 1. `ShotRay` from the eye (or the step's start) with range and the shooter's `CharacterHandle` as `ignore`.
 2. `PhysicsWorld::cast_ray` returns the first collider hit and its `HitTag`.
 3. `SurfaceTag::try_from` decodes the tag; an unknown tag is logged and counts as a miss.
-4. A `Part` strike (dummy or enemy) or a `Player` strike applies damage through `Body` in `searchlight_rules`.
+4. A `Part` strike (dummy or enemy) or a `Player` strike applies damage through `Body` in `searchlight_rules`. A player's round does the round's `damage` scaled by `arrival_damage` to the speed it arrives at (never above its damage, never below 1); under Simple the full `damage`.
 
 Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, with
 `part_index` the position in `PARTS`; `Player(part)` is `PLAYER_BASE + part_index`, with

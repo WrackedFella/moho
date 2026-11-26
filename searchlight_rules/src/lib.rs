@@ -20,7 +20,7 @@ mod weapon;
 pub use accuracy::{Accuracy, AccuracyTuning, disc_offset};
 pub use ballistics::{
     Ballistics, Flight, FlightBounds, GravityScale, GravityScaleError, MAX_GRAVITY_SCALE,
-    MIN_SPEED, STANDARD_GRAVITY,
+    MIN_SPEED, RoundStats, STANDARD_GRAVITY, arrival_damage,
 };
 pub use body::{Body, BodyPart, BodyProfile, HitReport};
 pub use grade::{Grade, GradeDials, UnknownGrade};
