@@ -207,6 +207,14 @@ pub enum Region {
     From(usize),
 }
 
+/// One node of an aim chain and its share of the aim pitch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AimLink {
+    /// Index into [`Model::nodes`].
+    pub node: usize,
+    pub share: f32,
+}
+
 /// A running action: its player and the nodes it poses.
 #[derive(Clone, Debug, PartialEq)]
 struct Action {
@@ -403,6 +411,17 @@ impl Animator {
             region,
         });
         Ok(())
+    }
+
+    /// Replace the aim chain. Not implemented yet.
+    pub fn set_aim_chain(&mut self, _links: impl IntoIterator<Item = AimLink>) {}
+
+    /// Hold the aim pitch in radians. Not implemented yet.
+    pub fn set_aim_pitch(&mut self, _radians: f32) {}
+
+    /// The held aim pitch in radians. Not implemented yet.
+    pub fn aim_pitch(&self) -> f32 {
+        0.0
     }
 
     /// Drop the action; the pose is the base's from now on.

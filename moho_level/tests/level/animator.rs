@@ -4,8 +4,13 @@
 use std::num::NonZeroU32;
 
 use glam::Affine3A;
+use glam::{Mat3A, Quat, Vec3};
+use moho_level::Assembly;
+use moho_level::anim::AimLink;
 use moho_level::anim::{Animator, ClipError, ClipPlayer, Playback, Pose, Region};
+use moho_level::humanoid::{Bone, Humanoid};
 use moho_level::{Model, load_model};
+use moho_physics::{HitTag, HitVolume, PhysicsWorld, RayQuery};
 use tempfile::TempDir;
 
 use crate::support::humanoid::{HumanoidSpec, RELOAD_DURATION, write_humanoid};
@@ -540,4 +545,457 @@ fn cancelling_an_upper_body_action_returns_the_base_only_pose() {
         pose_bits(&animator.pose(&model)),
         pose_bits(&walking.pose(&model))
     );
+}
+
+fn degrees(angle: f32) -> f32 {
+    angle.to_radians()
+}
+
+/// A rig with the chain `spine_01`, `spine_02` and `spine_03` under the pelvis, and `reload`
+/// and `idle` as clips.
+fn load_aimer() -> (TempDir, Model) {
+    let spec = HumanoidSpec {
+        reload: true,
+        idle: true,
+        extra_spine: 2,
+        ..HumanoidSpec::default()
+    };
+    let (dir, path) = write_humanoid(&spec);
+    let model = load_model(&path).expect("humanoid loads");
+    (dir, model)
+}
+
+fn node_named(model: &Model, name: &str) -> usize {
+    model
+        .nodes()
+        .iter()
+        .position(|n| n.name.as_deref() == Some(name))
+        .unwrap_or_else(|| panic!("no node named {name}"))
+}
+
+fn links(model: &Model, shares: &[(&str, f32)]) -> Vec<AimLink> {
+    shares
+        .iter()
+        .map(|&(name, share)| AimLink {
+            node: node_named(model, name),
+            share,
+        })
+        .collect()
+}
+
+fn three_bone_chain(model: &Model) -> Vec<AimLink> {
+    let third = 1.0 / 3.0;
+    links(
+        model,
+        &[
+            ("spine_01", third),
+            ("spine_02", third),
+            ("spine_03", third),
+        ],
+    )
+}
+
+/// Whether `node` is a strict descendant of `ancestor`.
+fn is_below(model: &Model, node: usize, ancestor: usize) -> bool {
+    let mut current = model.nodes()[node].parent;
+    while let Some(parent) = current {
+        if parent == ancestor {
+            return true;
+        }
+        current = model.nodes()[parent].parent;
+    }
+    false
+}
+
+/// Every node strictly below `ancestor`.
+fn below(model: &Model, ancestor: usize) -> Vec<usize> {
+    (0..model.nodes().len())
+        .filter(|&node| is_below(model, node, ancestor))
+        .collect()
+}
+
+/// Every node that is neither `spine_01` nor below it: the pelvis, the legs and loose roots.
+fn lower_body(model: &Model) -> Vec<usize> {
+    (0..model.nodes().len())
+        .filter(|&node| node != SPINE_01 && !is_below(model, node, SPINE_01))
+        .collect()
+}
+
+fn aiming(animator: &Animator, chain: Vec<AimLink>, pitch: f32) -> Animator {
+    let mut aiming = animator.clone();
+    aiming.set_aim_chain(chain);
+    aiming.set_aim_pitch(pitch);
+    aiming
+}
+
+/// The one rigid transform that takes every one of `nodes` from `before` to `after`.
+fn shared_motion(after: &Pose, before: &Pose, nodes: &[usize]) -> Affine3A {
+    let motion_of = |node: usize| after.nodes()[node] * before.nodes()[node].inverse();
+    let motion = motion_of(nodes[0]);
+    for &node in nodes {
+        assert!(
+            motion_of(node).abs_diff_eq(motion, 1e-4),
+            "node {node}: {:?} != {motion:?}",
+            motion_of(node)
+        );
+    }
+    assert!(
+        !motion.abs_diff_eq(Affine3A::IDENTITY, 1e-3),
+        "the nodes did not move"
+    );
+    motion
+}
+
+fn assert_rotation(motion: Affine3A, expected: Quat) {
+    let want = Mat3A::from_quat(expected);
+    assert!(
+        motion.matrix3.abs_diff_eq(want, 1e-5),
+        "{:?} != {want:?}",
+        motion.matrix3
+    );
+}
+
+/// `node`'s transform in the frame of its parent's posed global.
+fn relative(pose: &Pose, model: &Model, node: usize) -> Affine3A {
+    let parent = model.nodes()[node].parent.expect("node has a parent");
+    pose.nodes()[parent].inverse() * pose.nodes()[node]
+}
+
+/// `name` sits in `pitched` as in `walk`, turned by `angle` about model X relative to its parent.
+fn assert_turned_relative_to_parent(
+    model: &Model,
+    pitched: &Pose,
+    walk: &Pose,
+    name: &str,
+    angle: f32,
+) {
+    let node = node_named(model, name);
+    let want = Mat3A::from_rotation_x(angle) * relative(walk, model, node).matrix3;
+    let got = relative(pitched, model, node).matrix3;
+    assert!(got.abs_diff_eq(want, 1e-5), "{name}: {got:?} != {want:?}");
+}
+
+#[test]
+fn pitch_30_up_turns_everything_above_a_three_bone_chain_and_not_the_legs() {
+    let (_dir, model) = load_aimer();
+    let walking = simulate_over(&model, "walk", None, START_TICK, None, 130).remove(130);
+    let pitching = aiming(&walking, three_bone_chain(&model), degrees(30.0));
+    let above = below(&model, node_named(&model, "spine_03"));
+
+    let pitched = pitching.pose(&model);
+    let walk = walking.pose(&model);
+
+    assert_nodes_bit_equal(&pitched, &walk, &lower_body(&model), "legs keep walk");
+    assert_eq!(above.len(), 9, "neck, head, both arms and hands, the gun");
+    let motion = shared_motion(&pitched, &walk, &above);
+    assert_rotation(motion, Quat::from_rotation_x(-degrees(30.0)));
+    let models = |_key: usize| &model;
+    let mut character = Assembly::new(0_usize);
+    character
+        .attach(
+            &models,
+            "hand_r",
+            Assembly::new(0_usize),
+            Affine3A::IDENTITY,
+        )
+        .expect("hand_r exists");
+    let rifle_before = character.posed_placements(&models, Affine3A::IDENTITY, &walk);
+    let rifle_after = character.posed_placements(&models, Affine3A::IDENTITY, &pitched);
+    assert_eq!(
+        rifle_after.len(),
+        4,
+        "the body's two meshes and the rifle's two"
+    );
+    for (before, after) in rifle_before.iter().zip(&rifle_after).skip(2) {
+        let moved = after.2 * before.2.inverse();
+        assert!(moved.abs_diff_eq(motion, 1e-4), "{moved:?} != {motion:?}");
+    }
+}
+
+#[test]
+fn pitch_20_down_over_reload_on_idle_turns_the_reload_pose_and_not_the_legs() {
+    let (_dir, model) = load_aimer();
+    let reload = Some((ticks(RELOAD_TICKS), upper_body()));
+    let reloading = simulate_over(&model, "idle", reload, START_TICK, None, 130).remove(130);
+    let idling = simulate_over(&model, "idle", None, START_TICK, None, 130).remove(130);
+    let pitching = aiming(&reloading, three_bone_chain(&model), degrees(-20.0));
+    let above = below(&model, node_named(&model, "spine_03"));
+
+    let pitched = pitching.pose(&model);
+    let reload_pose = reloading.pose(&model);
+    let idle = idling.pose(&model);
+
+    assert_ne!(
+        reload_pose.nodes()[SPINE_01],
+        idle.nodes()[SPINE_01],
+        "the reload layer is playing"
+    );
+    assert_nodes_bit_equal(&pitched, &idle, &lower_body(&model), "legs follow idle");
+    let motion = shared_motion(&pitched, &reload_pose, &above);
+    assert_rotation(motion, Quat::from_rotation_x(degrees(20.0)));
+}
+
+const HEAD: HitTag = HitTag(10);
+
+fn head_volume(head: Affine3A) -> HitVolume {
+    HitVolume {
+        offset: Vec3::from(head.translation),
+        rotation: Quat::from_mat3a(&head.matrix3),
+        half_extents: Vec3::splat(0.1),
+        tag: HEAD,
+    }
+}
+
+/// What the ray along +X, 3 m short of a character holding only `volume`, hits when it starts
+/// at `from` relative to the character's body.
+fn ray_hit(volume: HitVolume, from: Vec3) -> Option<HitTag> {
+    let mut world = PhysicsWorld::new();
+    let character = world.add_character(Vec3::new(0.0, 2.0, 0.0));
+    world
+        .set_hit_volumes(character, &[volume])
+        .expect("character is live");
+    world.step(TICK);
+    let body = world
+        .character(character)
+        .expect("character is live")
+        .position;
+    world
+        .cast_ray(&RayQuery {
+            origin: body + from + Vec3::new(-3.0, 0.0, 0.0),
+            direction: Vec3::X,
+            max_distance: 20.0,
+            ignore: None,
+        })
+        .map(|hit| hit.tag)
+}
+
+/// Where the head of a rig at rest ends up when each link turns its node by its share of
+/// `pitch` (positive up) about the model's X axis, working down the chain from the pelvis.
+fn pitched_head(model: &Model, chain: &[AimLink], pitch: f32) -> Vec3 {
+    let rest_of = |node: usize| Vec3::from(model.nodes()[node].rest.translation);
+    let mut origin = rest_of(node_named(model, "pelvis"));
+    let mut rest_origin = origin;
+    let mut rotation = Quat::IDENTITY;
+    for link in chain {
+        let rest = rest_of(link.node);
+        origin += rotation * (rest - rest_origin);
+        rotation = Quat::from_rotation_x(-pitch * link.share) * rotation;
+        rest_origin = rest;
+    }
+    origin + rotation * (rest_of(node_named(model, "head")) - rest_origin)
+}
+
+#[test]
+fn head_hit_volume_follows_the_pitched_head() {
+    let (_dir, model) = load_aimer();
+    let humanoid = Humanoid::of(&model).expect("the fixture has every bone");
+    let chain = three_bone_chain(&model);
+    let walking = simulate_over(&model, "walk", None, START_TICK, None, 30).remove(30);
+    let pitching = aiming(&walking, chain.clone(), degrees(30.0));
+
+    let flat = head_volume(humanoid.bone(&walking.pose(&model), Bone::Head));
+    let raised = head_volume(humanoid.bone(&pitching.pose(&model), Bone::Head));
+
+    let expected = pitched_head(&model, &chain, degrees(30.0));
+    assert!(
+        raised.offset.abs_diff_eq(expected, 1e-4),
+        "{:?} != {expected:?}",
+        raised.offset
+    );
+    assert_ne!(raised.offset, flat.offset);
+    assert_ne!(raised.rotation, flat.rotation);
+    assert_eq!(ray_hit(raised, raised.offset), Some(HEAD));
+    assert_eq!(ray_hit(raised, flat.offset), None);
+    assert_eq!(ray_hit(flat, flat.offset), Some(HEAD));
+    assert_eq!(ray_hit(flat, raised.offset), None);
+}
+
+/// Pitches the sim sets, by tick.
+const PITCHES: [(usize, f32); 4] = [(10, 0.1), (60, -0.3), (90, 0.5), (125, 0.2)];
+
+fn pitched_run(model: &Model, pitching: bool) -> Animator {
+    let mut animator = walker(model);
+    if pitching {
+        animator.set_aim_chain(three_bone_chain(model));
+    }
+    for tick in 0..=130 {
+        animator.advance(model, TICK);
+        if tick == START_TICK {
+            animator
+                .play_action(model, "reload", ticks(RELOAD_TICKS), upper_body())
+                .expect("reload exists");
+        }
+        if pitching && let Some(&(_, radians)) = PITCHES.iter().find(|(at, _)| *at == tick) {
+            animator.set_aim_pitch(radians);
+        }
+    }
+    animator
+}
+
+#[test]
+fn two_runs_with_the_same_pitches_are_bit_equal_at_tick_130() {
+    let (_first_dir, first) = load_aimer();
+    let (_second_dir, second) = load_aimer();
+
+    let a = pitched_run(&first, true).pose(&first);
+    let b = pitched_run(&second, true).pose(&second);
+
+    assert_eq!(pose_bits(&a), pose_bits(&b));
+    let flat = pitched_run(&first, false).pose(&first);
+    assert_ne!(pose_bits(&a), pose_bits(&flat));
+}
+
+#[test]
+fn a_one_bone_chain_turns_spine_01_by_the_whole_pitch() {
+    let (_dir, model) = load_aimer();
+    let walking = simulate_over(&model, "walk", None, START_TICK, None, 30).remove(30);
+    let pitching = aiming(&walking, links(&model, &[("spine_01", 1.0)]), degrees(30.0));
+
+    assert_turned_relative_to_parent(
+        &model,
+        &pitching.pose(&model),
+        &walking.pose(&model),
+        "spine_01",
+        -degrees(30.0),
+    );
+}
+
+#[test]
+fn a_three_bone_chain_turns_spine_02_by_a_third() {
+    let (_dir, model) = load_aimer();
+    let walking = simulate_over(&model, "walk", None, START_TICK, None, 30).remove(30);
+    let pitching = aiming(&walking, three_bone_chain(&model), degrees(30.0));
+
+    let (pitched, walk) = (pitching.pose(&model), walking.pose(&model));
+
+    for name in ["spine_01", "spine_02", "spine_03"] {
+        assert_turned_relative_to_parent(&model, &pitched, &walk, name, -degrees(10.0));
+    }
+}
+
+#[test]
+fn shares_need_not_sum_to_one() {
+    let (_dir, model) = load_aimer();
+    let walking = simulate_over(&model, "walk", None, START_TICK, None, 30).remove(30);
+    let chain = links(&model, &[("spine_01", 0.5), ("spine_02", 0.25)]);
+    let pitching = aiming(&walking, chain, degrees(30.0));
+    let above = below(&model, node_named(&model, "spine_02"));
+
+    let motion = shared_motion(&pitching.pose(&model), &walking.pose(&model), &above);
+
+    assert_rotation(motion, Quat::from_rotation_x(-degrees(22.5)));
+}
+
+fn bits_of(animator: &Animator, model: &Model) -> Vec<[u32; 12]> {
+    pose_bits(&animator.pose(model))
+}
+
+#[test]
+fn empty_chain_or_zero_pitch_is_bit_equal_to_the_unpitched_pose() {
+    let (_dir, model) = load_aimer();
+    let reload = Some((ticks(RELOAD_TICKS), upper_body()));
+    let state = simulate_over(&model, "idle", reload, START_TICK, None, 130).remove(130);
+    let plain = bits_of(&state, &model);
+    let chain = three_bone_chain(&model);
+    let chain_only = aiming(&state, chain.clone(), 0.0);
+    let pitch_only = aiming(&state, Vec::new(), degrees(30.0));
+    let mut pitch_cleared = aiming(&state, chain.clone(), degrees(30.0));
+    pitch_cleared.set_aim_pitch(0.0);
+    let mut chain_emptied = aiming(&state, chain.clone(), degrees(30.0));
+    chain_emptied.set_aim_chain(Vec::<AimLink>::new());
+    let no_shares = aiming(&state, links(&model, &[("spine_01", 0.0)]), degrees(30.0));
+
+    let turned = aiming(&state, chain, degrees(30.0));
+
+    for (what, animator) in [
+        ("chain without pitch", &chain_only),
+        ("pitch without chain", &pitch_only),
+        ("pitch set back to zero", &pitch_cleared),
+        ("chain emptied", &chain_emptied),
+        ("links with no share", &no_shares),
+    ] {
+        assert_eq!(bits_of(animator, &model), plain, "{what}");
+    }
+    assert_ne!(bits_of(&turned, &model), plain, "the control turns");
+}
+
+#[test]
+fn positive_pitch_raises_the_front() {
+    let (_dir, model) = load_aimer();
+    let humanoid = Humanoid::of(&model).expect("the fixture has every bone");
+    let walking = simulate_over(&model, "walk", None, START_TICK, None, 30).remove(30);
+    let pitching = aiming(&walking, three_bone_chain(&model), degrees(30.0));
+
+    let ahead = |animator: &Animator| {
+        humanoid
+            .bone(&animator.pose(&model), Bone::Head)
+            .transform_vector3(Vec3::Z)
+    };
+
+    let (level, raised) = (ahead(&walking), ahead(&pitching));
+
+    assert!(level.y.abs() < 1e-5, "{level:?}");
+    assert!((raised.y - degrees(30.0).sin()).abs() < 1e-4, "{raised:?}");
+    assert!(raised.z < level.z, "the front also comes back: {raised:?}");
+}
+
+#[test]
+fn pitch_holds_across_advances_until_set_again() {
+    let (_dir, model) = load_aimer();
+    let chain = three_bone_chain(&model);
+    let mut held = aiming(&walker(&model), chain.clone(), 0.4);
+    let mut plain = walker(&model);
+
+    for _ in 0..5 {
+        held.advance(&model, TICK);
+        plain.advance(&model, TICK);
+    }
+
+    assert_eq!(held.aim_pitch(), 0.4);
+    let set_late = aiming(&plain, chain, 0.4);
+    assert_eq!(bits_of(&held, &model), bits_of(&set_late, &model));
+    assert_ne!(bits_of(&held, &model), bits_of(&plain, &model));
+    held.set_aim_pitch(0.0);
+    assert_eq!(held.aim_pitch(), 0.0);
+    assert_eq!(bits_of(&held, &model), bits_of(&plain, &model));
+}
+
+#[test]
+fn a_new_chain_replaces_the_old_one() {
+    let (_dir, model) = load_aimer();
+    let walking = walker(&model);
+    let one_bone = links(&model, &[("spine_01", 1.0)]);
+    let mut replaced = aiming(&walking, three_bone_chain(&model), degrees(30.0));
+    replaced.set_aim_chain(one_bone.clone());
+    let fresh = aiming(&walking, one_bone, degrees(30.0));
+
+    assert_eq!(bits_of(&replaced, &model), bits_of(&fresh, &model));
+    assert_ne!(bits_of(&replaced, &model), bits_of(&walking, &model));
+}
+
+#[test]
+fn animators_with_different_aim_state_are_not_equal() {
+    let (_dir, model) = load_aimer();
+    let walking = walker(&model);
+    let chain = three_bone_chain(&model);
+
+    let pitched = aiming(&walking, chain.clone(), 0.3);
+
+    assert_eq!(pitched, aiming(&walking, chain.clone(), 0.3));
+    assert_ne!(pitched, aiming(&walking, chain.clone(), 0.4));
+    assert_ne!(pitched, aiming(&walking, Vec::new(), 0.3));
+    assert_ne!(pitched, aiming(&walking, chain[..2].to_vec(), 0.3));
+}
+
+#[test]
+#[should_panic(expected = "is not a node")]
+fn posing_with_a_link_past_the_last_node_panics() {
+    let (_dir, model) = load_aimer();
+    let link = AimLink {
+        node: model.nodes().len(),
+        share: 1.0,
+    };
+    let animator = aiming(&walker(&model), vec![link], 0.5);
+
+    animator.pose(&model);
 }
