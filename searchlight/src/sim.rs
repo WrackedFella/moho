@@ -2825,6 +2825,46 @@ mod tests {
     }
 
     #[test]
+    fn the_line_an_enemy_fires_on_strikes_the_exposed_part_or_the_wall() {
+        let wall = SurfaceTag::World;
+        let cases = [
+            (BodyPart::Head, SurfaceTag::Player(BodyPart::Head)),
+            (BodyPart::RightArm, SurfaceTag::Player(BodyPart::RightArm)),
+            (BodyPart::LeftLeg, wall),
+            (BodyPart::RightLeg, wall),
+            (BodyPart::LeftArm, wall),
+        ];
+        for yaw in [0.0, FRAC_PI_2, std::f32::consts::PI] {
+            for (aim_at, expected) in cases {
+                let mut sim = turned_corner_scene(yaw, aim_at);
+                hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+                sim.spawn_enemy(0, Grade::Experienced)
+                    .expect("the marker is free");
+                let handle = sim.targets[sim.dummy_count]
+                    .handle
+                    .expect("the enemy spawned");
+                let eye = sim.enemy_state(0).expect("alive").eye_position();
+
+                let strike = resolve_shot(
+                    &sim.world,
+                    ShotRay {
+                        origin: eye,
+                        direction: sim.player_aim_point() - eye,
+                        range: 30.0,
+                        ignore: Some(handle),
+                    },
+                );
+
+                assert_eq!(
+                    strike.map(|strike| strike.tag),
+                    Some(expected),
+                    "yaw {yaw}, aiming at {aim_at:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn restarting_while_leaning_stands_the_hit_volumes_upright() {
         let mut sim = leaned_player(0.0, LeanSide::Right);
         sim.kill_player();
