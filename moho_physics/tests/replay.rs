@@ -783,6 +783,15 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
         3,
         "two of the five were removed by the end"
     );
+    let horizontal = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
+    assert!(
+        recorded.iter().any(|s| s.characters.iter().any(|c| {
+            s.loose
+                .iter()
+                .any(|(_, l)| horizontal(c.position).distance(horizontal(l.position)) < 0.3)
+        })),
+        "no character ever stood within 0.3 m of a live loose object, so passing through one was never exercised"
+    );
     assert!(
         recorded[..TICKS - 100]
             .iter()

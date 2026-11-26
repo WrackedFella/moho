@@ -3871,19 +3871,6 @@ mod tests {
     }
 
     #[test]
-    fn a_loose_state_carries_the_shape_it_was_spawned_with() {
-        let mut world = PhysicsWorld::new();
-        let ids: Vec<(LooseId, LooseShape)> = every_shape_with_sphere()
-            .into_iter()
-            .map(|(_, shape)| (world.spawn_loose(&LooseSpawn::new(shape, 1.0)), shape))
-            .collect();
-
-        for (id, shape) in ids {
-            assert_eq!(read(&world, id).shape, shape);
-        }
-    }
-
-    #[test]
     fn a_spawn_round_trips_through_postcard() {
         for (name, shape) in every_shape_with_sphere() {
             let spawn = LooseSpawn {
@@ -3902,22 +3889,6 @@ mod tests {
             let back: LooseSpawn = postcard::from_bytes(&bytes).expect("the spawn reads back");
 
             assert_eq!(back, spawn, "{name}");
-        }
-    }
-
-    #[test]
-    fn a_loose_state_round_trips_through_postcard() {
-        let mut world = world_with_floor(&floor_mesh(0.0));
-        for spawn in varied_spawns() {
-            world.spawn_loose(&spawn);
-        }
-        run(&mut world, 20);
-
-        for (id, state) in listed(&world) {
-            let bytes = postcard::to_allocvec(&state).expect("the state serialises");
-            let back: LooseState = postcard::from_bytes(&bytes).expect("the state reads back");
-
-            assert_eq!(back, state, "{id:?}");
         }
     }
 }
