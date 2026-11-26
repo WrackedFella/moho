@@ -64,7 +64,7 @@ pub fn place_of(list: ListId) -> Option<Place> {
     }
 }
 
-/// An action a row of the inventory offers. None exists yet; each one added is a variant here.
+/// An action a row of the inventory offers; the enum has no variants.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemAction {}
 

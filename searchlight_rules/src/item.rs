@@ -166,7 +166,7 @@ pub struct RigSpec {
 }
 
 /// The backpack section of an item definition: marks an item that goes in the backpack slot.
-/// It holds nothing; carry-capacity modifiers join it later.
+/// It holds nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackpackSpec {}
