@@ -15,7 +15,6 @@ use moho_physics::{
 use moho_render_api::{WorldMesh, WorldMeshId};
 use serde::{Deserialize, Serialize};
 
-/// Whether a shape is one particular kind of loose shape.
 type IsShape = fn(&LooseShape) -> bool;
 
 const TICKS: usize = 600;
@@ -323,8 +322,6 @@ fn wanted_lean(who: usize, tick: usize) -> f32 {
 /// The dropped capsule's launch velocity; it rolls clear of the cuboid and never leaves the run.
 const CAPSULE_VELOCITY: Vec3 = Vec3::new(1.0, 0.0, 0.5);
 
-/// The loose objects of tick `tick`: five drops, four of them on the characters' paths, and two
-/// removals of earlier drops.
 fn loose_inputs(tick: usize) -> Vec<LooseInput> {
     let drop = |shape, position: Vec3, velocity: Vec3| {
         vec![LooseInput::Spawn(LooseSpawn {
