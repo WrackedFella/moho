@@ -13,9 +13,9 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Accuracy, AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
-    HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig,
-    Shot, disc_offset, leaned_parts,
+    Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport,
+    ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, RoundStats,
+    Shot, arrival_damage, disc_offset, leaned_parts,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -107,10 +107,8 @@ pub struct SimConfig {
     pub gravity: f32,
     /// The hull and eye of the player and every target. Named apart from `body`, the pools.
     pub character_body: CharacterBody,
-    /// The ballistics of every round the player can fire, by item.
-    pub rounds: BTreeMap<ItemId, Ballistics>,
-    /// Damage of one hit.
-    pub damage: u32,
+    /// The ballistics and damage of every round the player can fire, by item.
+    pub rounds: BTreeMap<ItemId, RoundStats>,
     /// Ticks between one shot and the next allowed pull: shots on ticks `t` and
     /// `t + cooldown_ticks` are both allowed, one on `t + cooldown_ticks - 1` is not.
     pub cooldown_ticks: u32,
@@ -316,8 +314,8 @@ pub struct SearchlightSim {
     move_settings: MoveSettings,
     /// The hull and eye of the player and every target.
     body: CharacterBody,
-    /// The ballistics of every round the player can fire.
-    ballistics: BTreeMap<ItemId, Ballistics>,
+    /// The ballistics and damage of every round the player can fire.
+    round_stats: BTreeMap<ItemId, RoundStats>,
     /// Where a round may fly; one that leaves is gone.
     bounds: FlightBounds,
     /// The player's rounds in the air, in the order they were fired.
@@ -327,7 +325,6 @@ pub struct SearchlightSim {
     /// Each round's path over the last tick, for drawing. Derived read-out rebuilt every tick
     /// from `rounds`; never saved (ADR-0040 rule 2).
     traces: Vec<RoundTrace>,
-    damage: u32,
     cooldown_ticks: u32,
     reload_ticks: u32,
     charge_ticks: u32,
@@ -480,12 +477,11 @@ impl SearchlightSim {
             player,
             move_settings: config.move_settings,
             body: config.character_body,
-            ballistics: config.rounds.clone(),
+            round_stats: config.rounds.clone(),
             bounds: spawns.bounds,
             rounds: Vec::new(),
             next_round_id: 0,
             traces: Vec::new(),
-            damage: config.damage,
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
             charge_ticks: config.charge_ticks,
@@ -878,14 +874,14 @@ impl SearchlightSim {
         let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
         let origin = self.leaned_eye(&state);
         let direction = self.scattered(view.forward);
-        if simple {
-            self.hitscan(origin, direction, state.position);
-            return;
-        }
-        let Some(&ballistics) = self.ballistics.get(round) else {
-            tracing::warn!(%round, "the round has no ballistics, nothing flies");
+        let Some(&RoundStats { ballistics, damage }) = self.round_stats.get(round) else {
+            tracing::warn!(%round, "the round has no stats, nothing is fired");
             return;
         };
+        if simple {
+            self.hitscan(origin, direction, state.position, damage);
+            return;
+        }
         let id = self.next_round_id;
         self.next_round_id = id.wrapping_add(1);
         self.traces.push(RoundTrace {
@@ -899,6 +895,7 @@ impl SearchlightSim {
             id,
             flight: Flight::fired(origin, direction, &ballistics),
             ballistics,
+            damage,
             shooter: Some(self.player),
             from: state.position,
             near_missed: Vec::new(),
@@ -921,7 +918,7 @@ impl SearchlightSim {
 
     /// One ray from `origin` along `direction` to the edge of the flight bounds, resolved on
     /// the spot as a player's shot fired from `from`.
-    fn hitscan(&mut self, origin: Vec3, direction: Vec3, from: Vec3) {
+    fn hitscan(&mut self, origin: Vec3, direction: Vec3, from: Vec3, damage: u32) {
         let strike = resolve_shot(
             &self.world,
             ShotRay {
@@ -934,7 +931,7 @@ impl SearchlightSim {
         let end = strike.map_or(origin + direction * self.bounds.reach(), |strike| {
             strike.point
         });
-        self.land_player_shot(origin, end, strike, from, &mut Vec::new());
+        self.land_player_shot(origin, end, strike, from, damage, &mut Vec::new());
     }
 
     /// Steps every round in flight once, in the order they were fired, and drops those that
@@ -959,6 +956,11 @@ impl SearchlightSim {
                 step.end,
                 step.strike,
                 round.from,
+                arrival_damage(
+                    round.damage,
+                    round.ballistics.muzzle_velocity,
+                    step.flight.velocity.length(),
+                ),
                 &mut round.near_missed,
             );
             if !ended {
@@ -979,6 +981,7 @@ impl SearchlightSim {
         end: Vec3,
         strike: Option<Strike>,
         from: Vec3,
+        damage: u32,
         near_missed: &mut Vec<u16>,
     ) {
         let hit = strike.and_then(|strike| match strike.tag {
@@ -995,7 +998,7 @@ impl SearchlightSim {
         let struck = hit.map(|(target, _)| usize::from(target));
         self.record_near_misses(origin, end, struck, from, near_missed);
         if let Some((target, part)) = hit {
-            self.apply_player_hit(target, part, self.damage, from, end);
+            self.apply_player_hit(target, part, damage, from, end);
         }
     }
 
@@ -1152,6 +1155,12 @@ impl SearchlightSim {
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
+    }
+
+    /// The player's hit volumes as they stand now, leaned, in [`BodyPart::ALL`] order and the
+    /// body frame around the capsule centre.
+    pub fn player_hit_volumes(&self) -> &[HitVolume] {
+        &self.leaned_volumes
     }
 
     /// What a full lean looks like and how it blends.
@@ -1364,13 +1373,13 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::{ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
+    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
 
     use super::*;
     use crate::tag::SurfaceTag;
     use crate::test_support::{
         DT, arena_on, arena_with, arena_with_controls, flat_floor, foreign_mag, long_floor, mag,
-        rifle_from, room, run_until_hit, run_until_settled, test_config,
+        rifle_from, room, run_until_hit, run_until_settled, set_round_damage, test_config,
     };
 
     fn rifle_with(rounds: u32) -> Rifle {
@@ -3010,7 +3019,13 @@ mod tests {
     /// A config whose only round flies with `ballistics`.
     fn with_ball(ballistics: Ballistics) -> SimConfig {
         let mut config = test_config(rifle_with(30), vec![]);
-        config.rounds = BTreeMap::from([(ItemId::new("test_round"), ballistics)]);
+        config.rounds = BTreeMap::from([(
+            ItemId::new("test_round"),
+            RoundStats {
+                ballistics,
+                damage: 30,
+            },
+        )]);
         config
     }
 
@@ -3120,6 +3135,180 @@ mod tests {
 
         assert_eq!(free, 4, "without drag the round covers 15.7 m a tick");
         assert_eq!(dragged, 5, "at 5/s the round has slowed to 61 m by tick 5");
+    }
+
+    fn with_round(ballistics: Ballistics, damage: u32) -> SimConfig {
+        let mut config = with_ball(ballistics);
+        set_round_damage(&mut config, damage);
+        config
+    }
+
+    /// Health of dummy 0 after `fire` was pulled at its `part`, `distance` metres ahead.
+    fn dummy_health_after_a_shot(
+        distance: f32,
+        part: BodyPart,
+        config: SimConfig,
+        fire: SearchlightCommand,
+    ) -> u32 {
+        let mut sim = dummy_ahead(distance, part, config);
+
+        fire_and_wait(&mut sim, fire, 60);
+
+        sim.dummy_body(0).expect("dummy 0 exists").health()
+    }
+
+    /// A pull with the gravity of rounds off, so a round arrives at the speed it left at.
+    fn pull_without_gravity() -> SearchlightCommand {
+        SearchlightCommand {
+            fire: true,
+            round_gravity: GravityScale::new(0.0).expect("a valid scale"),
+            ..idle()
+        }
+    }
+
+    #[test]
+    fn a_torso_hit_at_90_m_takes_less_health_than_one_at_10_m() {
+        let near = dummy_health_after_a_shot(10.0, BodyPart::Torso, with_ball(BALL), pull());
+        let far = dummy_health_after_a_shot(90.0, BodyPart::Torso, with_ball(BALL), pull());
+
+        assert!(
+            (70..=71).contains(&near),
+            "a round at about 924 m/s does about 30, left {near}"
+        );
+        assert_eq!(far, 73, "a round at about 840 m/s does 27 of 30");
+    }
+
+    #[test]
+    fn a_round_just_above_the_minimum_speed_does_at_least_1_damage() {
+        let slowing = Ballistics {
+            muzzle_velocity: 1000.0,
+            drag: 53.4,
+        };
+
+        let health =
+            dummy_health_after_a_shot(1.5, BodyPart::Torso, with_round(slowing, 4), pull());
+
+        assert_eq!(health, 99, "arriving at about 110 m/s, 4 scales to 0.44");
+    }
+
+    #[test]
+    fn head_and_torso_hits_at_the_same_speed_differ_as_body_rules_say() {
+        let halving = Ballistics {
+            muzzle_velocity: 1000.0,
+            drag: 30.0,
+        };
+        let status_and_health = |part: BodyPart| {
+            let mut sim = dummy_ahead(5.0, part, with_round(halving, 30));
+            fire_and_wait(&mut sim, pull(), 60);
+            let body = sim.dummy_body(0).expect("dummy 0 exists");
+            (body.health(), body.status(BodyPart::Head))
+        };
+
+        let head = status_and_health(BodyPart::Head);
+        let torso = status_and_health(BodyPart::Torso);
+
+        assert_eq!(torso, (85, Some(50)), "half speed does 15 to the torso");
+        assert_eq!(
+            head,
+            (85, Some(35)),
+            "and the same 15 to the head's pool too"
+        );
+    }
+
+    #[test]
+    fn two_rounds_with_different_damage_each_do_their_own() {
+        let flat = Ballistics {
+            muzzle_velocity: 940.0,
+            drag: 0.0,
+        };
+
+        let light = dummy_health_after_a_shot(
+            10.0,
+            BodyPart::Torso,
+            with_round(flat, 20),
+            pull_without_gravity(),
+        );
+        let heavy = dummy_health_after_a_shot(
+            10.0,
+            BodyPart::Torso,
+            with_round(flat, 40),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(light, 80);
+        assert_eq!(heavy, 60);
+    }
+
+    fn simple_pull() -> SearchlightCommand {
+        SearchlightCommand {
+            fire: true,
+            simple: true,
+            ..idle()
+        }
+    }
+
+    #[test]
+    fn under_simple_dummies_at_10_and_90_m_lose_the_same_health() {
+        let config = || with_round(BALL, 40);
+
+        let near = dummy_health_after_a_shot(10.0, BodyPart::Torso, config(), simple_pull());
+        let far = dummy_health_after_a_shot(90.0, BodyPart::Torso, config(), simple_pull());
+
+        assert_eq!(near, 60, "the round's full damage");
+        assert_eq!(far, 60, "at any distance");
+    }
+
+    #[test]
+    fn under_simple_a_head_hit_does_the_rounds_damage_to_health_and_the_head_pool() {
+        for damage in [1, 7] {
+            let mut sim = dummy_ahead(90.0, BodyPart::Head, with_round(BALL, damage));
+
+            fire_and_wait(&mut sim, simple_pull(), 1);
+
+            let body = sim.dummy_body(0).expect("dummy 0 exists");
+            assert_eq!(body.health(), 100 - damage, "damage {damage}");
+            assert_eq!(
+                body.status(BodyPart::Head),
+                Some(50 - damage),
+                "damage {damage}"
+            );
+        }
+    }
+
+    #[test]
+    fn under_simple_a_round_with_no_stats_hits_nothing_and_warns() {
+        let mut config = with_ball(BALL);
+        config.rounds.clear();
+        let mut sim = dummy_ahead(10.0, BodyPart::Torso, config);
+
+        let log = crate::test_support::logged(|| {
+            fire_and_wait(&mut sim, simple_pull(), 5);
+        });
+
+        assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
+        assert!(log.contains("test_round"), "{log}");
+        assert!(log.contains("WARN"), "{log}");
+    }
+
+    #[test]
+    fn a_round_falling_faster_than_its_muzzle_velocity_does_no_more_than_its_damage() {
+        let slow = Ballistics {
+            muzzle_velocity: 150.0,
+            drag: 0.0,
+        };
+        let heavy_gravity = SearchlightCommand {
+            fire: true,
+            round_gravity: GravityScale::new(300.0).expect("a valid scale"),
+            ..idle()
+        };
+
+        let health =
+            dummy_health_after_a_shot(2.0, BodyPart::Head, with_round(slow, 30), heavy_gravity);
+
+        assert_eq!(
+            health, 70,
+            "the round arrives at about 158 m/s, an uncapped 32 damage"
+        );
     }
 
     /// Fires level at a head 60 m away under `scale`; returns the aim point and the first strike.
@@ -4143,7 +4332,7 @@ mod tests {
             let mut arena = (*arena_with(&[], Vec3::ZERO, &[], &[])).clone();
             arena.dummy_spawns = vec![Vec3::new(0.0, 0.0, 10.0)];
             let mut config = config();
-            config.damage = 1_000;
+            set_round_damage(&mut config, 1_000);
             let mut sim = SearchlightSim::with_start(Arc::new(arena), config, Start::AtMarkers);
 
             let feedback = run_until_hit(&mut sim, &pull());
@@ -4719,7 +4908,8 @@ mod enemy_tests {
     use super::*;
     use crate::arena;
     use crate::test_support::{
-        DT, arena_with, mag, rifle_from, run_until_hit, run_until_settled, test_config,
+        DT, arena_with, mag, rifle_from, run_until_hit, run_until_settled, set_round_damage,
+        test_config,
     };
 
     /// Height of the head volume's centre above the capsule centre: a level shot from here
@@ -5002,6 +5192,32 @@ mod enemy_tests {
     }
 
     #[test]
+    fn an_enemy_hit_on_the_player_from_80_m_costs_the_same_as_one_from_10_m() {
+        let health_after_the_first_hit = |distance: f32| {
+            let spawn = Vec3::new(0.0, 0.0, distance);
+            let toward = Vec3::new(0.0, 0.0, distance - 4.0);
+            let arena = crate::test_support::arena_on(200.0, &[], Vec3::ZERO, &[spawn], &[toward]);
+            let mut config = config();
+            config.enemy.damage = 15;
+            config.enemy.sight_range = 150.0;
+            let mut sim = SearchlightSim::start(arena, config);
+            for _ in 0..300 {
+                sim.tick(&idle(), DT);
+                if sim.drain_feedback().iter().any(player_hit) {
+                    return sim.player_body().health();
+                }
+            }
+            panic!("the enemy at {distance} m never hit the player");
+        };
+
+        let near = health_after_the_first_hit(10.0);
+        let far = health_after_the_first_hit(80.0);
+
+        assert_eq!(near, 85, "a 15-damage torso hit");
+        assert_eq!(far, 85, "enemy damage is not scaled by distance");
+    }
+
+    #[test]
     fn enemy_shots_to_the_head_kill_a_player_with_health_left() {
         let mut config = config();
         config.enemy_aim_at = BodyPart::Head;
@@ -5122,11 +5338,11 @@ mod enemy_tests {
         // Walking away from the player, who shoots it in the back of the head.
         let away = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[AWAY_FROM_PLAYER]);
         let mut config_a = config();
-        config_a.damage = 30;
+        set_round_damage(&mut config_a, 30);
         let mut walking = SearchlightSim::start(away, config_a);
         // Facing the player, who answers its first shot with a killing one.
         let mut config_b = config();
-        config_b.damage = PLAYER_ONE_SHOT;
+        set_round_damage(&mut config_b, PLAYER_ONE_SHOT);
         let mut firing = SearchlightSim::start(duel(&[]), config_b);
 
         run(&mut walking, &script(5, &[]));
@@ -5169,7 +5385,7 @@ mod enemy_tests {
             &[AWAY_FROM_PLAYER],
         );
         let mut config = config();
-        config.damage = PLAYER_ONE_SHOT;
+        set_round_damage(&mut config, PLAYER_ONE_SHOT);
         let mut sim = SearchlightSim::start(arena, config);
 
         let ticks = run(&mut sim, &script(8, &[0, 3]));
@@ -5185,7 +5401,7 @@ mod enemy_tests {
     #[test]
     fn an_enemy_killed_this_tick_does_not_fire() {
         let mut config = config();
-        config.damage = PLAYER_ONE_SHOT;
+        set_round_damage(&mut config, PLAYER_ONE_SHOT);
         let mut control = SearchlightSim::start(duel(&[]), config.clone());
         let mut contested = SearchlightSim::start(duel(&[]), config);
 
@@ -5333,7 +5549,7 @@ mod enemy_tests {
             &[TOWARD_PLAYER],
         );
         let mut config = config();
-        config.damage = PLAYER_ONE_SHOT;
+        set_round_damage(&mut config, PLAYER_ONE_SHOT);
         config.enemy.damage = 100;
         config.enemy.aim_error = 0.05;
         let mut sim = SearchlightSim::start(arena.clone(), config.clone());
@@ -5462,7 +5678,7 @@ mod enemy_tests {
     fn restart_while_alive_does_nothing() {
         let arena = duel(&[]);
         let mut config = config();
-        config.damage = PLAYER_ONE_SHOT;
+        set_round_damage(&mut config, PLAYER_ONE_SHOT);
         let mut pressed = SearchlightSim::start(arena.clone(), config.clone());
         let mut control = SearchlightSim::start(arena, config);
         let walk = SearchlightCommand {
@@ -5629,9 +5845,9 @@ mod enemy_tests {
             &[SHIELDED],
         );
         let mut lethal = cover_config();
-        lethal.damage = PLAYER_ONE_SHOT;
+        set_round_damage(&mut lethal, PLAYER_ONE_SHOT);
         let mut wounding = cover_config();
-        wounding.damage = 30;
+        set_round_damage(&mut wounding, 30);
         let mut killer = SearchlightSim::start(arena.clone(), lethal);
         let mut control = SearchlightSim::start(arena, wounding);
 

@@ -14,6 +14,8 @@ pub struct RoundInFlight {
     pub id: u32,
     pub flight: Flight,
     pub ballistics: Ballistics,
+    /// The round's damage at the muzzle velocity.
+    pub damage: u32,
     /// Whose own volumes never stop the round.
     pub shooter: Option<CharacterHandle>,
     /// Where the shooter stood when firing.
@@ -76,6 +78,7 @@ mod tests {
             id: 0,
             flight: Flight::fired(position, direction, &BALL),
             ballistics: BALL,
+            damage: 30,
             shooter: None,
             from: position,
             near_missed: Vec::new(),

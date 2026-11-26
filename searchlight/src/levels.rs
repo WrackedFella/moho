@@ -389,7 +389,8 @@ mod tests {
             .rounds
             .into_values()
             .next()
-            .expect("the start kit names a round");
+            .expect("the start kit names a round")
+            .ballistics;
         // Linear drag sheds speed at `drag` m/s per metre, so a round is spent after this far.
         let range = (ballistics.muzzle_velocity - MIN_SPEED) / ballistics.drag;
         let (_, markers) = shipped("proving_ground.glb");
