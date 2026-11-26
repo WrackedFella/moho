@@ -127,17 +127,13 @@ impl Loadout {
         }
     }
 
-    /// Removes and returns what `from` holds.
+    /// Removes and returns what `from` holds. Call it only for a source
+    /// [`Self::holds_magazine`] found an item in: an index past the end of a list panics.
     fn take(&mut self, body: Option<&mut Remains>, from: Source) -> Option<Item> {
         match from {
-            Source::Inventory(index) => {
-                (index < self.inventory.len()).then(|| self.inventory.remove(index))
-            }
+            Source::Inventory(index) => Some(self.inventory.remove(index)),
             Source::MagazineSlot(index) => self.rig.take_slot(index).map(Item::Magazine),
-            Source::BodyCarried(index) => {
-                let carried = &mut body?.carried;
-                (index < carried.len()).then(|| carried.remove(index))
-            }
+            Source::BodyCarried(index) => Some(body?.carried.remove(index)),
             Source::BodyMagazineSlot(index) => {
                 body?.rig.as_mut()?.take_slot(index).map(Item::Magazine)
             }
