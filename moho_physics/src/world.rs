@@ -18,8 +18,8 @@ pub use character::{
     CharacterHandle, CharacterRecord, CharacterSpawn, CharacterState, HitVolume, UnknownCharacter,
 };
 pub use loose::{
-    LooseId, LooseRecord, LooseRecords, LooseShape, LooseSpawn, LooseState, RestoreLooseError,
-    UnknownLoose,
+    LooseId, LoosePose, LoosePoses, LooseRecord, LooseRecords, LooseShape, LooseSpawn, LooseState,
+    RestoreLooseError, UnknownLoose,
 };
 pub use query::{HitTag, RayHit, RayQuery};
 
@@ -90,6 +90,7 @@ impl PhysicsWorld {
     /// Step the physics simulation (advances dynamic rigid bodies).
     pub fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
+        self.remember_loose_poses();
         self.physics_pipeline.step(
             self.gravity,
             &self.integration_parameters,

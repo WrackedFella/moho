@@ -46,11 +46,11 @@ pub(crate) fn dig_site_with_pawns(blocks: &[Block], cells: &[[i32; 3]]) -> App {
     let mut app = field(blocks);
     app.simulation.set_camera_mode(CameraMode::Isometric);
     app.crew = Crew::default();
+    app.possessed = None;
     for (index, cell) in cells.iter().enumerate() {
         let id = app.crew.spawn(Pawn::default());
         let start = standing_at(*cell);
         if index == 0 {
-            app.possessed = id;
             app.simulation.set_position_yaw_pitch(start, 0.0, 0.0);
             app.physics.spawn_player(start);
             let player = app.physics.player.expect("the player was just spawned");

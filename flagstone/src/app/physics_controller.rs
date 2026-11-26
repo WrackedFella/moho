@@ -72,6 +72,17 @@ impl PhysicsController {
         self.pawns.insert(id, handle);
     }
 
+    /// Makes pawn `id`'s body the player's, so the character step and the first-person view
+    /// follow it, and queues a view snap so the view does not blend from the previous body.
+    /// Does nothing for a pawn without a body.
+    pub fn possess(&mut self, id: flagstone_game::pawn::PawnId) {
+        let Some(&handle) = self.pawns.get(&id) else {
+            return;
+        };
+        self.player = Some(handle);
+        self.snap_view = true;
+    }
+
     /// Clear and recreate the physics world, removing all colliders and bodies.
     pub fn reset(&mut self) {
         self.world = Some(new_world());
@@ -404,11 +415,107 @@ mod tests {
         let player = app.physics.player.expect("a player body is placed");
         assert_eq!(app.crew.len(), 1, "a save holds no crew, only the camera");
         assert_eq!(
-            app.physics.pawns.get(&app.possessed),
+            app.physics
+                .pawns
+                .get(&app.possessed.expect("a pawn is possessed")),
             Some(&player),
             "the possessed pawn's body is the player's"
         );
         assert_eq!(app.physics.pawns.len(), 1);
+    }
+
+    /// An app in `mode` that has just loaded a one-chunk save.
+    fn app_loaded_in(mode: flagstone_game::controller::CameraMode) -> crate::App {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+        app.simulation.set_camera_mode(mode);
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        assert_eq!(
+            app.simulation.camera_mode(),
+            mode,
+            "setup: the load keeps the view"
+        );
+        app
+    }
+
+    #[test]
+    fn a_load_in_the_strategy_view_leaves_nobody_possessed_and_the_app_runs() {
+        use flagstone_game::controller::CameraMode;
+        use moho_render_api::UiFrameSource;
+        let mut app = app_loaded_in(CameraMode::Isometric);
+        app.game_state = crate::game_state::GameState::Playing;
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new({
+            let mut adapter = flagstone_ui::build_adapter(
+                None,
+                std::sync::Arc::new(moho_core::events::EventBus::new()),
+                moho_core::prefs::Prefs::default(),
+            );
+            adapter.set_game_state(flagstone_ui::GameState::Playing);
+            adapter
+        }));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+
+        moho_app::HeadlessLoop::<crate::App>::new(moho_app::LoopConfig::new(
+            flagstone_game::TICK_HZ,
+        ))
+        .step(&mut app, 3);
+        crate::app::event_loop::FrameProcessor::new().update_hud_data(
+            &app,
+            &moho_app::GameClock::default(),
+            std::time::Duration::from_millis(16),
+        );
+
+        assert_eq!(
+            app.possessed, None,
+            "nobody is possessed in the strategy view"
+        );
+        assert_eq!(app.crew.len(), 1);
+        assert_eq!(app.physics.pawns.len(), 1, "the pawn still has its body");
+        assert!(
+            adapter
+                .lock()
+                .expect("adapter")
+                .ui_frame([800, 600])
+                .is_some(),
+            "the HUD paints"
+        );
+    }
+
+    #[test]
+    fn a_load_in_first_person_possesses_the_first_pawn() {
+        use flagstone_game::controller::CameraMode;
+        let app = app_loaded_in(CameraMode::FirstPerson);
+
+        assert_eq!(app.possessed, Some(flagstone_game::selection::FIRST_PAWN));
+        assert_eq!(
+            app.physics.player,
+            app.physics
+                .pawns
+                .get(&flagstone_game::selection::FIRST_PAWN)
+                .copied()
+        );
     }
 
     #[test]
@@ -546,6 +653,53 @@ mod tests {
             assert!(pw.character(handle).is_none(), "an old body is still alive");
         }
         assert_eq!(pw.rigid_body_set.len(), 0, "no body outlives the reset");
+    }
+
+    #[test]
+    fn possess_makes_the_pawns_body_the_players_and_the_view_does_not_blend() {
+        use flagstone_game::pawn::PawnId;
+        let mut controller = PhysicsController::new();
+        controller.spawn_possessed(PawnId(0), glam::Vec3::new(0.0, 50.0, 0.0));
+        controller.spawn_pawn(PawnId(1), glam::Vec3::new(8.0, 50.0, 0.0));
+        let second = controller.pawns[&PawnId(1)];
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        assert_ne!(
+            controller.player,
+            Some(second),
+            "setup: the first is the player"
+        );
+        assert!(controller.player_states().is_some(), "setup");
+
+        controller.possess(PawnId(1));
+
+        assert_eq!(controller.player, Some(second));
+        assert_eq!(
+            controller.player_states(),
+            None,
+            "no blend from the old body"
+        );
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("the possessed body is live");
+        assert!(
+            (moved.position.x - 8.0).abs() < 0.5,
+            "the step moved the second pawn's body: {moved:?}"
+        );
+        assert_eq!(controller.player_states(), Some((moved, moved)));
+    }
+
+    #[test]
+    fn possessing_a_pawn_without_a_body_changes_nothing() {
+        use flagstone_game::pawn::PawnId;
+        let mut controller = PhysicsController::new();
+        controller.spawn_possessed(PawnId(0), glam::Vec3::new(0.0, 50.0, 0.0));
+        let player = controller.player;
+
+        controller.possess(PawnId(7));
+
+        assert_eq!(controller.player, player);
     }
 
     #[test]

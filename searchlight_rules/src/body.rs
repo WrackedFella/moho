@@ -19,6 +19,18 @@ pub enum BodyPart {
     RightLeg,
 }
 
+impl BodyPart {
+    /// Every part, in declaration order.
+    pub const ALL: [BodyPart; 6] = [
+        BodyPart::Head,
+        BodyPart::Torso,
+        BodyPart::LeftArm,
+        BodyPart::RightArm,
+        BodyPart::LeftLeg,
+        BodyPart::RightLeg,
+    ];
+}
+
 /// Supplied pool sizes for a [`Body`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BodyProfile {

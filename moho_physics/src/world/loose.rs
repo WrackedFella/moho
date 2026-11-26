@@ -3,9 +3,17 @@ use super::PhysicsWorld;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
-    Pose, RigidBodyBuilder, RigidBodyHandle,
+    Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle,
 };
 use serde::{Deserialize, Serialize};
+
+/// The pose a body holds right now.
+fn body_pose(body: &RigidBody) -> LoosePose {
+    LoosePose {
+        position: body.translation(),
+        rotation: *body.rotation(),
+    }
+}
 
 /// Membership bit that marks a loose collider. A collider whose only membership is this bit is
 /// ignored by characters: their filter tests with `And`, so it hides only colliders whose every
@@ -50,6 +58,8 @@ pub(super) struct Loose {
     /// The spawn as given; its pose and velocity fields are those of the spawn, not the body's
     /// current ones.
     spawn: LooseSpawn,
+    /// The body's pose before the last step, for drawing between ticks.
+    previous: LoosePose,
 }
 
 /// How a shape rolls, which decides what the rest brake cuts.
@@ -250,6 +260,42 @@ pub enum RestoreLooseError {
     BadSpawn { id: LooseId, reason: String },
 }
 
+/// Where a loose object stood: the position and rotation a game draws it at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoosePose {
+    pub position: Vec3,
+    pub rotation: Quat,
+}
+
+/// A loose object's pose at the last two ticks, for drawing between them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LoosePoses {
+    pub previous: LoosePose,
+    pub current: LoosePose,
+}
+
+impl LoosePoses {
+    /// `alpha` 0 is `previous`, 1 is `current`: position lerp, rotation shortest-arc slerp.
+    /// `alpha` is clamped to [0, 1], and 0 and 1 return `previous` and `current` exactly.
+    ///
+    /// A NaN `alpha` is not mapped to anything: it passes through the clamp and the result has
+    /// NaN components.
+    pub fn blend(self, alpha: f32) -> LoosePose {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if alpha == 0.0 {
+            return self.previous;
+        }
+        if alpha == 1.0 {
+            return self.current;
+        }
+        LoosePose {
+            position: self.previous.position.lerp(self.current.position, alpha),
+            // glam's slerp negates one end when the dot product is negative: the short way.
+            rotation: self.previous.rotation.slerp(self.current.rotation, alpha),
+        }
+    }
+}
+
 /// The id names a loose object that was never spawned or was removed.
 #[derive(Debug, PartialEq, thiserror::Error)]
 #[error("unknown loose object")]
@@ -308,6 +354,10 @@ impl PhysicsWorld {
             Loose {
                 body: handle,
                 spawn: *spawn,
+                previous: LoosePose {
+                    position: spawn.position,
+                    rotation: spawn.rotation,
+                },
             },
         );
     }
@@ -322,6 +372,23 @@ impl PhysicsWorld {
             angular_velocity: body.angvel(),
             asleep: body.is_sleeping(),
         })
+    }
+
+    /// The object's pose at the last two ticks; `None` for an unknown id.
+    pub fn loose_poses(&self, id: LooseId) -> Option<LoosePoses> {
+        let loose = self.loose.get(&id)?;
+        Some(LoosePoses {
+            previous: loose.previous,
+            current: body_pose(&self.rigid_body_set[loose.body]),
+        })
+    }
+
+    /// Copy every loose body's pose, asleep or not, into `previous`: a sleeper skipped here
+    /// would keep the pose from before it slept for ever.
+    pub(super) fn remember_loose_poses(&mut self) {
+        for loose in self.loose.values_mut() {
+            loose.previous = body_pose(&self.rigid_body_set[loose.body]);
+        }
     }
 
     /// Remove the object's body and collider.
@@ -3388,5 +3455,224 @@ mod tests {
             .expect("empty records restore");
 
         let _ = world.restore_loose(&records(0, Vec::new()));
+    }
+
+    fn poses_of(world: &PhysicsWorld, id: LooseId) -> LoosePoses {
+        let poses = world.loose_poses(id);
+        assert!(poses.is_some(), "a live object has poses");
+        poses.unwrap_or_else(|| unreachable!("asserted just above"))
+    }
+
+    fn pose_bits(pose: &LoosePose) -> [u32; 7] {
+        let [px, py, pz] = pose.position.to_array();
+        let [rx, ry, rz, rw] = pose.rotation.to_array();
+        [px, py, pz, rx, ry, rz, rw].map(f32::to_bits)
+    }
+
+    fn pose_of(state: &LooseState) -> LoosePose {
+        LoosePose {
+            position: state.position,
+            rotation: state.rotation,
+        }
+    }
+
+    /// The rotation angle, radians, between two unit quaternions, by the short way.
+    fn angle_between(a: Quat, b: Quat) -> f32 {
+        2.0 * a.dot(b).abs().clamp(0.0, 1.0).acos()
+    }
+
+    /// A tumbling box after two ticks in the air, with a turn between its poses.
+    fn tumbling_poses() -> LoosePoses {
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(&tumbling_spawn(
+            Vec3::new(7.0, -3.0, 11.0),
+            Vec3::new(2.0, 0.0, -1.5),
+            4.0,
+        ));
+        run(&mut world, 2);
+        let poses = poses_of(&world, id);
+        assert!(
+            angle_between(poses.previous.rotation, poses.current.rotation) > 0.1,
+            "the box turned between ticks, {poses:?}"
+        );
+        poses
+    }
+
+    #[test]
+    fn the_previous_pose_is_the_last_ticks_pose() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&tumbling_spawn(
+            Vec3::new(7.0, -3.0, 11.0),
+            Vec3::new(2.0, 0.0, -1.5),
+            4.0,
+        ));
+
+        for tick in 1..=120 {
+            let before = pose_of(&read(&world, id));
+            world.step(DT);
+            let after = pose_of(&read(&world, id));
+
+            let poses = poses_of(&world, id);
+            assert_eq!(
+                pose_bits(&poses.previous),
+                pose_bits(&before),
+                "tick {tick}: previous is the pose before the step"
+            );
+            assert_eq!(
+                pose_bits(&poses.current),
+                pose_bits(&after),
+                "tick {tick}: current is the pose after the step"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_object_has_no_jump() {
+        let mut world = PhysicsWorld::new();
+        let spawn = LooseSpawn {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
+            ..flat_box_spawn()
+        };
+
+        let id = world.spawn_loose(&spawn);
+
+        let poses = poses_of(&world, id);
+        assert_eq!(pose_bits(&poses.previous), pose_bits(&poses.current));
+        assert!(
+            poses.current.position.abs_diff_eq(spawn.position, 1e-6),
+            "{poses:?}"
+        );
+        assert!(
+            poses.current.rotation.abs_diff_eq(spawn.rotation, 1e-6),
+            "{poses:?}"
+        );
+    }
+
+    #[test]
+    fn a_sleeping_object_stands_still() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&flat_box_spawn());
+        let mut ticks = 0;
+        while ticks < 600 && !read(&world, id).asleep {
+            world.step(DT);
+            ticks += 1;
+        }
+        assert!(read(&world, id).asleep, "the box sleeps within 600 ticks");
+
+        world.step(DT);
+
+        assert!(read(&world, id).asleep, "the box is still asleep");
+        let poses = poses_of(&world, id);
+        assert_eq!(pose_bits(&poses.previous), pose_bits(&poses.current));
+    }
+
+    #[test]
+    fn blend_runs_from_previous_to_current() {
+        let poses = tumbling_poses();
+        let total = angle_between(poses.previous.rotation, poses.current.rotation);
+
+        let start = poses.blend(0.0);
+        let end = poses.blend(1.0);
+        let middle = poses.blend(0.5);
+
+        assert_eq!(pose_bits(&start), pose_bits(&poses.previous));
+        assert_eq!(pose_bits(&end), pose_bits(&poses.current));
+        let midpoint = (poses.previous.position + poses.current.position) * 0.5;
+        assert!(
+            middle.position.abs_diff_eq(midpoint, 1e-6),
+            "position {} is not the midpoint {midpoint}",
+            middle.position
+        );
+        let to_previous = angle_between(middle.rotation, poses.previous.rotation);
+        let to_current = angle_between(middle.rotation, poses.current.rotation);
+        assert!(
+            (to_previous - total / 2.0).abs() <= 1e-4,
+            "half the turn is {}, got {to_previous}",
+            total / 2.0
+        );
+        assert!(
+            (to_current - total / 2.0).abs() <= 1e-4,
+            "half the turn is {}, got {to_current}",
+            total / 2.0
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn blend_takes_the_short_way_round(
+            from in (-3.1f32..3.1, -3.1f32..3.1, -3.1f32..3.1),
+            to in (-3.1f32..3.1, -3.1f32..3.1, -3.1f32..3.1),
+            alpha in 0.0f32..=1.0,
+        ) {
+            let euler = |(x, y, z): (f32, f32, f32)| {
+                Quat::from_euler(glam::EulerRot::XYZ, x, y, z).normalize()
+            };
+            let previous = euler(from);
+            let mut current = euler(to);
+            if previous.dot(current) > 0.0 {
+                current = -current;
+            }
+            prop_assume!(previous.dot(current) < -1e-3);
+            let poses = LoosePoses {
+                previous: LoosePose { position: Vec3::ZERO, rotation: previous },
+                current: LoosePose { position: Vec3::ZERO, rotation: current },
+            };
+            let between = angle_between(previous, current);
+
+            let blended = poses.blend(alpha).rotation;
+
+            let to_previous = angle_between(blended, previous);
+            let to_current = angle_between(blended, current);
+            prop_assert!(to_previous <= between + 2e-3, "{to_previous} > {between}");
+            prop_assert!(to_current <= between + 2e-3, "{to_current} > {between}");
+            prop_assert!(
+                (to_previous - alpha * between).abs() <= 2e-3,
+                "alpha {alpha}: {to_previous} from previous, expected {}",
+                alpha * between
+            );
+        }
+    }
+
+    #[test]
+    fn blend_clamps_alpha() {
+        let poses = tumbling_poses();
+
+        let below = poses.blend(-1.0);
+        let above = poses.blend(2.0);
+
+        assert_eq!(pose_bits(&below), pose_bits(&poses.blend(0.0)));
+        assert_eq!(pose_bits(&below), pose_bits(&poses.previous));
+        assert_eq!(pose_bits(&above), pose_bits(&poses.blend(1.0)));
+        assert_eq!(pose_bits(&above), pose_bits(&poses.current));
+    }
+
+    #[test]
+    fn removed_objects_have_no_poses() {
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(&flat_box_spawn());
+        let before = world.loose_poses(id);
+        world.remove_loose(id).expect("the object is alive");
+
+        let after = world.loose_poses(id);
+
+        assert!(before.is_some(), "a live object has poses");
+        assert_eq!(after, None);
+    }
+
+    #[test]
+    fn an_id_never_spawned_has_no_poses() {
+        let mut larger = PhysicsWorld::new();
+        let mut smaller = PhysicsWorld::new();
+        larger.spawn_loose(&flat_box_spawn());
+        larger.spawn_loose(&flat_box_spawn());
+        let foreign = larger.spawn_loose(&flat_box_spawn());
+        let own = smaller.spawn_loose(&flat_box_spawn());
+
+        let from_larger_world = smaller.loose_poses(foreign);
+        let beyond_issued = smaller.loose_poses(LooseId::from_raw(own.get() + 1));
+
+        assert_eq!(from_larger_world, None);
+        assert_eq!(beyond_issued, None);
     }
 }
