@@ -833,8 +833,8 @@ mod tests {
                 name: Some("turned".to_owned()),
                 parent: Some(0),
                 local: Affine3A::from_scale_rotation_translation(
-                    Vec3::splat(2.0),
-                    Quat::IDENTITY,
+                    Vec3::new(2.0, 0.5, 3.0),
+                    Quat::from_rotation_z(0.7),
                     Vec3::new(0.0, 1.0, 0.0),
                 ),
                 rest: Affine3A::IDENTITY,
@@ -881,14 +881,27 @@ mod tests {
         assert_ne!(child.translation, unturned.nodes()[2].translation);
     }
 
-    /// Root, then three nested nodes `a`, `b` and `above`, each 1 m up from its parent.
-    fn nested() -> Model {
+    /// Root, then three nested nodes `a`, `b` and `above`, each 1 m up from its parent, with the
+    /// given Euler angles and scales (three of each per nested node).
+    fn nested(angles: [f32; 9], scales: [f32; 9]) -> Model {
         let up = Affine3A::from_translation(Vec3::new(0.0, 1.0, 0.0));
+        let local = |i: usize| {
+            Affine3A::from_scale_rotation_translation(
+                Vec3::new(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]),
+                Quat::from_euler(
+                    glam::EulerRot::XYZ,
+                    angles[i * 3],
+                    angles[i * 3 + 1],
+                    angles[i * 3 + 2],
+                ),
+                Vec3::new(0.0, 1.0, 0.0),
+            )
+        };
         let nodes = vec![
             node(Some("root"), None, up),
-            node(Some("a"), Some(0), up),
-            node(Some("b"), Some(1), up),
-            node(Some("above"), Some(2), up),
+            node(Some("a"), Some(0), local(0)),
+            node(Some("b"), Some(1), local(1)),
+            node(Some("above"), Some(2), local(2)),
         ];
         Model::for_tests(nodes, Vec::new())
     }
@@ -899,18 +912,25 @@ mod tests {
             share_a in -2.0_f32..2.0,
             share_b in -2.0_f32..2.0,
             pitch in -1.0_f32..1.0,
+            angles in prop::array::uniform9(-3.0_f32..3.0),
+            scales in prop::array::uniform9(0.8_f32..1.25),
         ) {
-            let model = nested();
+            let model = nested(angles, scales);
             let turns = [
                 (1, Quat::from_rotation_x(-pitch * share_a)),
                 (2, Quat::from_rotation_x(-pitch * share_b)),
             ];
+            let unturned = model.compose(locals(&model), &[]);
 
             let posed = model.compose(locals(&model), &turns);
 
+            let motion = posed.nodes()[3] * unturned.nodes()[3].inverse();
             let expected = Mat3A::from_rotation_x(-pitch * (share_a + share_b));
-            let above = posed.nodes()[3].matrix3;
-            prop_assert!(above.abs_diff_eq(expected, 1e-5), "{above:?} != {expected:?}");
+            prop_assert!(
+                motion.matrix3.abs_diff_eq(expected, 1e-5),
+                "{:?} != {expected:?}",
+                motion.matrix3
+            );
         }
     }
 }

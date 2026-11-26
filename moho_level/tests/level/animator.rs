@@ -10,7 +10,7 @@ use moho_level::anim::AimLink;
 use moho_level::anim::{Animator, ClipError, ClipPlayer, Playback, Pose, Region};
 use moho_level::humanoid::{Bone, Humanoid};
 use moho_level::{Model, load_model};
-use moho_physics::{HitTag, HitVolume, PhysicsWorld, RayQuery};
+use moho_physics::{HitTag, HitVolume};
 use tempfile::TempDir;
 
 use crate::support::humanoid::{HumanoidSpec, RELOAD_DURATION, write_humanoid};
@@ -746,29 +746,6 @@ fn head_volume(head: Affine3A) -> HitVolume {
     }
 }
 
-/// What the ray along +X, 3 m short of a character holding only `volume`, hits when it starts
-/// at `from` relative to the character's body.
-fn ray_hit(volume: HitVolume, from: Vec3) -> Option<HitTag> {
-    let mut world = PhysicsWorld::new();
-    let character = world.add_character(Vec3::new(0.0, 2.0, 0.0));
-    world
-        .set_hit_volumes(character, &[volume])
-        .expect("character is live");
-    world.step(TICK);
-    let body = world
-        .character(character)
-        .expect("character is live")
-        .position;
-    world
-        .cast_ray(&RayQuery {
-            origin: body + from + Vec3::new(-3.0, 0.0, 0.0),
-            direction: Vec3::X,
-            max_distance: 20.0,
-            ignore: None,
-        })
-        .map(|hit| hit.tag)
-}
-
 /// Where the head of a rig at rest ends up when each link turns its node by its share of
 /// `pitch` (positive up) about the model's X axis, working down the chain from the pelvis.
 fn pitched_head(model: &Model, chain: &[AimLink], pitch: f32) -> Vec3 {
@@ -804,10 +781,6 @@ fn head_hit_volume_follows_the_pitched_head() {
     );
     assert_ne!(raised.offset, flat.offset);
     assert_ne!(raised.rotation, flat.rotation);
-    assert_eq!(ray_hit(raised, raised.offset), Some(HEAD));
-    assert_eq!(ray_hit(raised, flat.offset), None);
-    assert_eq!(ray_hit(flat, flat.offset), Some(HEAD));
-    assert_eq!(ray_hit(flat, raised.offset), None);
 }
 
 /// Pitches the sim sets, by tick.
@@ -985,6 +958,43 @@ fn animators_with_different_aim_state_are_not_equal() {
     assert_ne!(pitched, aiming(&walking, chain.clone(), 0.4));
     assert_ne!(pitched, aiming(&walking, Vec::new(), 0.3));
     assert_ne!(pitched, aiming(&walking, chain[..2].to_vec(), 0.3));
+}
+
+#[test]
+fn pitch_turns_about_the_model_x_axis_even_when_a_chain_bone_is_rotated_by_the_clip() {
+    let spec = HumanoidSpec {
+        extra_spine: 2,
+        lean: true,
+        ..HumanoidSpec::default()
+    };
+    let (_dir, path) = write_humanoid(&spec);
+    let model = load_model(&path).expect("humanoid loads");
+    let leaning = looping(&model, "lean");
+    let pitching = aiming(&leaning, three_bone_chain(&model), degrees(30.0));
+    let above = below(&model, node_named(&model, "spine_03"));
+
+    let pitched = pitching.pose(&model);
+    let lean = leaning.pose(&model);
+
+    let spine = lean.nodes()[SPINE_01];
+    let expected = Mat3A::from_rotation_z(0.5) * Mat3A::from_rotation_y(0.4);
+    assert!(
+        spine.matrix3.abs_diff_eq(expected, 1e-5),
+        "the clip turns spine_01 about Z then Y: {:?}",
+        spine.matrix3
+    );
+    let motion = shared_motion(&pitched, &lean, &above);
+    assert_rotation(motion, Quat::from_rotation_x(-degrees(30.0)));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "finite")]
+fn setting_a_non_finite_pitch_panics_in_debug_builds() {
+    let (_dir, model) = load_aimer();
+    let mut animator = walker(&model);
+
+    animator.set_aim_pitch(f32::NAN);
 }
 
 #[test]

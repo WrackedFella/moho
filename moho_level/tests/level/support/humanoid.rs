@@ -84,6 +84,9 @@ pub struct HumanoidSpec {
     /// everything after `spine_01` shift up by this count, so the index constants above hold
     /// only with 0; look nodes up by name otherwise.
     pub extra_spine: usize,
+    /// Adds the `lean` clip last: `pelvis` is held turned 0.5 rad about +Z and `spine_01` 0.4 rad
+    /// about +Y, so the chain bones carry rotations of their own.
+    pub lean: bool,
 }
 
 /// How far each extra spine bone sits above its parent.
@@ -366,6 +369,25 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
             "channels": [
                 { "sampler": 0, "target": { "node": file(HAND_L), "path": "translation" } },
                 { "sampler": 1, "target": { "node": file(THIGH_L), "path": "translation" } },
+            ],
+        }));
+    }
+
+    if spec.lean {
+        let times = [0.0, 1.0];
+        let held = |q: Quat| [q.to_array(), q.to_array()].concat();
+        let (pelvis_in, pelvis_out) =
+            blob.keys(&times, &held(Quat::from_rotation_z(0.5)), "VEC4", 4);
+        let (spine_in, spine_out) = blob.keys(&times, &held(Quat::from_rotation_y(0.4)), "VEC4", 4);
+        animations.push(json!({
+            "name": "lean",
+            "samplers": [
+                { "input": pelvis_in, "output": pelvis_out, "interpolation": "LINEAR" },
+                { "input": spine_in, "output": spine_out, "interpolation": "LINEAR" },
+            ],
+            "channels": [
+                { "sampler": 0, "target": { "node": file(PELVIS), "path": "rotation" } },
+                { "sampler": 1, "target": { "node": file(1), "path": "rotation" } },
             ],
         }));
     }
