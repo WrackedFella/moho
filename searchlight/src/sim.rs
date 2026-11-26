@@ -14,14 +14,14 @@ use moho_physics::{
 };
 use searchlight_rules::{
     Accuracy, AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
-    HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Remains,
-    Rifle, Rig, Shot, disc_offset, leaned_parts,
+    HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Place,
+    Remains, Rifle, Rig, Shot, Source, disc_offset, leaned_parts,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
-use crate::input::SearchlightCommand;
+use crate::input::{InventoryCommand, SearchlightCommand};
 use crate::lean::lean_offset;
 use crate::round::{RoundInFlight, step_round};
 use crate::shot::{ShotRay, Strike, passes_within, resolve_shot};
@@ -389,6 +389,8 @@ pub struct SearchlightSim {
     bodies: BTreeMap<u16, DeadBody>,
     /// The body whose screen is open, if any.
     looting: Option<u16>,
+    /// The body being searched and the ticks of searching left, if a search is under way.
+    search: Option<(u16, u32)>,
     /// What a restart rebuilds the characters from, in the same world.
     origin: (Spawns, SimConfig),
 }
@@ -541,6 +543,7 @@ impl SearchlightSim {
             kills: 0,
             bodies: BTreeMap::new(),
             looting: None,
+            search: None,
             origin: (spawns, config),
         }
     }
@@ -557,6 +560,8 @@ impl SearchlightSim {
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         self.traces.clear();
         if self.player_body.is_dead() {
+            self.looting = None;
+            self.search = None;
             if command.restart {
                 self.restart();
             }
@@ -595,8 +600,66 @@ impl SearchlightSim {
 
         self.fire_enemies(&firing, command.god_mode);
         self.remove_dead_enemies();
+        self.step_looting(command);
         if self.player_body.is_dead() {
             self.outbox.push(Feedback::PlayerDied);
+        }
+    }
+
+    /// Applies the inventory command, then advances the search or starts one on a use press.
+    fn step_looting(&mut self, command: &SearchlightCommand) {
+        match command.inventory {
+            Some(InventoryCommand::Close) => self.looting = None,
+            Some(InventoryCommand::Move { from, to }) => self.move_item(from, to),
+            None => {}
+        }
+        if let Some((body, left)) = self.search {
+            if self.body_in_view() != Some(body) {
+                self.search = None;
+                self.outbox.push(Feedback::SearchCancelled);
+            } else if left <= 1 {
+                self.open_body(body);
+            } else {
+                self.search = Some((body, left - 1));
+            }
+        } else if command.use_pressed
+            && self.control_in_reach().is_none()
+            && let Some(body) = self.body_in_view()
+        {
+            let searched = self.bodies.get(&body).is_some_and(|dead| dead.searched);
+            if searched || self.origin.1.search_ticks == 0 {
+                self.open_body(body);
+            } else {
+                self.search = Some((body, self.origin.1.search_ticks));
+            }
+        }
+    }
+
+    /// Marks `body` searched and opens its screen.
+    fn open_body(&mut self, body: u16) {
+        self.search = None;
+        if let Some(dead) = self.bodies.get_mut(&body) {
+            dead.searched = true;
+        }
+        self.looting = Some(body);
+        self.outbox.push(Feedback::SearchOpened { body });
+    }
+
+    /// Moves one item for the player, the body being looted taking part only while it lies
+    /// within the search reach. A refused move changes nothing.
+    fn move_item(&mut self, from: Source, to: Place) {
+        let eye = self.player_eye();
+        let reach = self.origin.1.search_reach;
+        let looted = self.looting.filter(|number| {
+            self.bodies
+                .get(number)
+                .is_some_and(|dead| dead.point.distance(eye) <= reach)
+        });
+        let remains = looted
+            .and_then(|number| self.bodies.get_mut(&number))
+            .map(|dead| &mut dead.remains);
+        if let Err(refused) = self.loadout.move_item(remains, from, to) {
+            tracing::debug!(%refused, ?from, ?to, "inventory move refused");
         }
     }
 
@@ -863,12 +926,24 @@ impl SearchlightSim {
                 continue;
             }
             if let Some(handle) = target.handle.take() {
+                let number = u16::try_from(index).expect("target numbers fit a u16");
+                let centre = self
+                    .world
+                    .character(handle)
+                    .expect("a living enemy is in the world")
+                    .position;
+                self.bodies.insert(
+                    number,
+                    DeadBody {
+                        point: centre - Vec3::Y * (self.body.standing.hull.length / 2.0),
+                        remains: self.origin.1.enemy_remains.clone(),
+                        searched: false,
+                    },
+                );
                 self.world
                     .remove_character(handle)
                     .expect("a living enemy is in the world");
-                self.outbox.push(Feedback::EnemyDied {
-                    target: u16::try_from(index).expect("target numbers fit a u16"),
-                });
+                self.outbox.push(Feedback::EnemyDied { target: number });
             }
         }
     }
@@ -1172,12 +1247,42 @@ impl SearchlightSim {
     /// The body the player is looking at within the search reach, or `None` when none is, a
     /// wall or control is nearer, or the player is dead.
     pub fn body_in_view(&self) -> Option<u16> {
-        panic!("not yet implemented: body_in_view")
+        if self.player_body.is_dead() {
+            return None;
+        }
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let eye = self.leaned_eye(&state);
+        let (reach, radius) = (self.origin.1.search_reach, self.origin.1.body_radius);
+        let end = eye + view.forward * reach;
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin: eye,
+                direction: view.forward,
+                range: reach,
+                ignore: Some(self.player),
+            },
+        );
+        self.bodies
+            .iter()
+            .filter(|(_, dead)| {
+                dead.point.distance(eye) <= reach && passes_within(eye, end, dead.point, radius)
+            })
+            .map(|(&number, dead)| (number, (dead.point - eye).dot(view.forward).max(0.0)))
+            .filter(|&(_, along)| strike.is_none_or(|strike| strike.distance >= along))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(number, _)| number)
     }
 
     /// The bodies enemies left, by target number.
     pub fn bodies(&self) -> &BTreeMap<u16, DeadBody> {
         &self.bodies
+    }
+
+    /// The number of the body being searched, if a search is under way.
+    pub fn searching(&self) -> Option<u16> {
+        self.search.map(|(body, _)| body)
     }
 
     /// The number of the body whose screen is open, if any.

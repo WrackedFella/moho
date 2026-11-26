@@ -112,8 +112,12 @@ pub fn with_enemy_kit(
     remains: Remains,
     rounds: BTreeMap<ItemId, Ballistics>,
 ) -> SimConfig {
-    let _ = (config, remains, rounds);
-    panic!("not yet implemented: with_enemy_kit")
+    let mut config = config;
+    for (round, ballistics) in rounds {
+        config.rounds.entry(round).or_insert(ballistics);
+    }
+    config.enemy_remains = remains;
+    config
 }
 
 #[cfg(test)]

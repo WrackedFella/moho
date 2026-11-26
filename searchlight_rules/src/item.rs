@@ -193,9 +193,9 @@ impl ItemKind {
     pub(crate) fn required_class(&self) -> Option<ItemClass> {
         match self {
             Self::Weapon(_) => Some(ItemClass::Weapon),
-            Self::Magazine(_) | Self::Rig(_) => Some(ItemClass::Gear),
+            Self::Magazine(_) | Self::Rig(_) | Self::Backpack(_) => Some(ItemClass::Gear),
             Self::Round(_) => Some(ItemClass::Consumable),
-            Self::Backpack(_) | Self::Plain => None,
+            Self::Plain => None,
         }
     }
 
@@ -268,7 +268,6 @@ struct RawItemDef {
     size: [u8; 2],
     condition: Option<u8>,
     uses: Option<NonZeroU32>,
-    #[serde(default)]
     weight: f32,
     weapon: Option<RifleDef>,
     magazine: Option<MagazineSpec>,
@@ -296,6 +295,9 @@ impl TryFrom<RawItemDef> for ItemDef {
 
     fn try_from(raw: RawItemDef) -> Result<Self, Self::Error> {
         let lifecycle = raw.lifecycle()?;
+        if !(raw.weight.is_finite() && raw.weight >= 0.0) {
+            return Err(ItemDefError::Weight(raw.weight));
+        }
         let [width, height] = raw.size;
         if width == 0 || height == 0 {
             return Err(ItemDefError::ZeroSize);

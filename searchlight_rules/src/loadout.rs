@@ -3,6 +3,7 @@
 
 use crate::inventory::{Item, MoveRefused, Place, Remains, Source};
 use crate::item::ItemId;
+use crate::magazine::Magazine;
 use crate::rifle::{Rifle, Shot};
 use crate::rig::Rig;
 
@@ -69,8 +70,88 @@ impl Loadout {
         from: Source,
         to: Place,
     ) -> Result<(), MoveRefused> {
-        let _ = (body, from, to);
-        panic!("not yet implemented: move_item")
+        let mut body = body;
+        let names_body = to == Place::Body
+            || matches!(
+                from,
+                Source::BodyCarried(_)
+                    | Source::BodyMagazineSlot(_)
+                    | Source::BodyRig
+                    | Source::BodyBackpack
+            );
+        if names_body && body.is_none() {
+            return Err(MoveRefused::NoBody);
+        }
+        let is_magazine = self
+            .holds_magazine(body.as_deref(), from)
+            .ok_or(MoveRefused::NoSuchItem)?;
+        if to == Place::MagazineSlots {
+            if !is_magazine {
+                return Err(MoveRefused::NotAMagazine);
+            }
+            let leaves_a_slot = matches!(from, Source::MagazineSlot(_));
+            if self.rig.free_slots() == 0 && !leaves_a_slot {
+                return Err(MoveRefused::NoFreeSlot);
+            }
+        }
+
+        let item = self
+            .take(body.as_deref_mut(), from)
+            .expect("the source was checked to hold an item");
+        match (to, item) {
+            (Place::Inventory, item) => self.inventory.push(item),
+            (Place::Body, item) => body
+                .expect("a body place was checked to have a body")
+                .carried
+                .push(item),
+            (Place::MagazineSlots, Item::Magazine(magazine)) => {
+                self.rig
+                    .stow(magazine)
+                    .expect("a free slot was checked for");
+            }
+            (Place::MagazineSlots, _) => unreachable!("only a magazine was let through"),
+        }
+        Ok(())
+    }
+
+    /// Whether `from` holds an item, and if so whether it is a magazine.
+    fn holds_magazine(&self, body: Option<&Remains>, from: Source) -> Option<bool> {
+        let in_slot = |slots: &[Option<Magazine>], index: usize| {
+            slots.get(index).and_then(Option::as_ref).map(|_| true)
+        };
+        match from {
+            Source::Inventory(index) => self
+                .inventory
+                .get(index)
+                .map(|item| matches!(item, Item::Magazine(_))),
+            Source::MagazineSlot(index) => in_slot(self.rig.slots(), index),
+            Source::BodyCarried(index) => body?
+                .carried
+                .get(index)
+                .map(|item| matches!(item, Item::Magazine(_))),
+            Source::BodyMagazineSlot(index) => in_slot(body?.rig.as_ref()?.slots(), index),
+            Source::BodyRig => body?.rig.as_ref().map(|_| false),
+            Source::BodyBackpack => body?.backpack.as_ref().map(|_| false),
+        }
+    }
+
+    /// Removes and returns what `from` holds.
+    fn take(&mut self, body: Option<&mut Remains>, from: Source) -> Option<Item> {
+        match from {
+            Source::Inventory(index) => {
+                (index < self.inventory.len()).then(|| self.inventory.remove(index))
+            }
+            Source::MagazineSlot(index) => self.rig.take_slot(index).map(Item::Magazine),
+            Source::BodyCarried(index) => {
+                let carried = &mut body?.carried;
+                (index < carried.len()).then(|| carried.remove(index))
+            }
+            Source::BodyMagazineSlot(index) => {
+                body?.rig.as_mut()?.take_slot(index).map(Item::Magazine)
+            }
+            Source::BodyRig => body?.rig.take().map(Item::Rig),
+            Source::BodyBackpack => body?.backpack.take().map(Item::Other),
+        }
     }
 
     /// The rifle in hand.

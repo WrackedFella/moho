@@ -13,7 +13,6 @@ pub mod head_bob;
 pub mod hud;
 pub mod input;
 pub mod inventory;
-pub mod item_lists;
 pub mod kit;
 pub mod launch;
 pub mod lean;

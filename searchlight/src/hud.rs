@@ -123,6 +123,13 @@ pub fn use_prompt(key: &str, action: ControlAction) -> String {
     format!("[{key}] {what}")
 }
 
+/// The prompt for a body in view: the `key` that searches it and `Search`, or `Searching` while
+/// the search is under way.
+pub fn search_prompt(key: &str, searching: bool) -> String {
+    let what = if searching { "Searching" } else { "Search" };
+    format!("[{key}] {what}")
+}
+
 /// What one rig slot holds, as the strip shows it: never a round count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotMark {

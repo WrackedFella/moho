@@ -1,8 +1,8 @@
 //! The inventory screen's data: the lists the shell draws, built from what the sim holds. The
 //! screen only shows and asks; the sim owns the items and applies every move.
 
-use moho_ui_shell::{ItemLists, ListId};
-use searchlight_rules::{Loadout, Place, Remains, Source};
+use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
+use searchlight_rules::{Item, Loadout, Magazine, Place, Remains, Source};
 
 use crate::menu::MenuAction;
 
@@ -26,8 +26,18 @@ pub const BODY: ListId = ListId(3);
 /// [`EMPTY_SLOT`] with no count. The body's list shows its rig, the magazines in the rig (not
 /// its free slots), its backpack, then its carried items.
 pub fn lists(loadout: &Loadout, body: Option<&Remains>) -> ItemLists<MenuAction> {
-    let _ = (loadout, body);
-    panic!("not yet implemented: lists")
+    let mut shown = vec![
+        list(EQUIPMENT, "Equipment", loadout, body),
+        list(MAGAZINE_SLOTS, "Magazine slots", loadout, body),
+        list(INVENTORY, "Inventory", loadout, body),
+    ];
+    if body.is_some() {
+        shown.push(list(BODY, "Body", loadout, body));
+    }
+    ItemLists {
+        lists: shown,
+        back: Some(MenuAction::Back),
+    }
 }
 
 /// What row `row` of list `list` is a move of, given what the lists were built from, or `None`
@@ -38,14 +48,132 @@ pub fn source_of(
     loadout: &Loadout,
     body: Option<&Remains>,
 ) -> Option<Source> {
-    let _ = (list, row, loadout, body);
-    panic!("not yet implemented: source_of")
+    entries(list, loadout, body)
+        .into_iter()
+        .nth(row)
+        .and_then(|entry| entry.source)
 }
 
 /// Where dropping an item on list `list` puts it, or `None` for a list nothing drops on.
 pub fn place_of(list: ListId) -> Option<Place> {
-    let _ = list;
-    panic!("not yet implemented: place_of")
+    match list {
+        INVENTORY => Some(Place::Inventory),
+        MAGAZINE_SLOTS => Some(Place::MagazineSlots),
+        BODY => Some(Place::Body),
+        _ => None,
+    }
+}
+
+/// An action a row of the inventory offers. None exists yet; each one added is a variant here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemAction {}
+
+/// One row before it is drawn: what it shows and what moving it means.
+struct Entry {
+    label: String,
+    count: Option<u32>,
+    source: Option<Source>,
+}
+
+impl Entry {
+    fn new(label: impl ToString, count: Option<u32>, source: Option<Source>) -> Self {
+        Self {
+            label: label.to_string(),
+            count,
+            source,
+        }
+    }
+
+    fn of_item(item: &Item, source: Source) -> Self {
+        match item {
+            Item::Weapon(_) => Self::new("Rifle", None, Some(source)),
+            Item::Magazine(magazine) => Self::of_magazine(magazine, source),
+            Item::Rounds(stack) => Self::new(&stack.round, Some(stack.count), Some(source)),
+            Item::Rig(rig) => Self::new(rig.item(), None, Some(source)),
+            Item::Other(id) => Self::new(id, None, Some(source)),
+        }
+    }
+
+    fn of_magazine(magazine: &Magazine, source: Source) -> Self {
+        Self::new(magazine.item(), Some(magazine.rounds()), Some(source))
+    }
+}
+
+/// The rows of list `list` in order; none for an unknown list or the body's without a body.
+fn entries(list: ListId, loadout: &Loadout, body: Option<&Remains>) -> Vec<Entry> {
+    match list {
+        EQUIPMENT => std::iter::once(Entry::new(loadout.rig().item(), None, None))
+            .chain(
+                loadout
+                    .backpack()
+                    .map(|backpack| Entry::new(backpack, None, None)),
+            )
+            .collect(),
+        MAGAZINE_SLOTS => loadout
+            .rig()
+            .slots()
+            .iter()
+            .enumerate()
+            .map(|(slot, held)| match held {
+                Some(magazine) => Entry::of_magazine(magazine, Source::MagazineSlot(slot)),
+                None => Entry::new(EMPTY_SLOT, None, Some(Source::MagazineSlot(slot))),
+            })
+            .collect(),
+        INVENTORY => loadout
+            .inventory()
+            .iter()
+            .enumerate()
+            .map(|(index, item)| Entry::of_item(item, Source::Inventory(index)))
+            .collect(),
+        BODY => body.map(body_entries).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn body_entries(body: &Remains) -> Vec<Entry> {
+    let mut rows = Vec::new();
+    if let Some(rig) = &body.rig {
+        rows.push(Entry::new(rig.item(), None, Some(Source::BodyRig)));
+        for (slot, held) in rig.slots().iter().enumerate() {
+            if let Some(magazine) = held {
+                rows.push(Entry::of_magazine(magazine, Source::BodyMagazineSlot(slot)));
+            }
+        }
+    }
+    if let Some(backpack) = &body.backpack {
+        rows.push(Entry::new(backpack, None, Some(Source::BodyBackpack)));
+    }
+    rows.extend(
+        body.carried
+            .iter()
+            .enumerate()
+            .map(|(index, item)| Entry::of_item(item, Source::BodyCarried(index))),
+    );
+    rows
+}
+
+fn list(
+    id: ListId,
+    title: &str,
+    loadout: &Loadout,
+    body: Option<&Remains>,
+) -> ItemList<MenuAction> {
+    let rows = entries(id, loadout, body)
+        .into_iter()
+        .enumerate()
+        .map(|(row, entry)| ListRow {
+            label: entry.label,
+            count: entry.count,
+            tooltip: None,
+            item: MenuAction::Item(u32::try_from(row).expect("a list has fewer than 2^32 rows")),
+            actions: Vec::new(),
+        })
+        .collect();
+    ItemList {
+        id,
+        title: title.to_owned(),
+        rows,
+    }
 }
 
 #[cfg(test)]

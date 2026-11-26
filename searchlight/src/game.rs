@@ -1,7 +1,7 @@
 //! The prototype as a [`moho_app::Game`]: samples input, ticks the sim, and turns its
 //! feedback into sound, a title status line, a hit flash and a crosshair.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -28,8 +28,8 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, Slot, UiLayers, UiShell,
-    apply_engine_command, apply_engine_settings,
+    Anchor, EngineSettings, ItemLists, ListId, MenuEvent, Routing, ScreenText, Slot, UiLayers,
+    UiShell, apply_engine_command, apply_engine_settings,
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
@@ -39,9 +39,10 @@ use crate::debug_settings::{DebugSettings, GameRows};
 use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{
-    SearchlightAction, SearchlightCommand, build_action_map, look_from, look_to_turn, resolve_lean,
+    InventoryCommand, SearchlightAction, SearchlightCommand, build_action_map, look_from,
+    look_to_turn, resolve_lean,
 };
-use crate::item_lists::DemoItems;
+use crate::inventory;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
     MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
@@ -61,6 +62,14 @@ const DUMMY_MESH_BASE: u64 = 1 << 32;
 const ENEMY_MESH_BASE: u64 = 2 << 32;
 /// Mesh ids reserved per enemy: six body parts and the gun.
 const ENEMY_MESH_SLOTS: u64 = 8;
+/// Body box mesh ids start here, clear of the enemies'; a body's id is its target number.
+const BODY_MESH_BASE: u64 = 3 << 32;
+/// Half extents of the box a dead enemy is drawn as, lying on the floor.
+const BODY_BOX_HALF: Vec3 = Vec3::new(0.9, 0.15, 0.3);
+
+fn body_mesh_id(number: u16) -> WorldMeshId {
+    WorldMeshId(BODY_MESH_BASE + u64::from(number))
+}
 /// Ticks a damage edge bar takes to fade out.
 const EDGE_TICKS: u32 = TICK_HZ / 4;
 /// Width of a damage edge bar, in pixels.
@@ -454,6 +463,8 @@ struct Stage {
     body: CharacterBody,
     dummy_count: usize,
     enemies: Vec<EnemyRig>,
+    /// The numbers of the bodies whose placeholder box is in the scene.
+    shown_bodies: BTreeSet<u16>,
     edge_left: [u32; 4],
     crosshair: Arc<Mutex<Crosshair>>,
     /// Vertical field of view in degrees of every scene drawn.
@@ -567,6 +578,7 @@ impl Stage {
             body: SHIPPED_BODY,
             dummy_count: 0,
             enemies: Vec::new(),
+            shown_bodies: BTreeSet::new(),
             edge_left: [0; 4],
             crosshair: Arc::new(Mutex::new(Crosshair::default())),
             fov_degrees: FOV_DEGREES,
@@ -750,6 +762,28 @@ impl Stage {
         }
     }
 
+    /// Draws each body the sim holds as one box lying at its point in the enemy material, and
+    /// takes out the boxes of bodies a restart cleared.
+    fn sync_bodies(&mut self, sim: &SearchlightSim) {
+        let meshes = self.scene.world_meshes_mut();
+        self.shown_bodies.retain(|number| {
+            let kept = sim.bodies().contains_key(number);
+            if !kept {
+                meshes.remove(body_mesh_id(*number));
+            }
+            kept
+        });
+        for (&number, body) in sim.bodies() {
+            if self.shown_bodies.insert(number) {
+                meshes.upsert(
+                    body_mesh_id(number),
+                    box_mesh(body.point + Vec3::Y * BODY_BOX_HALF.y, BODY_BOX_HALF),
+                    self.enemy_material,
+                );
+            }
+        }
+    }
+
     /// Pushes the death tint and damage bars to the UI.
     fn refresh_hud(&self, dead: bool) {
         let mut hud = self
@@ -925,8 +959,8 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
-    /// The rows of the demo item lists the `items` command opens.
-    items: DemoItems,
+    /// The move the inventory screen asked for since the last tick, sent with the next command.
+    queued_inventory: Option<InventoryCommand>,
     /// The bindings being edited while the Controls page is open.
     controls: Option<ControlsDraft>,
     /// Ticks the rig strip stays up after the last trigger.
@@ -958,7 +992,7 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
-            items: DemoItems::new(),
+            queued_inventory: None,
             controls: None,
             strip_ticks_left: 0,
             check_gear_held: false,
@@ -1018,19 +1052,91 @@ impl SearchlightGame {
             .any(|binding| binding.input == input)
     }
 
-    /// Opens the inventory screen over play.
-    fn open_inventory(&mut self) {
-        self.screen = Screen::Inventory;
-        panic!("not yet implemented: show the inventory lists and keep the loop running")
+    /// Whether the loop stands still: on the main menu or the pause menu, or with the console
+    /// open. The inventory screen takes input but leaves the world running.
+    fn loop_paused(&self) -> bool {
+        !matches!(self.screen, Screen::Playing | Screen::Inventory)
+            || self.stage.shell().console_mut().is_open()
     }
 
-    /// Opens the demo item lists over the pause menu, pausing first when in play.
-    fn open_items(&mut self) {
-        if self.screen == Screen::Playing {
-            self.pause();
-        }
-        let lists = self.items.lists();
+    /// The lists the inventory screen shows: the player's side and, while one is open, the body.
+    fn inventory_lists(&self) -> ItemLists<MenuAction> {
+        let sim = self.mode.sim();
+        let body = sim
+            .looting()
+            .and_then(|number| sim.bodies().get(&number))
+            .map(|dead| &dead.remains);
+        inventory::lists(sim.loadout(), body)
+    }
+
+    /// Opens the inventory screen over play, the world still running behind it.
+    fn open_inventory(&mut self) {
+        self.screen = Screen::Inventory;
+        let lists = self.inventory_lists();
         self.stage.shell().menu_mut().push_lists(lists);
+        self.release_held_input();
+        self.input.discard_edges();
+        self.input.reset_look();
+        self.stage.release_cursor();
+    }
+
+    /// Closes the inventory screen and tells the sim, which ends the looting.
+    fn close_inventory(&mut self) {
+        if self.queued_inventory.is_some() {
+            tracing::debug!("inventory move dropped by a close in the same tick");
+        }
+        self.queued_inventory = Some(InventoryCommand::Close);
+        self.end_inventory();
+    }
+
+    /// Takes the inventory screen down and gives play its input back.
+    fn end_inventory(&mut self) {
+        self.screen = Screen::Playing;
+        self.stage.shell().menu_mut().clear();
+        self.release_held_input();
+        self.input.discard_edges();
+        self.input.reset_look();
+        self.stage.capture_cursor();
+    }
+
+    /// Queues the move of row `row` of list `from` onto list `to` for the next tick. One move is
+    /// sent per tick: a second request before it is sent is dropped, as is one that names worn
+    /// equipment or a row that is gone.
+    fn queue_move(&mut self, row: u32, from: ListId, to: ListId) {
+        let sim = self.mode.sim();
+        let body = sim
+            .looting()
+            .and_then(|number| sim.bodies().get(&number))
+            .map(|dead| &dead.remains);
+        let row = usize::try_from(row).expect("a row index fits usize");
+        let Some(source) = inventory::source_of(from, row, sim.loadout(), body) else {
+            tracing::debug!(
+                list = from.0,
+                row,
+                "inventory move dropped: nothing movable there"
+            );
+            return;
+        };
+        let Some(place) = inventory::place_of(to) else {
+            tracing::debug!(
+                list = to.0,
+                "inventory move dropped: nothing drops on that list"
+            );
+            return;
+        };
+        if let Some(pending) = self.queued_inventory {
+            tracing::debug!(
+                ?pending,
+                ?source,
+                ?place,
+                "inventory move dropped: one is already queued"
+            );
+            return;
+        }
+        self.queued_inventory = Some(InventoryCommand::Move {
+            from: source,
+            to: place,
+        });
     }
 
     /// Answers what the player chose on the menu screens since the last call.
@@ -1069,6 +1175,9 @@ impl SearchlightGame {
                     self.show_controls();
                 }
                 MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
+                MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Inventory => {
+                    self.close_inventory();
+                }
                 MenuEvent::Chosen(MenuAction::Back) => {
                     self.controls = None;
                     self.stage.shell().menu_mut().pop();
@@ -1079,15 +1188,10 @@ impl SearchlightGame {
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
                 MenuEvent::GameSettingsApplied(values) => self.game_settings_applied(&values),
                 MenuEvent::MoveRequested {
-                    item: MenuAction::Item(id),
+                    item: MenuAction::Item(row),
                     from,
                     to,
-                } => {
-                    // A refused move leaves the rows as they were, and the answer is the same.
-                    self.items.move_item(id, from, to);
-                    let lists = self.items.lists();
-                    self.stage.shell().menu_mut().set_lists(lists);
-                }
+                } if self.screen == Screen::Inventory => self.queue_move(row, from, to),
                 MenuEvent::Captured {
                     action: MenuAction::Rebind(action),
                     slot,
@@ -1108,19 +1212,8 @@ impl SearchlightGame {
                 | MenuEvent::ModeChosen { .. } => {}
                 MenuEvent::ActionPicked {
                     action: MenuAction::ItemAction(action),
-                    item: MenuAction::Item(id),
-                    list,
-                    target,
-                } => {
-                    let target = target.and_then(|target| match target.item {
-                        MenuAction::Item(id) => Some((id, target.list)),
-                        _ => None,
-                    });
-                    // A refused action leaves the rows as they were, and the answer is the same.
-                    self.items.act(action, id, list, target);
-                    let lists = self.items.lists();
-                    self.stage.shell().menu_mut().set_lists(lists);
-                }
+                    ..
+                } => match action {},
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
                 | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}
@@ -1331,7 +1424,6 @@ impl SearchlightGame {
                     self.head_bob = level;
                     self.save_head_bob();
                 }
-                ConsoleCommand::Items => self.open_items(),
             }
         }
         if self.simple != simple_before
@@ -1412,25 +1504,36 @@ impl SearchlightGame {
     /// Shows the game's screen text: the prompt of the control in reach below the crosshair, and
     /// the rig strip while it is up. Only while playing and alive; otherwise shows none.
     fn refresh_screen_texts(&mut self, dead: bool) {
-        let action = (self.screen == Screen::Playing && !dead)
-            .then(|| self.mode.sim().control_in_reach())
+        let sim = self.mode.sim();
+        let live = self.screen == Screen::Playing && !dead;
+        let control = live
+            .then(|| sim.control_in_reach())
             .flatten()
             .and_then(|index| self.mode.control_action(index));
-        let mut texts = action.map_or_else(Vec::new, |action| {
-            let key = self
-                .input
-                .bindings()
-                .get(SearchlightAction::Use)
-                .first()
-                .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
-            vec![ScreenText {
-                text: hud::use_prompt(&key, action),
+        let searching = live && sim.searching().is_some();
+        let prompt = |key: &str| match control {
+            Some(action) => Some(hud::use_prompt(key, action)),
+            None if searching || (live && sim.body_in_view().is_some()) => {
+                Some(hud::search_prompt(key, searching))
+            }
+            None => None,
+        };
+        let key = self
+            .input
+            .bindings()
+            .get(SearchlightAction::Use)
+            .first()
+            .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+        let mut texts: Vec<ScreenText> = prompt(&key)
+            .map(|text| ScreenText {
+                text,
                 anchor: Anchor::Center,
                 offset: [0.0, PROMPT_OFFSET_Y],
                 size: PROMPT_SIZE,
                 color: PROMPT_COLOR,
-            }]
-        });
+            })
+            .into_iter()
+            .collect();
         if let Some(marks) = self.strip_marks().filter(|_| !dead) {
             texts.push(ScreenText {
                 text: hud::strip_text(&marks),
@@ -1505,6 +1608,14 @@ impl SearchlightGame {
             // the console.
             Routing::Opened => self.release_held_input(),
             Routing::Console | Routing::Closed => {}
+            Routing::Menu
+                if self.screen == Screen::Inventory
+                    && pressed
+                    && !repeat
+                    && self.is_inventory_key(input) =>
+            {
+                self.close_inventory();
+            }
             Routing::Menu => self.answer_menu(ctx),
             Routing::Game if self.screen != Screen::Playing => {}
             Routing::Game => {
@@ -1550,7 +1661,20 @@ impl Game for SearchlightGame {
         if self.input_captured() {
             self.input.discard_edges();
             self.lean_side = None;
-            return SearchlightCommand::default();
+            // The inventory screen leaves the world running: it keeps the host levels and sends
+            // what the player asked of it, and nothing the player's hands would do.
+            return if self.screen == Screen::Inventory && !self.loop_paused() {
+                SearchlightCommand {
+                    god_mode: self.god_mode,
+                    forced_grade: self.forced_grade,
+                    simple: self.simple,
+                    round_gravity: self.round_gravity,
+                    inventory: self.queued_inventory.take(),
+                    ..SearchlightCommand::default()
+                }
+            } else {
+                SearchlightCommand::default()
+            };
         }
         let frame = self.input.end_tick();
         self.lean_side = resolve_lean(&frame, self.lean_side);
@@ -1560,6 +1684,7 @@ impl Game for SearchlightGame {
             simple: self.simple,
             round_gravity: self.round_gravity,
             lean: self.lean_side,
+            inventory: self.queued_inventory.take(),
             ..SearchlightCommand::from_frame(&frame)
         }
     }
@@ -1642,12 +1767,12 @@ impl Game for SearchlightGame {
                 }
             }
         }
-        ctx.set_paused(self.input_captured());
+        ctx.set_paused(self.loop_paused());
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
         let captured = self.input_captured();
-        ctx.set_paused(captured);
+        ctx.set_paused(self.loop_paused());
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
         }
@@ -1684,6 +1809,9 @@ impl Game for SearchlightGame {
             if hud::shows_strip(&feedback) {
                 self.strip_ticks_left = STRIP_FADE_TICKS;
             }
+            if matches!(feedback, Feedback::SearchOpened { .. }) && self.screen == Screen::Playing {
+                self.open_inventory();
+            }
             self.stage.react(&feedback, ctx.audio());
         }
         if self.screen == Screen::MainMenu {
@@ -1691,6 +1819,14 @@ impl Game for SearchlightGame {
             return;
         }
         let dead = self.mode.sim().player_body().is_dead();
+        if self.screen == Screen::Inventory {
+            if dead {
+                self.end_inventory();
+            } else {
+                let lists = self.inventory_lists();
+                self.stage.shell().menu_mut().set_lists(lists);
+            }
+        }
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
@@ -1700,6 +1836,7 @@ impl Game for SearchlightGame {
         }
         self.refresh_screen_texts(dead);
         self.stage.sync_enemies(self.mode.sim());
+        self.stage.sync_bodies(self.mode.sim());
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
@@ -9056,165 +9193,6 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
-    }
-}
-
-/// The item lists screen opened by the `items` command, observed through the shell's screen
-/// stack and the keys the player presses.
-#[cfg(test)]
-mod item_lists_tests {
-    use moho_app::GameClock;
-
-    use super::tests::game_with_a_moving_enemy;
-    use super::*;
-
-    type Shown = Vec<Vec<(String, Option<u32>)>>;
-
-    /// The label and count of every row of every list on top, or `None` with no lists screen.
-    fn shown(game: &SearchlightGame) -> Option<Shown> {
-        let mut shell = game.stage.shell();
-        shell.menu_mut().top_lists().map(|lists| {
-            lists
-                .lists
-                .iter()
-                .map(|list| {
-                    list.rows
-                        .iter()
-                        .map(|row| (row.label.clone(), row.count))
-                        .collect()
-                })
-                .collect()
-        })
-    }
-
-    fn press_keys(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, keys: &[Key]) {
-        for &key in keys {
-            game.route_input(ctx, Input::Key(key), true, false);
-            game.route_input(ctx, Input::Key(key), false, false);
-        }
-    }
-
-    /// A game in play whose player has typed `items` and let the game answer it.
-    fn game_with_items_open() -> SearchlightGame {
-        let mut game = game_with_a_moving_enemy();
-        game.stage.shell().console_mut().submit("items");
-        game.command();
-        game
-    }
-
-    #[test]
-    fn the_items_command_shows_bandage_3_and_rounds_60() {
-        let mut game = game_with_items_open();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-
-        let lists = shown(&game).expect("the items command opened the lists");
-        let paused = game.screen;
-        press_keys(&mut game, &mut ctx, &[Key::Escape]);
-
-        assert_eq!(
-            lists[0],
-            [
-                ("Bandage".to_owned(), Some(3)),
-                ("Rounds".to_owned(), Some(60))
-            ]
-        );
-        assert_eq!(paused, Screen::Paused, "the command pauses first");
-        assert_eq!(shown(&game), None, "Escape goes back to the pause menu");
-        assert!(game.stage.shell().menu_mut().top().is_some());
-        assert_eq!(game.screen, Screen::Paused);
-    }
-
-    #[test]
-    fn moving_the_rifle_puts_it_in_the_players_list_and_not_the_containers() {
-        let mut game = game_with_items_open();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-        let before = shown(&game).expect("the items command opened the lists");
-        let rifle = ("Rifle".to_owned(), Some(1));
-        let at = before[1]
-            .iter()
-            .position(|row| *row == rifle)
-            .expect("the container holds a rifle");
-
-        press_keys(&mut game, &mut ctx, &[Key::ArrowRight]);
-        press_keys(&mut game, &mut ctx, &vec![Key::ArrowDown; at]);
-        press_keys(&mut game, &mut ctx, &[Key::Enter]);
-        let picked_up = shown(&game);
-        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft, Key::Enter]);
-
-        let after = shown(&game).expect("the lists stay open");
-        assert_eq!(picked_up.as_ref(), Some(&before), "picking up moves no row");
-        assert!(!before[0].contains(&rifle));
-        assert_eq!(after[0].last(), Some(&rifle));
-        assert!(!after[1].contains(&rifle));
-        assert_eq!(after[1].len(), before[1].len() - 1);
-    }
-
-    #[test]
-    fn a_move_the_game_refuses_leaves_both_lists_as_they_were() {
-        let mut game = game_with_items_open();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-        let one_move = [Key::ArrowRight, Key::Enter, Key::ArrowLeft, Key::Enter];
-        for _ in 0..6 {
-            press_keys(&mut game, &mut ctx, &one_move);
-        }
-        let full = shown(&game).expect("the items command opened the lists");
-
-        press_keys(&mut game, &mut ctx, &one_move);
-
-        assert_eq!(full[0].len(), 8, "six moves filled the player's list");
-        assert_eq!(shown(&game), Some(full));
-    }
-
-    #[test]
-    fn using_a_bandage_lowers_its_count() {
-        let mut game = game_with_items_open();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-        let before = shown(&game).expect("the items command opened the lists");
-
-        press_keys(&mut game, &mut ctx, &[Key::Space, Key::Enter]);
-
-        let after = shown(&game).expect("the lists stay open");
-        assert_eq!(before[0][0], ("Bandage".to_owned(), Some(3)));
-        assert_eq!(after[0][0], ("Bandage".to_owned(), Some(2)));
-        assert_eq!(after[0][1..], before[0][1..], "no other player row changes");
-        assert_eq!(after[1], before[1], "the container does not change");
-    }
-
-    #[test]
-    fn loading_the_magazine_from_the_players_rounds_moves_them() {
-        let mut game = game_with_items_open();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-        let before = shown(&game).expect("the items command opened the lists");
-        let at = before[1]
-            .iter()
-            .position(|row| row.0 == "Magazine")
-            .expect("the container holds a magazine");
-
-        press_keys(&mut game, &mut ctx, &[Key::ArrowRight]);
-        press_keys(&mut game, &mut ctx, &vec![Key::ArrowDown; at]);
-        press_keys(&mut game, &mut ctx, &[Key::Space, Key::Enter]);
-        let picking = shown(&game);
-        press_keys(
-            &mut game,
-            &mut ctx,
-            &[Key::ArrowLeft, Key::ArrowDown, Key::Enter],
-        );
-
-        let after = shown(&game).expect("the lists stay open");
-        assert_eq!(before[1][at], ("Magazine".to_owned(), Some(0)));
-        assert_eq!(before[0][1], ("Rounds".to_owned(), Some(60)));
-        assert_eq!(
-            picking.as_ref(),
-            Some(&before),
-            "asking for a target moves nothing"
-        );
-        assert_eq!(after[1][at], ("Magazine".to_owned(), Some(30)));
-        assert_eq!(after[0][1], ("Rounds".to_owned(), Some(30)));
     }
 }
 

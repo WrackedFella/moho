@@ -1,8 +1,8 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
 use crate::ballistics::Ballistics;
-use crate::inventory::Remains;
-use crate::item::{ItemDef, ItemId, ItemKind};
+use crate::inventory::{Item, Remains, RoundStack};
+use crate::item::{ItemDef, ItemId, ItemKind, RoundSpec};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
 use crate::rifle::Rifle;
@@ -150,8 +150,15 @@ impl KitDef {
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
     ) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitError> {
-        let _ = lookup;
-        panic!("not yet implemented: resolve_remains")
+        let parts = self.resolve_parts(lookup)?;
+        let mut carried = vec![Item::Weapon(parts.rifle)];
+        carried.extend(parts.carried);
+        let remains = Remains {
+            rig: Some(parts.rig),
+            backpack: self.backpack.clone(),
+            carried,
+        };
+        Ok((remains, parts.rounds))
     }
 
     /// Resolves the kit's ids through `lookup`.
@@ -165,6 +172,23 @@ impl KitDef {
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
     ) -> Result<Kit, KitError> {
+        let parts = self.resolve_parts(lookup)?;
+        let mut loadout = Loadout::new(parts.rifle, parts.rig).with_inventory(parts.carried);
+        if let Some(backpack) = &self.backpack {
+            loadout = loadout.with_backpack(backpack.clone());
+        }
+        Ok(Kit {
+            weapon: parts.weapon,
+            loadout,
+            rounds: parts.rounds,
+        })
+    }
+
+    /// The pieces both [`Self::resolve`] and [`Self::resolve_remains`] build from.
+    fn resolve_parts<'a>(
+        &self,
+        lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+    ) -> Result<Parts, KitError> {
         let find = |id: &ItemId| lookup(id).ok_or_else(|| KitError::UnknownItem { id: id.clone() });
         let wrong = |id: &ItemId, expected| KitError::WrongKind {
             id: id.clone(),
@@ -178,58 +202,115 @@ impl KitDef {
             return Err(wrong(&self.weapon, "weapon"));
         };
 
+        if let Some(backpack) = &self.backpack
+            && !matches!(find(backpack)?.kind, ItemKind::Backpack(_))
+        {
+            return Err(wrong(backpack, "backpack"));
+        }
+
         let mut rounds = BTreeMap::new();
-        let mut build = |entry: &KitMagazine| -> Result<Magazine, KitError> {
-            let ItemKind::Magazine(spec) = &find(&entry.magazine)?.kind else {
-                return Err(wrong(&entry.magazine, "magazine"));
+        let build = |rounds: &mut BTreeMap<ItemId, Ballistics>,
+                     magazine: &ItemId,
+                     round: &ItemId,
+                     held: Option<u32>|
+         -> Result<Magazine, KitError> {
+            let ItemKind::Magazine(spec) = &find(magazine)?.kind else {
+                return Err(wrong(magazine, "magazine"));
             };
-            let ItemKind::Round(round) = &find(&entry.round)?.kind else {
-                return Err(wrong(&entry.round, "round"));
+            let ItemKind::Round(spec_round) = &find(round)?.kind else {
+                return Err(wrong(round, "round"));
             };
-            if round.caliber != spec.caliber {
+            if spec_round.caliber != spec.caliber {
                 return Err(KitError::RoundDoesNotFit {
-                    round: entry.round.clone(),
-                    magazine: entry.magazine.clone(),
+                    round: round.clone(),
+                    magazine: magazine.clone(),
                 });
             }
-            let count = entry.rounds.unwrap_or(spec.capacity);
-            let magazine = Magazine::filled(entry.magazine.clone(), spec, &entry.round, count)
-                .map_err(|_| KitError::OverCapacity {
-                    magazine: entry.magazine.clone(),
+            let count = held.unwrap_or(spec.capacity);
+            let filled = Magazine::filled(magazine.clone(), spec, round, count).map_err(|_| {
+                KitError::OverCapacity {
+                    magazine: magazine.clone(),
                     rounds: count,
                     capacity: spec.capacity,
-                })?;
-            rounds.insert(
-                entry.round.clone(),
-                Ballistics {
-                    muzzle_velocity: round.muzzle_velocity,
-                    drag: round.drag,
-                },
-            );
-            Ok(magazine)
+                }
+            })?;
+            rounds.insert(round.clone(), ballistics_of(spec_round));
+            Ok(filled)
         };
 
-        let in_hand = build(&self.loaded)?;
+        let loaded = &self.loaded;
+        let in_hand = build(&mut rounds, &loaded.magazine, &loaded.round, loaded.rounds)?;
         let rifle = Rifle::loaded(weapon.well.clone(), in_hand).map_err(|_| {
             KitError::MagazineDoesNotFit {
-                magazine: self.loaded.magazine.clone(),
+                magazine: loaded.magazine.clone(),
                 weapon: self.weapon.clone(),
             }
         })?;
         let mut rig = Rig::new(self.rig.clone(), rig_spec);
         for entry in &self.magazines {
-            rig.stow(build(entry)?)
-                .map_err(|_| KitError::RigOverfilled {
-                    rig: self.rig.clone(),
-                    slots: rig_spec.magazine_slots,
-                    magazines: self.magazines.len(),
-                })?;
+            let spare = build(&mut rounds, &entry.magazine, &entry.round, entry.rounds)?;
+            rig.stow(spare).map_err(|_| KitError::RigOverfilled {
+                rig: self.rig.clone(),
+                slots: rig_spec.magazine_slots,
+                magazines: self.magazines.len(),
+            })?;
         }
-        Ok(Kit {
+
+        let mut carried = Vec::with_capacity(self.carried.len());
+        for entry in &self.carried {
+            let fields = || KitError::EntryFields {
+                id: entry.item.clone(),
+            };
+            let item = match &find(&entry.item)?.kind {
+                ItemKind::Magazine(_) => {
+                    let (Some(round), None) = (&entry.round, entry.count) else {
+                        return Err(fields());
+                    };
+                    Item::Magazine(build(&mut rounds, &entry.item, round, entry.rounds)?)
+                }
+                ItemKind::Round(spec_round) => {
+                    let (None, None, Some(count)) = (&entry.round, entry.rounds, entry.count)
+                    else {
+                        return Err(fields());
+                    };
+                    rounds.insert(entry.item.clone(), ballistics_of(spec_round));
+                    Item::Rounds(RoundStack {
+                        round: entry.item.clone(),
+                        count,
+                    })
+                }
+                _ => {
+                    if entry.round.is_some() || entry.rounds.is_some() || entry.count.is_some() {
+                        return Err(fields());
+                    }
+                    Item::Other(entry.item.clone())
+                }
+            };
+            carried.push(item);
+        }
+        Ok(Parts {
             weapon: weapon.clone(),
-            loadout: Loadout::new(rifle, rig),
+            rifle,
+            rig,
+            carried,
             rounds,
         })
+    }
+}
+
+/// What a kit resolves to before it is a player's loadout or an enemy's remains.
+struct Parts {
+    weapon: RifleDef,
+    rifle: Rifle,
+    rig: Rig,
+    carried: Vec<Item>,
+    rounds: BTreeMap<ItemId, Ballistics>,
+}
+
+fn ballistics_of(round: &RoundSpec) -> Ballistics {
+    Ballistics {
+        muzzle_velocity: round.muzzle_velocity,
+        drag: round.drag,
     }
 }
 

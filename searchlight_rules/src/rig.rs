@@ -95,6 +95,11 @@ impl Rig {
         self.slots[index].take().map(|magazine| (index, magazine))
     }
 
+    /// Takes the magazine out of `slot`; `None` when the slot is free or out of range.
+    pub(crate) fn take_slot(&mut self, slot: usize) -> Option<Magazine> {
+        self.slots.get_mut(slot)?.take()
+    }
+
     /// Puts `magazine` in the free slot `slot`.
     ///
     /// # Panics

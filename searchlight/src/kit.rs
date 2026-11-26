@@ -40,8 +40,14 @@ pub fn load_enemy(
     roots: &ContentRoots,
     kit: &str,
 ) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitLoadError> {
-    let _ = (roots, kit);
-    panic!("not yet implemented: load_enemy")
+    let items = load_kind::<ItemDef>(roots, "items")?;
+    let kits = load_kind::<KitDef>(roots, "kits")?;
+    kits.require(kit)?
+        .resolve_remains(|id: &ItemId| items.get(id.as_str()))
+        .map_err(|source| KitLoadError::Kit {
+            kit: kit.to_owned(),
+            source,
+        })
 }
 
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit`.

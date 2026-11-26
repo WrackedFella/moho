@@ -16,19 +16,22 @@ use searchlight::console_commands;
 use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE, start_window_mode};
 use searchlight::input::build_action_map;
-use searchlight::kit::{self, START_KIT_ID};
+use searchlight::kit::{self, ENEMY_KIT_ID, START_KIT_ID};
 use searchlight::launch;
 use searchlight::levels;
 use searchlight::mode::ArenaMode;
-use searchlight::tuning::tuning;
+use searchlight::sim::SimConfig;
+use searchlight::tuning::{tuning, with_enemy_kit};
 use searchlight::wave::WaveTuning;
 use searchlight::{TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
-use searchlight_rules::Kit;
 
-/// Loads the starting kit from the base content folder and the listed mod roots.
-fn load_start_kit(mods: &[String]) -> Result<Kit, Box<dyn Error>> {
+/// The sim tuning built from the starting kit and the enemy kit, both loaded from the base
+/// content folder and the listed mod roots.
+fn load_tuning(mods: &[String]) -> Result<SimConfig, Box<dyn Error>> {
     let roots = ContentRoots::base(&content_root())?.with_mods(&mods_dir(), mods)?;
-    Ok(kit::load(&roots, START_KIT_ID)?)
+    let start = kit::load(&roots, START_KIT_ID)?;
+    let (remains, rounds) = kit::load_enemy(&roots, ENEMY_KIT_ID)?;
+    Ok(with_enemy_kit(tuning(start), remains, rounds))
 }
 
 /// The level file and the rifle shot sound, each from the highest asset folder holding it.
@@ -66,8 +69,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     for warning in prefs_warnings {
         tracing::warn!(%warning, "Preferences load fallback");
     }
-    let start_kit = match load_start_kit(prefs.content_mods()) {
-        Ok(kit) => kit,
+    let config = match load_tuning(prefs.content_mods()) {
+        Ok(config) => config,
         Err(error) => {
             tracing::error!(%error, "Content failed to load");
             return Ok(ExitCode::FAILURE);
@@ -91,7 +94,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     let (level, markers) = arena::load(&level_file)?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
     let notices = levels::load_notices(&arena);
-    let mode = ArenaMode::for_level(arena.clone(), tuning(start_kit), WaveTuning::default());
+    let mode = ArenaMode::for_level(arena.clone(), config, WaveTuning::default());
     let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
     let (console_section, game_section) = split_console_binding(&bindings_section);
     let (bindings, warnings) = ActionBindings::load(&game_section);
