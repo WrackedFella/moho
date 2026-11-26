@@ -360,12 +360,55 @@ impl Model {
     /// # Panics
     /// When `clip` is not an index into [`Model::clips`].
     pub fn pose(&self, clip: usize, time: f32) -> Pose {
+        self.compose(self.locals_of(clip, time))
+    }
+
+    /// The pose of `base` (clip, time) with every node from `from` down (the node and all
+    /// below it) taking its local from `action` (clip, time); other nodes keep the base's.
+    /// Locals are swapped, not globals, so the upper body rides the base's pelvis.
+    /// [`crate::anim::Animator::play_action`] rejects an out-of-range region with an error
+    /// before it gets here.
+    ///
+    /// # Panics
+    /// When a clip is not an index into [`Model::clips`], or `from` is not an index into
+    /// [`Model::nodes`].
+    pub fn layered_pose(&self, base: (usize, f32), action: (usize, f32), from: usize) -> Pose {
+        assert!(
+            from < self.nodes.len(),
+            "layered_pose: from {from} is not a node (count {})",
+            self.nodes.len()
+        );
+        let mut locals = self.locals_of(base.0, base.1);
+        let action_locals = self.locals_of(action.0, action.1);
+        let mut in_region = vec![false; self.nodes.len()];
+        for (index, node) in self.nodes.iter().enumerate() {
+            in_region[index] = index == from || node.parent.is_some_and(|p| in_region[p]);
+            if in_region[index] {
+                locals[index] = action_locals[index];
+            }
+        }
+        self.compose(locals)
+    }
+
+    /// Each node's local at `time` of `clip`: nodes no channel targets keep `local` exactly,
+    /// targeted nodes replace the animated properties of their decomposed `local`.
+    fn locals_of(&self, clip: usize, time: f32) -> Vec<Affine3A> {
         let animated = self.clips[clip].locals_at(&self.nodes, time);
+        self.nodes
+            .iter()
+            .zip(animated)
+            .map(|(node, animated)| {
+                animated.map_or(node.local, |(scale, rotation, translation)| {
+                    Affine3A::from_scale_rotation_translation(scale, rotation, translation)
+                })
+            })
+            .collect()
+    }
+
+    /// Globals from the chosen `locals`, parent-first in walk order.
+    fn compose(&self, locals: Vec<Affine3A>) -> Pose {
         let mut globals: Vec<Affine3A> = Vec::with_capacity(self.nodes.len());
-        for (node, animated) in self.nodes.iter().zip(animated) {
-            let local = animated.map_or(node.local, |(scale, rotation, translation)| {
-                Affine3A::from_scale_rotation_translation(scale, rotation, translation)
-            });
+        for (node, local) in self.nodes.iter().zip(locals) {
             // The same product the loader forms for `rest`, so an unanimated chain
             // reproduces it bit for bit.
             let global = node.parent.map_or(local, |p| globals[p] * local);
@@ -420,6 +463,7 @@ mod tests {
     use moho_render_api::{RenderMaterial, WorldMesh};
 
     use super::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode};
+    use crate::anim::{Channel, Clip, Interpolation, Track};
 
     fn node(name: Option<&str>, parent: Option<usize>, rest: Affine3A) -> ModelNode {
         ModelNode {
@@ -539,6 +583,190 @@ mod tests {
                 assert_affine_near(actual, want);
             }
         }
+    }
+
+    /// A clip holding each `(node, translation)` constant.
+    fn holding(name: &str, translations: &[(usize, Vec3)]) -> Clip {
+        let channels = translations
+            .iter()
+            .map(|&(node, translation)| Channel {
+                node,
+                interpolation: Interpolation::Step,
+                track: Track::Translation {
+                    times: vec![0.0],
+                    values: vec![translation],
+                },
+            })
+            .collect();
+        Clip::new(Some(name.to_owned()), channels)
+    }
+
+    fn bits(m: Affine3A) -> [u32; 12] {
+        m.to_cols_array().map(f32::to_bits)
+    }
+
+    /// Node 0 is the root, 1 its child, 2 the child of 1, 3 another child of 0. Clip 0 is
+    /// the base and clip 1 the action; both move every node, to different places.
+    fn layered_model() -> Model {
+        let at = |x: f32| Affine3A::from_translation(Vec3::new(x, 0.0, 0.0));
+        let nodes = vec![
+            node(Some("root"), None, at(1.0)),
+            node(Some("a"), Some(0), at(2.0)),
+            node(Some("leaf"), Some(1), at(3.0)),
+            node(Some("b"), Some(0), at(4.0)),
+        ];
+        let base = holding(
+            "base",
+            &[
+                (0, Vec3::new(10.0, 0.0, 0.0)),
+                (1, Vec3::new(20.0, 0.0, 0.0)),
+                (2, Vec3::new(30.0, 0.0, 0.0)),
+                (3, Vec3::new(40.0, 0.0, 0.0)),
+            ],
+        );
+        let action = holding(
+            "action",
+            &[
+                (0, Vec3::new(0.0, 100.0, 0.0)),
+                (1, Vec3::new(0.0, 200.0, 0.0)),
+                (2, Vec3::new(0.0, 300.0, 0.0)),
+                (3, Vec3::new(0.0, 400.0, 0.0)),
+            ],
+        );
+        Model::for_tests(nodes, vec![base, action])
+    }
+
+    #[test]
+    fn layered_pose_from_the_root_is_the_action_pose() {
+        let model = layered_model();
+
+        let layered = model.layered_pose((0, 0.0), (1, 0.0), 0);
+
+        let action = model.pose(1, 0.0);
+        let layered_bits: Vec<_> = layered.nodes().iter().copied().map(bits).collect();
+        let action_bits: Vec<_> = action.nodes().iter().copied().map(bits).collect();
+        assert_eq!(layered_bits, action_bits);
+        assert_ne!(layered_bits, {
+            let base = model.pose(0, 0.0);
+            base.nodes().iter().copied().map(bits).collect::<Vec<_>>()
+        });
+    }
+
+    #[test]
+    fn layered_pose_from_a_leaf_changes_only_the_leaf() {
+        let model = layered_model();
+
+        let layered = model.layered_pose((0, 0.0), (1, 0.0), 2);
+
+        let base = model.pose(0, 0.0);
+        for index in [0, 1, 3] {
+            assert_eq!(
+                bits(layered.nodes()[index]),
+                bits(base.nodes()[index]),
+                "node {index}"
+            );
+        }
+        let expected = base.nodes()[1] * Affine3A::from_translation(Vec3::new(0.0, 300.0, 0.0));
+        assert_affine_near(layered.nodes()[2], expected);
+        assert_ne!(bits(layered.nodes()[2]), bits(base.nodes()[2]));
+    }
+
+    #[test]
+    fn layered_pose_from_a_middle_node_takes_its_subtree_and_leaves_siblings() {
+        let model = layered_model();
+
+        let layered = model.layered_pose((0, 0.0), (1, 0.0), 1);
+
+        let base = model.pose(0, 0.0);
+        assert_eq!(bits(layered.nodes()[0]), bits(base.nodes()[0]));
+        assert_eq!(bits(layered.nodes()[3]), bits(base.nodes()[3]));
+        let a = base.nodes()[0] * Affine3A::from_translation(Vec3::new(0.0, 200.0, 0.0));
+        let leaf = a * Affine3A::from_translation(Vec3::new(0.0, 300.0, 0.0));
+        assert_affine_near(layered.nodes()[1], a);
+        assert_affine_near(layered.nodes()[2], leaf);
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a node")]
+    fn layered_pose_from_past_the_last_node_panics() {
+        let model = layered_model();
+
+        model.layered_pose((0, 0.0), (1, 0.0), model.nodes().len());
+    }
+
+    #[test]
+    #[should_panic(expected = "is not a node")]
+    fn layered_pose_from_usize_max_panics() {
+        layered_model().layered_pose((0, 0.0), (1, 0.0), usize::MAX);
+    }
+
+    /// Nodes 0 and 2 are roots; 1 is a child of 0 and 3 a child of 2.
+    fn two_root_model() -> Model {
+        let at = |x: f32| Affine3A::from_translation(Vec3::new(x, 0.0, 0.0));
+        let nodes = vec![
+            node(Some("r0"), None, at(1.0)),
+            node(Some("c0"), Some(0), at(2.0)),
+            node(Some("r1"), None, at(3.0)),
+            node(Some("c1"), Some(2), at(4.0)),
+        ];
+        let moved = |name: &str, y: f32| {
+            holding(
+                name,
+                &[
+                    (0, Vec3::new(0.0, y + 1.0, 0.0)),
+                    (1, Vec3::new(0.0, y + 2.0, 0.0)),
+                    (2, Vec3::new(0.0, y + 3.0, 0.0)),
+                    (3, Vec3::new(0.0, y + 4.0, 0.0)),
+                ],
+            )
+        };
+        Model::for_tests(nodes, vec![moved("base", 10.0), moved("action", 100.0)])
+    }
+
+    #[test]
+    fn layered_pose_from_the_second_root_leaves_the_first_tree_on_the_base() {
+        let model = two_root_model();
+
+        let layered = model.layered_pose((0, 0.0), (1, 0.0), 2);
+
+        let (base, action) = (model.pose(0, 0.0), model.pose(1, 0.0));
+        assert_eq!(bits(layered.nodes()[0]), bits(base.nodes()[0]));
+        assert_eq!(bits(layered.nodes()[1]), bits(base.nodes()[1]));
+        assert_eq!(bits(layered.nodes()[2]), bits(action.nodes()[2]));
+        assert_eq!(bits(layered.nodes()[3]), bits(action.nodes()[3]));
+        assert_ne!(bits(base.nodes()[2]), bits(action.nodes()[2]));
+    }
+
+    #[test]
+    fn layered_pose_from_the_first_root_leaves_the_second_tree_on_the_base() {
+        let model = two_root_model();
+
+        let layered = model.layered_pose((0, 0.0), (1, 0.0), 0);
+
+        let (base, action) = (model.pose(0, 0.0), model.pose(1, 0.0));
+        assert_eq!(bits(layered.nodes()[0]), bits(action.nodes()[0]));
+        assert_eq!(bits(layered.nodes()[1]), bits(action.nodes()[1]));
+        assert_eq!(bits(layered.nodes()[2]), bits(base.nodes()[2]));
+        assert_eq!(bits(layered.nodes()[3]), bits(base.nodes()[3]));
+    }
+
+    #[test]
+    fn an_in_region_node_the_action_does_not_animate_takes_its_rest_local() {
+        let at = |x: f32| Affine3A::from_translation(Vec3::new(x, 0.0, 0.0));
+        let nodes = vec![
+            node(Some("p"), None, at(1.0)),
+            node(Some("c"), Some(0), at(2.0)),
+        ];
+        let base = holding("base", &[(1, Vec3::new(20.0, 0.0, 0.0))]);
+        let action = holding("action", &[(0, Vec3::new(0.0, 100.0, 0.0))]);
+        let model = Model::for_tests(nodes, vec![base, action]);
+
+        let layered = model.layered_pose((0, 0.0), (1, 0.0), 1);
+
+        let base_pose = model.pose(0, 0.0);
+        assert_affine_near(layered.nodes()[1], base_pose.nodes()[0] * at(2.0));
+        assert_ne!(bits(layered.nodes()[1]), bits(base_pose.nodes()[1]));
+        assert_eq!(bits(layered.nodes()[0]), bits(base_pose.nodes()[0]));
     }
 
     #[test]
