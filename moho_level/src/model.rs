@@ -365,13 +365,19 @@ impl Model {
 
     /// The pose of `base` (clip, time) with every node from `from` down (the node and all
     /// below it) taking its local from `action` (clip, time); other nodes keep the base's.
-    /// Locals are swapped, not globals, so the upper body rides the base's pelvis. A
-    /// `from` past the last node layers nothing, so the result is the base pose;
-    /// [`crate::Animator::play_action`] rejects such a region before it gets here.
+    /// Locals are swapped, not globals, so the upper body rides the base's pelvis.
+    /// [`crate::anim::Animator::play_action`] rejects an out-of-range region with an error
+    /// before it gets here.
     ///
     /// # Panics
-    /// When a clip is not an index into [`Model::clips`].
+    /// When a clip is not an index into [`Model::clips`], or `from` is not an index into
+    /// [`Model::nodes`].
     pub fn layered_pose(&self, base: (usize, f32), action: (usize, f32), from: usize) -> Pose {
+        assert!(
+            from < self.nodes.len(),
+            "layered_pose: from {from} is not a node (count {})",
+            self.nodes.len()
+        );
         let mut locals = self.locals_of(base.0, base.1);
         let action_locals = self.locals_of(action.0, action.1);
         let mut in_region = vec![false; self.nodes.len()];
@@ -680,20 +686,18 @@ mod tests {
         assert_affine_near(layered.nodes()[2], leaf);
     }
 
-    fn pose_bits(pose: &crate::anim::Pose) -> Vec<[u32; 12]> {
-        pose.nodes().iter().copied().map(bits).collect()
+    #[test]
+    #[should_panic(expected = "is not a node")]
+    fn layered_pose_from_past_the_last_node_panics() {
+        let model = layered_model();
+
+        model.layered_pose((0, 0.0), (1, 0.0), model.nodes().len());
     }
 
     #[test]
-    fn layered_pose_from_past_the_last_node_is_the_base_pose() {
-        let model = layered_model();
-        let base = pose_bits(&model.pose(0, 0.0));
-
-        for from in [model.nodes().len(), usize::MAX] {
-            let layered = model.layered_pose((0, 0.0), (1, 0.0), from);
-
-            assert_eq!(pose_bits(&layered), base, "from {from}");
-        }
+    #[should_panic(expected = "is not a node")]
+    fn layered_pose_from_usize_max_panics() {
+        layered_model().layered_pose((0, 0.0), (1, 0.0), usize::MAX);
     }
 
     /// Nodes 0 and 2 are roots; 1 is a child of 0 and 3 a child of 2.
