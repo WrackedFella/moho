@@ -25,7 +25,7 @@ gather() {
         --jq '.[] | select(.pull_request | not) | .number'); do
         issue=$(gh api "repos/$GH_REPO/issues/$n")
         blockers=$(gh api "repos/$GH_REPO/issues/$n/dependencies/blocked_by" --paginate \
-            --jq '.[] | {number, state, state_reason}' | jq -s .)
+            --jq '.[] | {number, state, state_reason, labels: [.labels[].name]}' | jq -s .)
         markers=$(gh api "repos/$GH_REPO/issues/$n/comments" --paginate \
             --jq '.[].body | scan("<!-- chain: ([a-z-]+) -->") | .[0]' | jq -R . | jq -s 'unique')
         items=$(jq --argjson i "$issue" --argjson b "$blockers" --argjson m "$markers" '. + [{
@@ -59,12 +59,17 @@ decide() {
         | ([$cap - .active, 0] | max) as $free
         | reduce (.items | sort_by(.number))[] as $i ({out: [], free: $free};
             ($i.blockers | map(select(.state == "closed" and .state_reason != "completed")) | map("#\(.number)")) as $dropped
-            | if ($i.labels | index("agent-ready")) then .out += [line("wait"; $i.number; "running"; "already agent-ready")]
-              elif ($i.labels | index("agent-paused")) then .out += [line("wait"; $i.number; "paused"; "labelled agent-paused")]
+            | ($i.blockers | map(select(.state == "open" and ((.labels // []) | index("agent-paused"))) | "#\(.number)")) as $paused
+            | if ($i.labels | index("agent-paused")) then .out += [stop($i.number; $i.markers; "paused";
+                  "This item is paused for a human answer. The chain waits for a comment starting with `Resume`.")]
+              elif ($i.labels | index("agent-ready")) then .out += [line("wait"; $i.number; "running"; "already agent-ready")]
               elif ($i.labels | index("needs-human")) then .out += [line("wait"; $i.number; "needs-human"; "labelled needs-human")]
               elif $i.eligible == "no" then .out += [stop($i.number; $i.markers; "human-driven";
                   "The chain stops here: this item is human-driven (`eligible=no`). Run it in a session; the chain continues when it closes.")]
-              elif ($i.open_blockers // 1) > 0 then .out += [line("wait"; $i.number; "blocked"; "\($i.open_blockers // "unknown") open blocker(s)")]
+              elif ($i.open_blockers // 1) > 0 then .out += [
+                  if ($paused | length) > 0 then stop($i.number; $i.markers; "blocker-paused";
+                      "The chain waits here: blocker \($paused | join(", ")) is paused for a human answer. A comment starting with `Resume` on it lets the chain continue.")
+                  else line("wait"; $i.number; "blocked"; "\($i.open_blockers // "unknown") open blocker(s)") end]
               elif ($dropped | length) > 0 then .out += [stop($i.number; $i.markers; "blocker-dropped";
                   "The chain stops here: blocker \($dropped | join(", ")) closed without completing. A person decides whether this item still runs; remove the dependency to let it start.")]
               elif .free > 0 then .out += [line("start"; $i.number; "-"; "no open blocker")] | .free -= 1

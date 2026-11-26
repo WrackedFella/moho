@@ -6,17 +6,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::Key;
-use moho_physics::{CharacterBody, CharacterState, first_person_view};
+use moho_physics::{CharacterBody, CharacterState, HitVolume, first_person_view};
 use moho_render_api::{
-    InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, UiFrame, UiFrameSource,
-    UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
-    WorldMeshId,
+    InstanceGpu, Marker, MarkerId, MarkerStyle, MaterialGpu, MaterialKey, RenderMaterial,
+    Renderable, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId,
+    UiTextureSet, UiVertex, WorldMesh, WorldMeshId,
 };
 use moho_renderer::{
     EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle, WorldMeshes,
@@ -47,6 +47,7 @@ use crate::menu::{
     MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
     settings_categories_screen, settings_page,
 };
+use crate::menu_feed::{MenuCamera, MenuFeed};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
@@ -210,6 +211,8 @@ struct Segment {
     id: WorldMeshId,
     mesh: WorldMesh,
     flash_left: u32,
+    /// World-axis bounds `(min, max)` of the part's hit volume.
+    bounds: (Vec3, Vec3),
 }
 
 /// The dummies' segments, in the frame the world draws them in.
@@ -223,11 +226,33 @@ fn dummy_segments(body: &CharacterBody, spawns: &[Vec3]) -> Vec<Segment> {
                 id: WorldMeshId(DUMMY_MESH_BASE + segments.len() as u64),
                 mesh: box_mesh(centre + volume.offset, volume.half_extents),
                 flash_left: 0,
+                bounds: volume_bounds(centre, 0.0, &volume),
             });
         }
     }
     segments
 }
+
+/// The world-axis bounds `(min, max)` of `volume` on a body standing at `position` turned
+/// `yaw` about the vertical: the volume's oriented box, axis-aligned.
+fn volume_bounds(position: Vec3, yaw: f32, volume: &HitVolume) -> (Vec3, Vec3) {
+    let facing = Quat::from_rotation_y(yaw);
+    let axes = Mat3::from_quat(facing * volume.rotation);
+    let half = axes.x_axis.abs() * volume.half_extents.x
+        + axes.y_axis.abs() * volume.half_extents.y
+        + axes.z_axis.abs() * volume.half_extents.z;
+    let centre = position + facing * volume.offset;
+    (centre - half, centre + half)
+}
+
+/// Linear RGBA of the outlines of the player's, an enemy's and a dummy's hit volumes.
+const PLAYER_OUTLINE: [f32; 4] = [0.2, 1.0, 0.3, 1.0];
+const ENEMY_OUTLINE: [f32; 4] = [1.0, 0.2, 0.2, 1.0];
+const DUMMY_OUTLINE: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
+
+/// The hit-volume outlines take marker ids counting up from here, renumbered every frame
+/// because the markers are cleared before each placement.
+const OUTLINE_ID_BASE: u64 = 1 << 32;
 
 /// One enemy as box segments: the six body parts and the gun, which flashes when it fires.
 #[derive(Debug)]
@@ -434,7 +459,7 @@ fn grab_cursor(window: &Window) {
 #[derive(Debug)]
 struct Stage {
     scene: Scene,
-    /// Drawn instead of `scene` behind the main menu, so the dormant arena stays untouched.
+    /// Drawn instead of `scene` behind the main menu of a level without menu cameras.
     backdrop: Scene,
     segments: Vec<Segment>,
     dummy_material: u32,
@@ -465,6 +490,8 @@ struct Stage {
     shell: Arc<Mutex<UiShell<ConsoleCommand, MenuAction>>>,
     /// Whether the cursor is captured for mouse look.
     cursor_captured: bool,
+    /// Hit-volume outlines are in the scene.
+    outlines_placed: bool,
     /// Times the cursor was captured, windowed or not, so tests can see it.
     #[cfg(test)]
     cursor_captures: u32,
@@ -578,6 +605,7 @@ impl Stage {
                 console_commands::console(&BTreeMap::new()).0,
             ))),
             cursor_captured: false,
+            outlines_placed: false,
             #[cfg(test)]
             cursor_captures: 0,
         }
@@ -750,6 +778,45 @@ impl Stage {
         }
     }
 
+    /// With `shown`, outlines every hit volume of the player and of every living enemy and
+    /// dummy where the sim has them; otherwise removes the outlines.
+    fn sync_hit_volumes(&mut self, sim: &SearchlightSim, shown: bool) {
+        if !shown {
+            if std::mem::take(&mut self.outlines_placed) {
+                self.scene.markers_mut().clear();
+            }
+            return;
+        }
+        self.outlines_placed = true;
+        let enemy_volumes = dummy_hit_volumes_of(sim.character_body(), 0);
+        let player = sim.player();
+        let players = sim.player_hit_volumes().iter().map(|volume| {
+            let bounds = volume_bounds(player.position, player.yaw, volume);
+            (bounds, PLAYER_OUTLINE)
+        });
+        let enemies = (0..sim.enemy_count())
+            .filter_map(|index| sim.enemy_state(index))
+            .flat_map(|state| {
+                enemy_volumes.iter().map(move |volume| {
+                    let bounds = volume_bounds(state.position, state.yaw, volume);
+                    (bounds, ENEMY_OUTLINE)
+                })
+            });
+        let dummies = self
+            .segments
+            .iter()
+            .map(|segment| (segment.bounds, DUMMY_OUTLINE));
+        let markers = self.scene.markers_mut();
+        markers.clear();
+        for (next, (bounds, color)) in
+            (OUTLINE_ID_BASE..).zip(players.chain(enemies).chain(dummies))
+        {
+            let outline = Marker::new(bounds.0.to_array(), bounds.1.to_array(), color)
+                .with_style(MarkerStyle::Outline);
+            markers.upsert(MarkerId(next), outline);
+        }
+    }
+
     /// Pushes the death tint and damage bars to the UI.
     fn refresh_hud(&self, dead: bool) {
         let mut hud = self
@@ -900,6 +967,8 @@ pub struct SearchlightGame {
     /// Whether the window has focus; look is sampled only while it does.
     focused: bool,
     stage: Stage,
+    /// The views the main menu cuts between behind itself.
+    menu_feed: MenuFeed,
     god_mode: bool,
     /// The grade the `grade` command forces on new enemies; not saved, a force is a tuning
     /// session's lever. A host action like `god_mode`: once commands are per player slot, only
@@ -931,6 +1000,8 @@ pub struct SearchlightGame {
     strip_ticks_left: u32,
     /// The check-gear key was held on the last tick, which keeps the strip up.
     check_gear_held: bool,
+    /// Outlines of every character's hit volumes are drawn; session state, off at every launch.
+    hit_volumes: bool,
 }
 
 impl SearchlightGame {
@@ -946,6 +1017,7 @@ impl SearchlightGame {
             lean_side: None,
             focused: true,
             stage: Stage::new(),
+            menu_feed: MenuFeed::new(Vec::new()),
             god_mode: false,
             forced_grade: None,
             simple: false,
@@ -960,6 +1032,7 @@ impl SearchlightGame {
             controls: None,
             strip_ticks_left: 0,
             check_gear_held: false,
+            hit_volumes: false,
         }
     }
 
@@ -1315,6 +1388,15 @@ impl SearchlightGame {
                     self.save_head_bob();
                 }
                 ConsoleCommand::Items => self.open_items(),
+                ConsoleCommand::HitVolumes => {
+                    self.hit_volumes = !self.hit_volumes;
+                    let text = if self.hit_volumes {
+                        "Hit volumes: on"
+                    } else {
+                        "Hit volumes: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
             }
         }
         if self.simple != simple_before
@@ -1372,6 +1454,13 @@ impl SearchlightGame {
         self.stage.body = *self.mode.sim().character_body();
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
+        self
+    }
+
+    /// Shows the main menu over the level from `cameras`, cutting between them.
+    #[must_use]
+    pub fn with_menu_cameras(mut self, cameras: Vec<MenuCamera>) -> Self {
+        self.menu_feed = MenuFeed::new(cameras);
         self
     }
 
@@ -1462,13 +1551,19 @@ impl SearchlightGame {
         self
     }
 
-    /// A frame of the main menu: the title bare, the HUD hidden and an empty world; the shell
-    /// paints the menu.
+    /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
+    /// feed's camera, or an empty world on a level without menu cameras; the shell paints the
+    /// menu. The feed follows frame time: the sim is paused here.
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
         self.stage.refresh_title("");
         self.stage.hide_hud();
+        self.menu_feed.advance(ctx.frame_dt);
+        let view = self.menu_feed.view();
         if let Some(renderer) = ctx.renderer() {
-            self.stage.draw_backdrop(renderer);
+            match view {
+                Some(view) => self.stage.draw(renderer, view),
+                None => self.stage.draw_backdrop(renderer),
+            }
         }
     }
 
@@ -1679,6 +1774,8 @@ impl Game for SearchlightGame {
         }
         self.refresh_screen_texts(dead);
         self.stage.sync_enemies(self.mode.sim());
+        self.stage
+            .sync_hit_volumes(self.mode.sim(), self.hit_volumes);
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
@@ -6669,6 +6766,275 @@ mod tests {
             "the saved file keeps the applied binding"
         );
     }
+
+    /// Runs a frame with no renderer; the scene's markers are placed all the same.
+    fn frame_headless(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        game.frame(&mut ctx, ALPHA);
+    }
+
+    /// The outlines the scene would draw, as the renderer inflates them; hit volumes are
+    /// outlines, never fills.
+    fn outlines_drawn(game: &mut SearchlightGame) -> Vec<moho_render_api::MarkerGpu> {
+        let draws = game.stage.scene.markers_mut().draws(Vec3::ZERO);
+        assert!(draws.fills.is_empty(), "hit volumes drew fills");
+        draws.outlines
+    }
+
+    fn run_hitvolumes(game: &mut SearchlightGame) {
+        type_into_console(game, "hitvolumes");
+        game.command();
+    }
+
+    /// The world-axis bounds of `volume` on a body at `position` turned `yaw`, from its eight
+    /// oriented corners.
+    fn corner_bounds(position: Vec3, yaw: f32, volume: &HitVolume) -> (Vec3, Vec3) {
+        let facing = Quat::from_rotation_y(yaw);
+        (0..8_u32)
+            .map(|bits| {
+                let sign = |bit: u32| if bits & bit == 0 { -1.0 } else { 1.0 };
+                let corner = volume.half_extents * Vec3::new(sign(1), sign(2), sign(4));
+                position + facing * (volume.offset + volume.rotation * corner)
+            })
+            .fold((Vec3::MAX, Vec3::MIN), |(min, max), corner| {
+                (min.min(corner), max.max(corner))
+            })
+    }
+
+    fn is_outline_of(outline: &moho_render_api::MarkerGpu, bounds: (Vec3, Vec3)) -> bool {
+        let grow = Vec3::splat(moho_renderer::MARKER_INFLATE);
+        Vec3::from_slice(&outline.min[..3]).abs_diff_eq(bounds.0 - grow, 1e-3)
+            && Vec3::from_slice(&outline.max[..3]).abs_diff_eq(bounds.1 + grow, 1e-3)
+    }
+
+    fn outlined(outlines: &[moho_render_api::MarkerGpu], bounds: (Vec3, Vec3)) -> bool {
+        outlines
+            .iter()
+            .any(|outline| is_outline_of(outline, bounds))
+    }
+
+    const DUMMY_SPAWN: Vec3 = Vec3::new(-8.0, 0.0, 4.0);
+
+    /// A level with one dummy and three enemies, none of them the player.
+    fn game_with_a_dummy_and_three_enemies() -> SearchlightGame {
+        let mut arena = (*arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -20.0),
+            &[
+                Vec3::new(-3.0, 0.0, 4.0),
+                Vec3::new(3.0, 0.0, 4.0),
+                Vec3::new(9.0, 0.0, 4.0),
+            ],
+            &[Vec3::new(13.0, 0.0, 4.0)],
+        ))
+        .clone();
+        arena.dummy_spawns = vec![DUMMY_SPAWN];
+        let mut mode = ArenaMode::without_waves(
+            Arc::new(arena),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+        );
+        for marker in 0..3 {
+            mode.sim_mut()
+                .spawn_enemy(marker, Grade::default())
+                .expect("the marker is free");
+        }
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_arena(Vec::new(), &[DUMMY_SPAWN])
+    }
+
+    #[test]
+    fn hit_volume_outlines_are_off_at_launch() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+
+        frame_headless(&mut game);
+
+        assert!(outlines_drawn(&mut game).is_empty());
+    }
+
+    #[test]
+    fn the_hitvolumes_command_shows_then_hides_outlines_for_every_character() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+        frame_headless(&mut game);
+        let before = outlines_drawn(&mut game).len();
+
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let shown = outlines_drawn(&mut game).len();
+        let after_on = console_lines(&game);
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let hidden = outlines_drawn(&mut game).len();
+        let after_off = console_lines(&game);
+
+        assert_eq!(before, 0);
+        assert_eq!(shown, 6 * 5, "the player, a dummy and three enemies");
+        assert_eq!(hidden, 0);
+        assert_eq!(after_on.last().map(String::as_str), Some("Hit volumes: on"));
+        assert_eq!(
+            after_off.last().map(String::as_str),
+            Some("Hit volumes: off")
+        );
+    }
+
+    #[test]
+    fn outlines_cover_the_player_and_every_living_enemy() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let all_alive = outlines_drawn(&mut game).len();
+
+        game.mode.sim_mut().kill_enemy(1);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        frame_headless(&mut game);
+        let outlines = outlines_drawn(&mut game);
+
+        let sim = game.sim();
+        let body = sim.character_body();
+        assert_eq!(all_alive, 6 * 5);
+        assert!(sim.enemy_state(1).is_none(), "the enemy died");
+        assert_eq!(outlines.len(), 6 * 4, "the dead enemy still has outlines");
+        let player = sim.player();
+        for volume in sim.player_hit_volumes() {
+            let bounds = corner_bounds(player.position, player.yaw, volume);
+            assert!(outlined(&outlines, bounds), "player {volume:?}");
+        }
+        for index in [0, 2] {
+            let enemy = sim.enemy_state(index).expect("the enemy lives");
+            for volume in dummy_hit_volumes_of(body, 0) {
+                let bounds = corner_bounds(enemy.position, enemy.yaw, &volume);
+                assert!(outlined(&outlines, bounds), "enemy {index} {volume:?}");
+            }
+        }
+        let (target, centre) = dummy_at(body, 0, DUMMY_SPAWN);
+        for volume in dummy_hit_volumes_of(body, target) {
+            let bounds = corner_bounds(centre, 0.0, &volume);
+            assert!(outlined(&outlines, bounds), "dummy {volume:?}");
+        }
+    }
+
+    #[test]
+    fn outline_markers_follow_the_leaned_volumes() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let upright = outlines_drawn(&mut game);
+        let lean_right = SearchlightCommand {
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+        for _ in 0..30 {
+            tick_with(&mut game, &mut clock, &lean_right);
+        }
+
+        frame_headless(&mut game);
+        let leaned = outlines_drawn(&mut game);
+
+        let sim = game.sim();
+        let player = sim.player();
+        let right = lean_offset(player.yaw, 1.0).normalize();
+        let upright_volumes = dummy_hit_volumes_of(sim.character_body(), 0);
+        assert_eq!(upright.len(), 6);
+        assert_eq!(leaned.len(), 6);
+        for (slot, volume) in sim.player_hit_volumes().iter().enumerate() {
+            let at_rest = corner_bounds(player.position, player.yaw, &upright_volumes[slot]);
+            let now = corner_bounds(player.position, player.yaw, volume);
+            assert!(outlined(&upright, at_rest), "slot {slot} upright");
+            assert!(outlined(&leaned, now), "slot {slot} leaned");
+            let slide = ((now.0 + now.1) - (at_rest.0 + at_rest.1)) / 2.0;
+            if slot < 4 {
+                assert!(slide.dot(right) > 0.05, "slot {slot} slid {slide:?}");
+                assert!(!outlined(&leaned, at_rest), "slot {slot} stayed upright");
+            } else {
+                assert!(outlined(&leaned, at_rest), "the legs stay");
+            }
+        }
+    }
+
+    #[test]
+    fn outlines_of_a_quarter_turned_enemy_use_its_turned_bounds() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+        run_hitvolumes(&mut game);
+
+        frame_headless(&mut game);
+        let outlines = outlines_drawn(&mut game);
+
+        let sim = game.sim();
+        let enemy = sim.enemy_state(1).expect("the enemy lives");
+        assert!(
+            (enemy.yaw - std::f32::consts::FRAC_PI_2).abs() < 0.05,
+            "the enemy faces its waypoint at +X: {}",
+            enemy.yaw
+        );
+        let torso = dummy_hit_volumes_of(sim.character_body(), 0)[1];
+        let turned = corner_bounds(enemy.position, enemy.yaw, &torso);
+        let unturned = corner_bounds(enemy.position, 0.0, &torso);
+        assert!(outlined(&outlines, turned), "the turned torso");
+        assert!(!outlined(&outlines, unturned), "the yaw-0 torso");
+        assert!(
+            (turned.1.x - turned.0.x - (unturned.1.z - unturned.0.z)).abs() < 1e-3,
+            "half extents on X and Z swap"
+        );
+    }
+
+    #[test]
+    fn hitvolumes_off_and_on_again_while_paused_removes_and_restores_outlines() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let playing = outlines_drawn(&mut game).len();
+        game.pause();
+        assert_eq!(game.screen, Screen::Paused);
+
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let off = outlines_drawn(&mut game).len();
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let on = outlines_drawn(&mut game).len();
+
+        assert_eq!(playing, 6 * 5);
+        assert_eq!(off, 0);
+        assert_eq!(on, 6 * 5);
+    }
+
+    #[test]
+    fn a_volume_on_a_quarter_turned_body_has_swapped_half_extents() {
+        let mut volume = dummy_hit_volumes_of(&SHIPPED_BODY, 0)[1];
+        volume.offset = Vec3::new(0.3, 0.25, 0.0);
+        volume.half_extents = Vec3::new(0.2, 0.35, 0.12);
+
+        let (min, max) = volume_bounds(
+            Vec3::new(1.0, 2.0, 3.0),
+            std::f32::consts::FRAC_PI_2,
+            &volume,
+        );
+
+        assert!(min.abs_diff_eq(Vec3::new(0.88, 1.9, 2.5), 1e-5), "{min:?}");
+        assert!(max.abs_diff_eq(Vec3::new(1.12, 2.6, 2.9), 1e-5), "{max:?}");
+    }
+
+    #[test]
+    fn a_volume_on_an_eighth_turned_body_is_bounded_by_its_oriented_box() {
+        let volume = dummy_hit_volumes_of(&SHIPPED_BODY, 0)[1];
+        assert_eq!(volume.half_extents, Vec3::new(0.2, 0.35, 0.12));
+        let reach = (0.2 + 0.12) * std::f32::consts::FRAC_1_SQRT_2;
+
+        let (min, max) = volume_bounds(Vec3::ZERO, std::f32::consts::FRAC_PI_4, &volume);
+
+        assert!(
+            min.abs_diff_eq(Vec3::new(-reach, -0.1, -reach), 1e-5),
+            "{min:?}"
+        );
+        assert!(
+            max.abs_diff_eq(Vec3::new(reach, 0.6, reach), 1e-5),
+            "{max:?}"
+        );
+        assert!(reach > 0.2, "wider than the box on its own axes");
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
@@ -8209,6 +8575,122 @@ mod mutation_tests {
         let frame = drawn.expect("the menu text makes the shell draw with the console closed");
         assert!(!frame.meshes.is_empty());
     }
+
+    fn feed_camera(x: f32, forward: Vec3) -> MenuCamera {
+        MenuCamera {
+            eye: Vec3::new(x, 1.7, -30.0),
+            forward,
+        }
+    }
+
+    fn two_cameras() -> Vec<MenuCamera> {
+        vec![feed_camera(40.0, Vec3::X), feed_camera(-40.0, Vec3::NEG_X)]
+    }
+
+    fn frame_of(game: &mut SearchlightGame, renderer: &mut FakeRenderer, dt: Duration) {
+        let clock = moho_app::GameClock::default();
+        let backend: &mut dyn RendererBackend = renderer;
+        let mut ctx = FrameContext::new(dt, &clock, Some(backend), None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    /// The eye the last frame was drawn from, and where its view carries a point `ahead` of it.
+    fn seen_from(renderer: &FakeRenderer, ahead: Vec3) -> (Vec3, Vec3) {
+        let (view, _, eye) = renderer.camera.expect("a frame began");
+        (eye, view.transform_point3(eye + ahead))
+    }
+
+    #[test]
+    fn the_main_menu_draws_the_level_from_the_first_menu_camera() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let (eye, in_view) = seen_from(&renderer, Vec3::X * 3.0);
+
+        assert_eq!(eye, Vec3::new(40.0, 1.7, -30.0));
+        assert!(
+            (in_view - Vec3::new(0.0, 0.0, -3.0)).length() < 1e-4,
+            "the first camera looks along +X: {in_view}"
+        );
+        assert_eq!(
+            renderer.draws.len(),
+            1 + 6,
+            "the arena and its dummies are drawn, as in play"
+        );
+        let enemies = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        assert_eq!(enemies, 0, "enemies synced behind the menu");
+        assert_eq!(crosshair_vertices(&game), 0, "crosshair drawn on the menu");
+    }
+
+    #[test]
+    fn the_main_menu_cuts_to_the_next_camera_after_five_seconds_of_frames() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+
+        frame_of(&mut game, &mut renderer, Duration::from_millis(4900));
+        let (before, _) = seen_from(&renderer, Vec3::X);
+        frame_of(&mut game, &mut renderer, Duration::from_millis(100));
+        let (after, _) = seen_from(&renderer, Vec3::X);
+
+        assert_eq!(before.x, 40.0, "cut before five seconds");
+        assert_eq!(after.x, -40.0, "no cut at five seconds");
+    }
+
+    #[test]
+    fn the_main_menu_feed_loops_back_to_the_first_camera() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+        let mut shown = Vec::new();
+
+        for _ in 0..3 {
+            frame_of(&mut game, &mut renderer, Duration::from_secs(5));
+            shown.push(seen_from(&renderer, Vec3::X).0.x);
+        }
+
+        assert_eq!(shown, [-40.0, 40.0, -40.0]);
+    }
+
+    #[test]
+    fn without_menu_cameras_the_menu_draws_the_empty_backdrop() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(Vec::new());
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let (view, _, eye) = renderer.camera.expect("the backdrop frame began");
+
+        assert!(renderer.draws.is_empty(), "the level drawn without cameras");
+        assert_eq!(view, Mat4::IDENTITY);
+        assert_eq!(eye, Vec3::ZERO);
+    }
+
+    #[test]
+    fn play_from_a_camera_view_starts_at_the_player_spawn() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut reference = game_with_an_arena_on_the_main_menu();
+        let mut reference_renderer = FakeRenderer::default();
+        reference.enter_play();
+        frame_with(&mut reference, &mut reference_renderer);
+        frame_with(&mut game, &mut renderer);
+        assert_eq!(seen_from(&renderer, Vec3::X).0.x, 40.0, "a camera shows");
+
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        frame_with(&mut game, &mut renderer);
+
+        let (eye, _) = seen_from(&renderer, Vec3::X);
+        let (spawn_eye, _) = seen_from(&reference_renderer, Vec3::X);
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(eye, spawn_eye, "play began from a menu camera");
+        let player = game.sim().player().position;
+        assert!(
+            (eye.x - player.x).abs() < 1e-3 && (eye.z - player.z).abs() < 1e-3,
+            "{eye} is not over the player at {player}"
+        );
+        assert_eq!(renderer.draws.len(), 1 + 6 + 7);
+    }
 }
 
 #[cfg(test)]
@@ -8398,25 +8880,6 @@ mod enemy_and_hud_tests {
         stage.sync_enemies(sim);
         stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
         renderer.drawn()
-    }
-
-    #[test]
-    fn the_backdrop_draws_its_own_scene_and_not_the_arena() {
-        let mut stage = Stage::new();
-        stage.add_arena(vec![box_mesh(Vec3::new(50.0, 0.0, 0.0), Vec3::ONE)], &[]);
-        let backdrop_material = stage.backdrop.material_table.find_or_push(&Paint::Arena);
-        stage.backdrop.world_meshes_mut().upsert(
-            WorldMeshId(1),
-            box_mesh(Vec3::new(-7.0, 0.0, 0.0), Vec3::ONE),
-            backdrop_material,
-        );
-        let mut renderer = RecordingRenderer::default();
-
-        stage.draw_backdrop(&mut renderer);
-        let drawn = renderer.drawn();
-
-        assert_eq!(drawn.len(), 1);
-        assert_eq!(drawn[0].0, Vec3::new(-7.0, 0.0, 0.0));
     }
 
     fn is_paint(material: MaterialGpu, paint: Paint) -> bool {

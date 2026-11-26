@@ -6,7 +6,7 @@
 .items[1].open_blockers = 0 | .cap = 2	start:721:-:no open blocker | start:722:-:no open blocker
 .items[1].open_blockers = 0	start:721:-:no open blocker | wait:722:cap:run cap reached (1)
 .items[0].labels += ["agent-ready"]	wait:721:running:already agent-ready | wait:722:blocked:1 open blocker(s)
-.items[0].labels += ["agent-paused"]	wait:721:paused:labelled agent-paused | wait:722:blocked:1 open blocker(s)
+.items[0].labels += ["agent-paused"]	comment:721:paused:This item is paused for a human answer. The chain waits for a comment starting with `Resume`. | wait:722:blocked:1 open blocker(s)
 .items[0].labels += ["needs-human"]	wait:721:needs-human:labelled needs-human | wait:722:blocked:1 open blocker(s)
 .items[0].eligible = "no"	comment:721:human-driven:The chain stops here: this item is human-driven (`eligible=no`). Run it in a session; the chain continues when it closes. | wait:722:blocked:1 open blocker(s)
 .items[0].eligible = "no" | .items[0].markers = ["human-driven"]	wait:721:human-driven:reported | wait:722:blocked:1 open blocker(s)
@@ -15,3 +15,7 @@
 .items[0].blockers[0].state_reason = "duplicate" | .items[0].markers = ["blocker-dropped"]	wait:721:blocker-dropped:reported | wait:722:blocked:1 open blocker(s)
 .items[0].open_blockers = null	wait:721:blocked:unknown open blocker(s) | wait:722:blocked:1 open blocker(s)
 .items = []	
+.items[0].labels += ["agent-ready", "agent-paused"]	comment:721:paused:This item is paused for a human answer. The chain waits for a comment starting with `Resume`. | wait:722:blocked:1 open blocker(s)
+.items[0].labels += ["agent-paused"] | .items[0].markers = ["paused"]	wait:721:paused:reported | wait:722:blocked:1 open blocker(s)
+.items[1].blockers[0].labels = ["agent-paused"]	start:721:-:no open blocker | comment:722:blocker-paused:The chain waits here: blocker #721 is paused for a human answer. A comment starting with `Resume` on it lets the chain continue.
+.items[1].blockers[0].labels = ["agent-paused"] | .items[1].markers = ["blocker-paused"]	start:721:-:no open blocker | wait:722:blocker-paused:reported

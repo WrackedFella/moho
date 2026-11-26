@@ -1154,6 +1154,12 @@ impl SearchlightSim {
         self.lean
     }
 
+    /// The player's hit volumes as they stand now, leaned, in [`BodyPart::ALL`] order and the
+    /// body frame around the capsule centre.
+    pub fn player_hit_volumes(&self) -> &[HitVolume] {
+        &self.leaned_volumes
+    }
+
     /// What a full lean looks like and how it blends.
     pub fn lean_tuning(&self) -> &LeanTuning {
         &self.lean_tuning
