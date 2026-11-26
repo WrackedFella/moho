@@ -1,6 +1,7 @@
 use super::query::encode_loose;
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
+use moho_core::sim_math;
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
     Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle,
@@ -515,12 +516,12 @@ impl PhysicsWorld {
     }
 
     pub(super) fn brake_rolling(&mut self, dt: f32) {
-        let cut = self.gravity.length() * self.rest_slope.tan() * dt;
+        let cut = self.gravity.length() * sim_math::tan(self.rest_slope) * dt;
         if cut == 0.0 {
             return;
         }
         let up = -self.gravity.normalize_or_zero();
-        let cos_slope = self.rest_slope.cos();
+        let cos_slope = sim_math::sin_cos(self.rest_slope).1;
 
         for loose in self.loose.values() {
             let roll = loose.spawn.shape.roll();
