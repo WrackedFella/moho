@@ -7129,6 +7129,168 @@ mod tests {
         shell.menu_mut().top_lists().map(|lists| lists.lists.len())
     }
 
+    /// The inventory screen open on a body that carried a magazine and then a rag, and the
+    /// clock its ticks are run on.
+    fn body_screen_carrying_a_magazine_then_a_rag() -> (SearchlightGame, GameClock) {
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_remains = Remains {
+            carried: vec![
+                Item::Magazine(mag(30, 30)),
+                Item::Other(searchlight_rules::ItemId::new("rag")),
+            ],
+            ..Remains::default()
+        };
+        let body_at = Vec3::new(0.0, 0.0, 1.5);
+        let arena = arena_with(&[], Vec3::ZERO, &[body_at], &[Vec3::new(0.0, 0.0, 10.0)]);
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        game.mode.sim_mut().kill_enemy(0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let pitch = (game.sim().eye_height() - 0.3).atan2(body_at.z);
+        let look = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                pitch_delta: -pitch,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &look);
+        search_the_body(&mut game, &mut clock);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+        assert_eq!(game.screen, Screen::Inventory);
+        (game, clock)
+    }
+
+    /// Takes the queued command, runs one tick on it, and lets a frame rebuild the lists.
+    fn tick_and_frame(game: &mut SearchlightGame, clock: &mut GameClock) {
+        let command = game.command();
+        tick_with(game, clock, &command);
+        HeadlessLoop::new(LoopConfig::new(60)).advance(game, Duration::ZERO);
+    }
+
+    /// The labels of every row of list `list` on the screen on top.
+    fn row_labels(game: &SearchlightGame, list: ListId) -> Vec<String> {
+        let mut shell = game.stage.shell();
+        let lists = shell.menu_mut().top_lists().expect("the inventory is open");
+        lists
+            .lists
+            .iter()
+            .find(|candidate| candidate.id == list)
+            .expect("the list is on the screen")
+            .rows
+            .iter()
+            .map(|row| row.label.clone())
+            .collect()
+    }
+
+    fn tap_keys(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, keys: &[Key]) {
+        for &key in keys {
+            game.route_input(ctx, Input::Key(key), true, false);
+            game.route_input(ctx, Input::Key(key), false, false);
+        }
+    }
+
+    #[test]
+    fn a_picked_row_survives_a_tick_before_it_is_dropped() {
+        use crate::inventory::{BODY, INVENTORY};
+
+        let mut game = open_body_screen();
+        let mut clock = GameClock::default();
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let (body_at, inventory_at) = (position_of(&game, BODY), position_of(&game, INVENTORY));
+
+        tap_keys(&mut game, &mut ctx, &vec![Key::ArrowRight; body_at]);
+        tap_keys(&mut game, &mut ctx, &[Key::Enter]);
+        for _ in 0..3 {
+            tick_and_frame(&mut game, &mut clock);
+        }
+        tap_keys(
+            &mut game,
+            &mut ctx,
+            &vec![Key::ArrowLeft; body_at - inventory_at],
+        );
+        tap_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let command = game.command();
+        tick_with(&mut game, &mut clock, &command);
+
+        assert_eq!(
+            command.inventory,
+            Some(InventoryCommand::Move {
+                from: Source::BodyCarried(0),
+                to: Place::Inventory,
+            })
+        );
+        assert!(matches!(
+            game.sim().loadout().inventory(),
+            [Item::Magazine(_)]
+        ));
+    }
+
+    #[test]
+    fn after_a_move_the_rows_shift_and_the_next_move_takes_the_next_item() {
+        use crate::inventory::{BODY, INVENTORY};
+
+        let (mut game, mut clock) = body_screen_carrying_a_magazine_then_a_rag();
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let before = (row_labels(&game, BODY), row_labels(&game, INVENTORY));
+
+        let focus = move_first_row(&mut game, &mut ctx, 0, BODY, INVENTORY);
+        tick_and_frame(&mut game, &mut clock);
+        let between = (row_labels(&game, BODY), row_labels(&game, INVENTORY));
+        move_first_row(&mut game, &mut ctx, focus, BODY, INVENTORY);
+        tick_and_frame(&mut game, &mut clock);
+
+        assert_eq!((before.0.len(), before.1.len()), (2, 0));
+        assert_eq!((between.0.len(), between.1.len()), (1, 1));
+        assert_eq!(between.0, ["rag"], "the rag is now the first row");
+        assert!(matches!(
+            game.sim().loadout().inventory(),
+            [Item::Magazine(_), Item::Other(rag)] if rag.as_str() == "rag"
+        ));
+        assert!(row_labels(&game, BODY).is_empty());
+    }
+
+    #[test]
+    fn a_body_left_behind_keeps_its_list_but_refuses_moves() {
+        use crate::inventory::{BODY, INVENTORY};
+
+        let (mut game, mut clock) = body_screen_carrying_a_magazine_then_a_rag();
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let backing_away = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: -1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        for _ in 0..90 {
+            tick_with(&mut game, &mut clock, &backing_away);
+        }
+        tick_and_frame(&mut game, &mut clock);
+        let before = (row_labels(&game, BODY), row_labels(&game, INVENTORY));
+        let loadout = game.sim().loadout().clone();
+
+        move_first_row(&mut game, &mut ctx, 0, BODY, INVENTORY);
+        tick_and_frame(&mut game, &mut clock);
+
+        assert_eq!(game.screen, Screen::Inventory);
+        assert_eq!(before.0.len(), 2, "the body's list is still shown");
+        assert_eq!(
+            (row_labels(&game, BODY), row_labels(&game, INVENTORY)),
+            before
+        );
+        assert_eq!(game.sim().loadout(), &loadout);
+    }
+
     #[test]
     fn a_second_move_before_the_command_is_taken_is_dropped() {
         use crate::inventory::{BODY, INVENTORY, MAGAZINE_SLOTS};
