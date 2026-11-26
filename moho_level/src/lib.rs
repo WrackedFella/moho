@@ -32,7 +32,7 @@ pub use model::{
 };
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
-pub use socket::{Assembly, SocketError};
+pub use socket::{Assembly, Posed, Released, SocketError};
 
 /// A loaded level: one mesh per triangle primitive and one marker per named,
 /// mesh-less node reached from the default scene.
