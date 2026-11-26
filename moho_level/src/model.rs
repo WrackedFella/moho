@@ -3,10 +3,10 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use glam::{Affine3A, Mat4, Quat};
+use glam::{Affine3A, Mat3A, Mat4, Quat};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, Rgba8Image, WorldMesh};
 
-use crate::anim::{Clip, Pose};
+use crate::anim::{Clip, Pose, Region};
 use crate::image::ImageSources;
 use crate::{LevelError, LevelErrorKind, mesh, rig};
 
@@ -373,6 +373,36 @@ impl Model {
     /// When a clip is not an index into [`Model::clips`], or `from` is not an index into
     /// [`Model::nodes`].
     pub fn layered_pose(&self, base: (usize, f32), action: (usize, f32), from: usize) -> Pose {
+        self.compose(self.layered_locals(base, action, from), &[])
+    }
+
+    /// The pose [`crate::anim::Animator::pose`] builds: `base`, or `action` over its region
+    /// when there is one, then each `(node, turn)` of `turns` pre-multiplying that node's
+    /// posed matrix (see [`Model::compose`]).
+    ///
+    /// # Panics
+    /// As [`Model::layered_pose`]; also when a turn names a node past the last.
+    pub(crate) fn pose_turned(
+        &self,
+        base: (usize, f32),
+        action: Option<((usize, f32), Region)>,
+        turns: &[(usize, Quat)],
+    ) -> Pose {
+        let locals = match action {
+            None => self.locals_of(base.0, base.1),
+            Some((action, Region::Whole)) => self.locals_of(action.0, action.1),
+            Some((action, Region::From(from))) => self.layered_locals(base, action, from),
+        };
+        self.compose(locals, turns)
+    }
+
+    /// The locals of [`Model::layered_pose`].
+    fn layered_locals(
+        &self,
+        base: (usize, f32),
+        action: (usize, f32),
+        from: usize,
+    ) -> Vec<Affine3A> {
         assert!(
             from < self.nodes.len(),
             "layered_pose: from {from} is not a node (count {})",
@@ -387,7 +417,7 @@ impl Model {
                 locals[index] = action_locals[index];
             }
         }
-        self.compose(locals, &[])
+        locals
     }
 
     /// Each node's local at `time` of `clip`: nodes no channel targets keep `local` exactly,
@@ -405,13 +435,18 @@ impl Model {
             .collect()
     }
 
-    /// Globals from the chosen `locals`, parent-first in walk order.
-    fn compose(&self, locals: Vec<Affine3A>, _turns: &[(usize, Quat)]) -> Pose {
+    /// Globals from the chosen `locals`, parent-first in walk order. Each turn naming a node
+    /// pre-multiplies the matrix part of that node's global (translation unchanged) before its
+    /// children are composed, so the turn carries down the whole subtree.
+    fn compose(&self, locals: Vec<Affine3A>, turns: &[(usize, Quat)]) -> Pose {
         let mut globals: Vec<Affine3A> = Vec::with_capacity(self.nodes.len());
-        for (node, local) in self.nodes.iter().zip(locals) {
+        for (index, (node, local)) in self.nodes.iter().zip(locals).enumerate() {
             // The same product the loader forms for `rest`, so an unanimated chain
             // reproduces it bit for bit.
-            let global = node.parent.map_or(local, |p| globals[p] * local);
+            let mut global = node.parent.map_or(local, |p| globals[p] * local);
+            for &(_, turn) in turns.iter().filter(|(at, _)| *at == index) {
+                global.matrix3 = Mat3A::from_quat(turn) * global.matrix3;
+            }
             globals.push(global);
         }
         Pose::new(globals)
