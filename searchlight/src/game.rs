@@ -6707,9 +6707,13 @@ mod tests {
         game.route_input(&mut ctx, TAB, true, false);
         game.event(&mut ctx, motion());
         let closed = (game.screen, ctx.requested_paused());
+        let closing = game.command();
+        let after = game.command();
 
         assert_eq!(open, (Screen::Inventory, Some(false)));
         assert_eq!(closed, (Screen::Playing, Some(false)));
+        assert_eq!(closing.inventory, Some(InventoryCommand::Close));
+        assert_eq!(after.inventory, None, "the close is sent once");
     }
 
     #[test]
@@ -6750,21 +6754,6 @@ mod tests {
         assert!(!ctx.exit_requested());
         assert_eq!(closing.inventory, Some(InventoryCommand::Close));
         assert_eq!(after.inventory, None, "the close is sent once");
-    }
-
-    #[test]
-    fn the_inventory_key_closing_the_screen_sends_close_too() {
-        let mut game = game();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-        game.route_input(&mut ctx, TAB, true, false);
-        assert_eq!(game.screen, Screen::Inventory);
-
-        game.route_input(&mut ctx, TAB, true, false);
-        let closing = game.command();
-
-        assert_eq!(game.screen, Screen::Playing);
-        assert_eq!(closing.inventory, Some(InventoryCommand::Close));
     }
 
     #[test]
@@ -6845,6 +6834,147 @@ mod tests {
 
         assert!(game.sim().player_body().is_dead(), "the player never died");
         assert_eq!(game.screen, Screen::Playing);
+    }
+
+    use searchlight_rules::{Item, Place, Remains, Source};
+
+    /// A game whose one enemy lies dead 1.5 m ahead of the player carrying one magazine, the
+    /// view tilted onto it and the use key not yet pressed.
+    fn game_beside_a_body() -> (SearchlightGame, GameClock) {
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_remains = Remains {
+            carried: vec![Item::Magazine(mag(30, 30))],
+            ..Remains::default()
+        };
+        let body_at = Vec3::new(0.0, 0.0, 1.5);
+        let arena = arena_with(&[], Vec3::ZERO, &[body_at], &[Vec3::new(0.0, 0.0, 10.0)]);
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        game.mode.sim_mut().kill_enemy(0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let pitch = (game.sim().eye_height() - 0.3).atan2(body_at.z);
+        let look = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                pitch_delta: -pitch,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &look);
+        game.mode.drain_feedback();
+        (game, clock)
+    }
+
+    /// Searches the body of [`game_beside_a_body`] until the sim reports it open.
+    fn search_the_body(game: &mut SearchlightGame, clock: &mut GameClock) {
+        let using = SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(game, clock, &using);
+        for _ in 0..30 {
+            tick_with(game, clock, &SearchlightCommand::default());
+        }
+        assert_eq!(game.sim().looting(), Some(0), "the search never finished");
+    }
+
+    #[test]
+    fn a_finished_search_opens_the_inventory_with_the_bodys_list() {
+        let (mut game, mut clock) = game_beside_a_body();
+        assert_eq!(game.screen, Screen::Playing);
+
+        search_the_body(&mut game, &mut clock);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+
+        assert_eq!(game.screen, Screen::Inventory);
+        let mut shell = game.stage.shell();
+        let lists = shell
+            .menu_mut()
+            .top_lists()
+            .expect("the inventory shows its lists");
+        let body = lists
+            .lists
+            .iter()
+            .find(|list| list.id == crate::inventory::BODY)
+            .expect("the body's list is on the screen");
+        assert_eq!(body.rows.len(), 1);
+    }
+
+    /// Moves the first row of the body's list to the inventory with the keys, from the
+    /// equipment list the screen opens on.
+    fn pick_up_and_drop(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, fresh: bool) {
+        let keys: &[Key] = if fresh {
+            &[
+                Key::ArrowRight,
+                Key::ArrowRight,
+                Key::ArrowRight,
+                Key::Enter,
+                Key::ArrowLeft,
+                Key::Enter,
+            ]
+        } else {
+            &[Key::ArrowRight, Key::Enter, Key::ArrowLeft, Key::Enter]
+        };
+        for &key in keys {
+            game.route_input(ctx, Input::Key(key), true, false);
+            game.route_input(ctx, Input::Key(key), false, false);
+        }
+    }
+
+    fn open_body_screen() -> SearchlightGame {
+        let (mut game, mut clock) = game_beside_a_body();
+        search_the_body(&mut game, &mut clock);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+        assert_eq!(game.screen, Screen::Inventory);
+        game
+    }
+
+    #[test]
+    fn a_move_on_the_screen_reaches_the_sim_as_one_command() {
+        let mut game = open_body_screen();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        pick_up_and_drop(&mut game, &mut ctx, true);
+        let command = game.command();
+        let after = game.command();
+
+        assert_eq!(
+            command.inventory,
+            Some(InventoryCommand::Move {
+                from: Source::BodyCarried(0),
+                to: Place::Inventory,
+            })
+        );
+        assert_eq!(after.inventory, None, "the move is sent once");
+    }
+
+    #[test]
+    fn a_second_move_before_the_command_is_taken_is_dropped() {
+        let mut game = open_body_screen();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        pick_up_and_drop(&mut game, &mut ctx, true);
+        pick_up_and_drop(&mut game, &mut ctx, false);
+        let first = game.command();
+        let second = game.command();
+
+        assert_eq!(
+            first.inventory,
+            Some(InventoryCommand::Move {
+                from: Source::BodyCarried(0),
+                to: Place::Inventory,
+            })
+        );
+        assert_eq!(second.inventory, None, "the second pick was dropped");
     }
 }
 

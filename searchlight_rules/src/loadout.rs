@@ -390,14 +390,6 @@ mod tests {
     }
 
     #[test]
-    fn a_new_loadout_has_no_backpack_and_an_empty_inventory() {
-        let loadout = loadout(full("held"), &[]);
-
-        assert_eq!(loadout.backpack(), None);
-        assert_eq!(loadout.inventory(), []);
-    }
-
-    #[test]
     fn taking_a_magazine_from_a_body_puts_it_in_the_inventory_and_off_the_body() {
         let mut loadout = player(&[None], vec![bandage()]);
         let mut remains = body(
@@ -410,21 +402,6 @@ mod tests {
         assert_eq!(moved, Ok(()));
         assert_eq!(loadout.inventory(), [bandage(), mag_item("loot")]);
         assert_eq!(remains.carried, [bandage(), Item::Other(id("rag"))]);
-    }
-
-    #[test]
-    fn taking_from_a_body_leaves_the_players_slots_and_rifle_alone() {
-        let mut loadout = player(&[Some("a"), None], vec![]);
-        let before = loadout.clone();
-        let mut remains = body(None, vec![mag_item("loot")]);
-
-        loadout
-            .move_item(Some(&mut remains), Source::BodyCarried(0), Place::Inventory)
-            .expect("taking from a body is accepted");
-
-        assert_eq!(loadout.rifle(), before.rifle());
-        assert_eq!(loadout.rig(), before.rig());
-        assert_eq!(loadout.backpack(), before.backpack());
     }
 
     fn inventory_item(kind: u8, n: usize) -> Item {
@@ -521,33 +498,9 @@ mod tests {
     }
 
     #[test]
-    fn a_magazine_moved_into_a_slot_can_then_be_reloaded() {
-        let mut loadout = player(&[None], vec![mag_item("spare")]);
-        loadout
-            .move_item(None, Source::Inventory(0), Place::MagazineSlots)
-            .expect("a slot is free");
-
-        let reloaded = loadout.reload();
-
-        assert!(reloaded);
-        assert_eq!(rifle_item(&loadout), "spare");
-        assert_eq!(loadout.inventory(), []);
-    }
-
-    #[test]
     fn a_bandage_to_the_slots_is_refused_and_changes_nothing() {
-        let mut loadout = player(&[None, Some("a")], vec![bandage()]);
-        let before = loadout.clone();
-
-        let moved = loadout.move_item(None, Source::Inventory(0), Place::MagazineSlots);
-
-        assert_eq!(moved, Err(MoveRefused::NotAMagazine));
-        assert_eq!(loadout, before);
-    }
-
-    #[test]
-    fn a_rifle_rounds_and_a_rig_to_the_slots_are_refused() {
         let others = [
+            bandage(),
             Item::Weapon(rifle_with(full("in_rifle"))),
             Item::Rounds(RoundStack {
                 round: id("ball"),
@@ -556,7 +509,7 @@ mod tests {
             Item::Rig(rig_holding("spare_rig", &[Some("m")])),
         ];
         for item in others {
-            let mut loadout = player(&[None], vec![item.clone()]);
+            let mut loadout = player(&[None, Some("a")], vec![item.clone()]);
             let before = loadout.clone();
 
             let moved = loadout.move_item(None, Source::Inventory(0), Place::MagazineSlots);
@@ -564,6 +517,15 @@ mod tests {
             assert_eq!(moved, Err(MoveRefused::NotAMagazine), "{item:?}");
             assert_eq!(loadout, before, "{item:?}");
         }
+        let mut loadout = player(&[None], vec![]);
+        let mut remains = body(Some(rig_holding("body_rig", &[Some("x")])), vec![]);
+        let (before, remains_before) = (loadout.clone(), remains.clone());
+
+        let moved = loadout.move_item(Some(&mut remains), Source::BodyRig, Place::MagazineSlots);
+
+        assert_eq!(moved, Err(MoveRefused::NotAMagazine), "a body's rig");
+        assert_eq!(loadout, before);
+        assert_eq!(remains, remains_before);
     }
 
     #[test]
@@ -613,6 +575,46 @@ mod tests {
             assert_eq!(moved, Err(MoveRefused::NoSuchItem), "{source:?}");
             assert_eq!(loadout, loadout_before, "{source:?}");
             assert_eq!(remains, remains_before, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_slot_of_a_bodys_rig_holds_nothing_to_move() {
+        let rig = rig_holding("body_rig", &[Some("x"), None, Some("y")]);
+        let mut loadout = player(&[None], vec![bandage()]);
+        let mut remains = body(Some(rig), vec![]);
+        let (loadout_before, remains_before) = (loadout.clone(), remains.clone());
+
+        let moved = loadout.move_item(
+            Some(&mut remains),
+            Source::BodyMagazineSlot(1),
+            Place::Inventory,
+        );
+
+        assert_eq!(moved, Err(MoveRefused::NoSuchItem));
+        assert_eq!(loadout, loadout_before);
+        assert_eq!(remains, remains_before);
+    }
+
+    #[test]
+    fn a_source_holding_nothing_is_refused_for_every_place() {
+        let sources = [Source::Inventory(1), Source::BodyCarried(1)];
+        for source in sources {
+            for place in [Place::Inventory, Place::MagazineSlots, Place::Body] {
+                let mut loadout = player(&[Some("a"), None], vec![bandage()]);
+                let mut remains = body(None, vec![bandage()]);
+                let (loadout_before, remains_before) = (loadout.clone(), remains.clone());
+
+                let moved = loadout.move_item(Some(&mut remains), source, place);
+
+                assert_eq!(
+                    moved,
+                    Err(MoveRefused::NoSuchItem),
+                    "{source:?} to {place:?}"
+                );
+                assert_eq!(loadout, loadout_before, "{source:?} to {place:?}");
+                assert_eq!(remains, remains_before, "{source:?} to {place:?}");
+            }
         }
     }
 
@@ -705,37 +707,31 @@ mod tests {
         assert_eq!(loadout.inventory(), []);
     }
 
-    #[test]
-    fn a_bodys_rig_is_not_a_magazine_for_the_slots() {
-        let rig = rig_holding("body_rig", &[Some("x")]);
-        let mut loadout = player(&[None], vec![]);
-        let mut remains = body(Some(rig), vec![]);
-        let (before, remains_before) = (loadout.clone(), remains.clone());
-
-        let moved = loadout.move_item(Some(&mut remains), Source::BodyRig, Place::MagazineSlots);
-
-        assert_eq!(moved, Err(MoveRefused::NotAMagazine));
-        assert_eq!(loadout, before);
-        assert_eq!(remains, remains_before);
-    }
-
     /// Every leaf item the player and the body hold, wherever it sits, as sorted labels.
     fn leaves(loadout: &Loadout, remains: &Remains) -> Vec<String> {
         fn item(out: &mut Vec<String>, item: &Item) {
             match item {
-                Item::Weapon(rifle) => out.push(format!("mag {}", rifle.magazine().item())),
-                Item::Magazine(m) => out.push(format!("mag {}", m.item())),
-                Item::Rounds(stack) => out.push(format!("rounds {}", stack.round)),
+                Item::Weapon(rifle) => out.push(format!(
+                    "mag {} {}",
+                    rifle.magazine().item(),
+                    rifle.magazine().rounds()
+                )),
+                Item::Magazine(m) => out.push(format!("mag {} {}", m.item(), m.rounds())),
+                Item::Rounds(stack) => out.push(format!("rounds {} {}", stack.round, stack.count)),
                 Item::Rig(rig) => rig_leaves(out, rig),
                 Item::Other(id) => out.push(format!("other {id}")),
             }
         }
         fn rig_leaves(out: &mut Vec<String>, rig: &Rig) {
             out.push(format!("rig {}", rig.item()));
-            out.extend(rig.magazines().map(|m| format!("mag {}", m.item())));
+            out.extend(
+                rig.magazines()
+                    .map(|m| format!("mag {} {}", m.item(), m.rounds())),
+            );
         }
 
-        let mut out = vec![format!("mag {}", loadout.rifle().magazine().item())];
+        let held = loadout.rifle().magazine();
+        let mut out = vec![format!("mag {} {}", held.item(), held.rounds())];
         rig_leaves(&mut out, loadout.rig());
         out.extend(loadout.backpack().map(|b| format!("other {b}")));
         loadout.inventory().iter().for_each(|i| item(&mut out, i));

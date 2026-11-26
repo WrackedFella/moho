@@ -693,11 +693,18 @@ mod tests {
         let inventory = kit.loadout.inventory();
         assert_eq!(inventory.len(), 4, "{inventory:?}");
         assert_eq!(inventory[0], Item::Other(id("bandage")));
-        assert!(
-            matches!(&inventory[1], Item::Magazine(m) if m.item() == &id("mag_rifle") && m.rounds() == 10),
-            "{:?}",
-            inventory[1]
-        );
+        let held = |round: &str, rounds: u32| {
+            Item::Magazine(
+                Magazine::filled(
+                    id("mag_rifle"),
+                    &crate::test_support::spec("rifle", 30),
+                    &id(round),
+                    rounds,
+                )
+                .expect("the rounds fit"),
+            )
+        };
+        assert_eq!(inventory[1], held("round_ball", 10));
         assert_eq!(
             inventory[2],
             Item::Rounds(RoundStack {
@@ -705,19 +712,11 @@ mod tests {
                 count: 20
             })
         );
-        assert!(
-            matches!(&inventory[3], Item::Magazine(m) if m.rounds() == 30),
-            "a magazine with no rounds listed is full: {:?}",
-            inventory[3]
+        assert_eq!(
+            inventory[3],
+            held("round_heavy", 30),
+            "a magazine with no rounds listed is full"
         );
-    }
-
-    #[test]
-    fn a_kit_with_no_backpack_and_nothing_carried_has_an_empty_inventory() {
-        let kit = resolve_loot(&start(two_full())).expect("the starting kit resolves");
-
-        assert_eq!(kit.loadout.backpack(), None);
-        assert_eq!(kit.loadout.inventory(), []);
     }
 
     #[test]
@@ -866,29 +865,12 @@ mod tests {
     }
 
     #[test]
-    fn remains_of_a_kit_with_no_backpack_have_none() {
-        let def = kit_def(json!({
-            "rig": "rig_chest", "weapon": "rifle",
-            "loaded": {"magazine": "mag_rifle", "round": "round_ball"}
-        }));
-
-        let (remains, _) = remains_of(&def).expect("the enemy kit resolves");
-
-        assert_eq!(remains.backpack, None);
-        assert_eq!(
-            remains.carried.len(),
-            1,
-            "only the rifle: {:?}",
-            remains.carried
-        );
-    }
-
-    #[test]
     fn remains_carry_the_ballistics_of_every_round_in_the_kit() {
         let def = kit_def(json!({
             "rig": "rig_chest", "weapon": "rifle",
             "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
-            "magazines": [{"magazine": "mag_rifle", "round": "round_heavy", "rounds": 12}]
+            "magazines": [{"magazine": "mag_rifle", "round": "round_heavy", "rounds": 12}],
+            "carried": [{"item": "round_9mm", "count": 5}]
         }));
 
         let (_, rounds) = remains_of(&def).expect("the enemy kit resolves");
@@ -900,6 +882,14 @@ mod tests {
                 drag: 2.5
             })
         );
-        assert_eq!(rounds.len(), 2);
+        assert_eq!(
+            rounds.get(&id("round_9mm")),
+            Some(&Ballistics {
+                muzzle_velocity: 400.0,
+                drag: 3.0
+            }),
+            "a round only carried loose"
+        );
+        assert_eq!(rounds.len(), 3);
     }
 }

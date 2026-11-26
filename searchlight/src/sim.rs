@@ -3944,7 +3944,8 @@ mod tests {
     }
 
     use crate::input::InventoryCommand;
-    use crate::test_support::SEARCH_TICKS;
+    use crate::mode::ArenaMode;
+    use crate::test_support::{SEARCH_TICKS, wave_tuning};
     use searchlight_rules::{Item, Place, Source};
 
     /// Where the enemy of a loot sim stands, and so lies once dead: 1.5 m ahead of the player.
@@ -4144,6 +4145,7 @@ mod tests {
         );
         assert_eq!(living.looting(), None);
         assert_eq!(living.enemies_alive(), 1);
+        assert!(living.bodies().is_empty());
     }
 
     #[test]
@@ -4291,26 +4293,103 @@ mod tests {
     }
 
     #[test]
-    fn a_control_in_front_of_a_body_keeps_the_use() {
-        let post = (Vec3::new(-0.3, 0.0, 0.8), Vec3::new(0.3, 2.0, 1.2));
-        let arena = arena_with_controls(
-            &[],
-            Vec3::ZERO,
-            &[BODY_AT],
-            &[Vec3::new(0.0, 0.0, 10.0)],
-            &[post],
+    fn a_control_in_reach_keeps_the_use_over_a_body_in_view() {
+        // The body lies 1 m ahead; the ray, 40 degrees down, passes 0.6 m from its point and
+        // reaches the post 0.1 m after its closest approach, so the post does not hide the body
+        // by being nearer: only the control's priority keeps the search from starting.
+        let near = Vec3::new(0.0, 0.0, 1.0);
+        let post = (Vec3::new(-0.3, 0.0, 1.45), Vec3::new(0.3, 1.0, 1.9));
+        let route = [Vec3::new(0.0, 0.0, 10.0)];
+        let pitch = -40.0_f32.to_radians();
+        let with_post = arena_with_controls(&[], Vec3::ZERO, &[near], &route, &[post]);
+        let mut mode = ArenaMode::new(with_post, loot_config(two_magazines()), wave_tuning(1));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        mode.tick(&turning(0.0, pitch), DT);
+        let mut open = SearchlightSim::start(
+            arena_with(&[], Vec3::ZERO, &[near], &route),
+            loot_config(two_magazines()),
         );
-        let mut sim = SearchlightSim::start(arena, loot_config(two_magazines()));
-        sim.tick(&idle(), DT);
-        sim.kill_enemy(0);
-        sim.tick(&idle(), DT);
-        look_down_at_the_body(&mut sim);
+        open.kill_enemy(0);
+        open.tick(&idle(), DT);
+        open.tick(&turning(0.0, pitch), DT);
+        assert_eq!(
+            open.body_in_view(),
+            Some(0),
+            "without the post the body is in view"
+        );
+        assert_eq!(mode.sim().control_in_reach(), Some(0));
+        assert_eq!(mode.tally().map(|tally| tally.wave), Some(1));
 
-        let (opened_through_the_post, _) = search(&mut sim, 30);
+        mode.tick(&using(), DT);
+        let mut feedback = mode.drain_feedback();
+        for _ in 0..20 {
+            mode.tick(&idle(), DT);
+            feedback.extend(mode.drain_feedback());
+        }
 
-        assert_eq!(sim.control_in_reach(), Some(0));
-        assert_eq!(sim.body_in_view(), None);
-        assert_eq!(opened_through_the_post, None);
+        assert_eq!(
+            mode.tally().map(|tally| tally.wave),
+            Some(2),
+            "the control's action fired"
+        );
+        assert!(!opened(&feedback), "{feedback:?}");
+        assert_eq!(mode.sim().looting(), None);
+    }
+
+    #[test]
+    fn a_body_in_line_but_beyond_search_reach_is_not_in_view() {
+        let mut short = loot_config(two_magazines());
+        short.search_reach = 1.0;
+        let mut near = sim_with_a_body(loot_config(two_magazines()), &[]);
+        let mut far = sim_with_a_body(short, &[]);
+        look_down_at_the_body(&mut near);
+        look_down_at_the_body(&mut far);
+
+        let (opened_far, _) = search(&mut far, 30);
+
+        assert_eq!(
+            near.body_in_view(),
+            Some(0),
+            "dead on the ray and within the default reach"
+        );
+        assert_eq!(far.body_in_view(), None);
+        assert_eq!(opened_far, None);
+        assert_eq!(far.looting(), None);
+    }
+
+    #[test]
+    fn an_inventory_move_applies_with_no_body_being_looted() {
+        let mut config = test_config(rifle_with(30), vec![]);
+        config.loadout = Loadout::new(rifle_with(30), empty_rig(2))
+            .with_inventory(vec![rag(), Item::Magazine(mag(30, 30))]);
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+
+        sim.tick(
+            &asking(InventoryCommand::Move {
+                from: Source::Inventory(1),
+                to: Place::MagazineSlots,
+            }),
+            DT,
+        );
+
+        assert_eq!(sim.rig().slots(), [Some(mag(30, 30)), None]);
+        assert_eq!(sim.loadout().inventory(), [rag()]);
+    }
+
+    #[test]
+    fn a_dying_player_ends_the_looting_and_moves_nothing() {
+        let mut sim = looting_sim(loot_config(two_magazines()));
+        let (loadout, body) = (sim.loadout().clone(), sim.bodies()[&0].clone());
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+        sim.tick(&taking_the_first_item(), DT);
+
+        assert_eq!(sim.looting(), None);
+        assert!(sim.player_body().is_dead(), "no restart was asked for");
+        assert_eq!(sim.loadout(), &loadout);
+        assert_eq!(sim.bodies()[&0], body);
     }
 
     mod waves {

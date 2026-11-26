@@ -23,6 +23,16 @@ impl Rig {
         }
     }
 
+    /// A rig of the item `item` with exactly `slots`, free ones as `None`.
+    #[must_use]
+    pub fn from_slots(item: ItemId, slots: Vec<Option<Magazine>>) -> Self {
+        Self {
+            item,
+            slots,
+            next: 0,
+        }
+    }
+
     /// The item this rig is an instance of.
     #[must_use]
     pub fn item(&self) -> &ItemId {
