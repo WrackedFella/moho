@@ -6938,6 +6938,53 @@ mod tests {
     }
 
     #[test]
+    fn outlines_of_a_quarter_turned_enemy_use_its_turned_bounds() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+        run_hitvolumes(&mut game);
+
+        frame_headless(&mut game);
+        let outlines = outlines_drawn(&mut game);
+
+        let sim = game.sim();
+        let enemy = sim.enemy_state(1).expect("the enemy lives");
+        assert!(
+            (enemy.yaw - std::f32::consts::FRAC_PI_2).abs() < 0.05,
+            "the enemy faces its waypoint at +X: {}",
+            enemy.yaw
+        );
+        let torso = dummy_hit_volumes_of(sim.character_body(), 0)[1];
+        let turned = corner_bounds(enemy.position, enemy.yaw, &torso);
+        let unturned = corner_bounds(enemy.position, 0.0, &torso);
+        assert!(outlined(&outlines, turned), "the turned torso");
+        assert!(!outlined(&outlines, unturned), "the yaw-0 torso");
+        assert!(
+            (turned.1.x - turned.0.x - (unturned.1.z - unturned.0.z)).abs() < 1e-3,
+            "half extents on X and Z swap"
+        );
+    }
+
+    #[test]
+    fn hitvolumes_off_and_on_again_while_paused_removes_and_restores_outlines() {
+        let mut game = game_with_a_dummy_and_three_enemies();
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let playing = outlines_drawn(&mut game).len();
+        game.pause();
+        assert_eq!(game.screen, Screen::Paused);
+
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let off = outlines_drawn(&mut game).len();
+        run_hitvolumes(&mut game);
+        frame_headless(&mut game);
+        let on = outlines_drawn(&mut game).len();
+
+        assert_eq!(playing, 6 * 5);
+        assert_eq!(off, 0);
+        assert_eq!(on, 6 * 5);
+    }
+
+    #[test]
     fn a_volume_on_a_quarter_turned_body_has_swapped_half_extents() {
         let mut volume = dummy_hit_volumes_of(&SHIPPED_BODY, 0)[1];
         volume.offset = Vec3::new(0.3, 0.25, 0.0);
