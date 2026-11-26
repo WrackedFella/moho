@@ -378,8 +378,8 @@ impl PhysicsWorld {
     /// If the world already holds a loose object or has issued an id.
     pub fn restore_loose(&mut self, records: &LooseRecords) -> Result<(), RestoreLooseError> {
         assert!(
-            self.loose.is_empty() && self.next_loose == 0,
-            "restore_loose needs a world that already holds no loose object and has issued no id"
+            self.next_loose == 0,
+            "restore_loose needs a world that has issued no id, but this one already has"
         );
         let mut previous: Option<LooseId> = None;
         for record in &records.objects {
