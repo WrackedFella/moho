@@ -671,8 +671,7 @@ impl SearchlightSim {
         if lean != self.lean {
             self.lean = lean;
             self.leaned_volumes = lean_volumes(&self.upright_volumes, lean, &self.lean_tuning);
-            // Takes effect at the next world step, so a tick's rays meet the lean of the tick
-            // before.
+            // Rays after this, this tick's shots included, meet the new lean.
             self.world
                 .set_hit_volumes(
                     self.player,
@@ -3084,7 +3083,8 @@ mod tests {
     }
 
     /// A sim on open ground whose player has turned `yaw` radians and is leaning `side` about
-    /// halfway, with the amount its hit volumes stand at (they lag the lean by a tick).
+    /// halfway, with the amount a tick before the last (its hit volumes stand a step further
+    /// on, which moves the hip band by millimetres).
     fn half_leaned_player(yaw: f32, side: LeanSide) -> (SearchlightSim, f32) {
         let mut sim = open_sim();
         let turn = SearchlightCommand {
@@ -3250,6 +3250,47 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn level_shots_across_the_hips_all_hit_a_part_while_the_lean_is_released() {
+        for side in [LeanSide::Right, LeanSide::Left] {
+            let mut sim = leaned_player(0.0, side);
+            let mut previous = sim.player_lean().amount();
+            let mut now = previous;
+            while now.abs() > 0.5 {
+                previous = now;
+                sim.tick(&leaning(None), DT);
+                now = sim.player_lean().amount();
+            }
+            // The world holds the lean of one of the two ticks (which one is the physics
+            // world's business); a shot inside the band of both must hit either way.
+            let (_, top_before) = hip_band(&volumes_leaning(previous, sim.lean_tuning()));
+            let (_, top_now) = hip_band(&volumes_leaning(now, sim.lean_tuning()));
+            let top = top_before.min(top_now);
+            let mut misses = Vec::new();
+
+            for column in 0..88 {
+                let x = -0.2175 + 0.005 * column as f32;
+                let mut y = -0.10 + 0.0005;
+                while y < top - 0.0005 {
+                    let struck = struck_at(&sim, Vec3::new(x, y, 0.0));
+                    if !matches!(struck, Some(SurfaceTag::Player(_))) {
+                        misses.push((x, y, struck));
+                    }
+                    y += 0.001;
+                }
+            }
+
+            assert!(
+                misses.is_empty(),
+                "{side:?}, released from {previous} to {now}: {} shots passed through, \
+                 first {:?}, last {:?}",
+                misses.len(),
+                misses.first(),
+                misses.last()
+            );
         }
     }
 
