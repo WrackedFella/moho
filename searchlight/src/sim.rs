@@ -3254,6 +3254,23 @@ mod tests {
     }
 
     #[test]
+    fn under_simple_a_head_hit_does_the_rounds_damage_to_health_and_the_head_pool() {
+        for damage in [1, 7] {
+            let mut sim = dummy_ahead(90.0, BodyPart::Head, with_round(BALL, damage));
+
+            fire_and_wait(&mut sim, simple_pull(), 1);
+
+            let body = sim.dummy_body(0).expect("dummy 0 exists");
+            assert_eq!(body.health(), 100 - damage, "damage {damage}");
+            assert_eq!(
+                body.status(BodyPart::Head),
+                Some(50 - damage),
+                "damage {damage}"
+            );
+        }
+    }
+
+    #[test]
     fn under_simple_a_round_with_no_stats_hits_nothing_and_warns() {
         let mut config = with_ball(BALL);
         config.rounds.clear();
@@ -5167,6 +5184,32 @@ mod enemy_tests {
             assert_eq!(body.status(BodyPart::RightArm), Some(60), "{part:?}");
             assert_eq!(body.status(BodyPart::Torso), None, "{part:?}");
         }
+    }
+
+    #[test]
+    fn an_enemy_hit_on_the_player_from_80_m_costs_the_same_as_one_from_10_m() {
+        let health_after_the_first_hit = |distance: f32| {
+            let spawn = Vec3::new(0.0, 0.0, distance);
+            let toward = Vec3::new(0.0, 0.0, distance - 4.0);
+            let arena = crate::test_support::arena_on(200.0, &[], Vec3::ZERO, &[spawn], &[toward]);
+            let mut config = config();
+            config.enemy.damage = 15;
+            config.enemy.sight_range = 150.0;
+            let mut sim = SearchlightSim::start(arena, config);
+            for _ in 0..300 {
+                sim.tick(&idle(), DT);
+                if sim.drain_feedback().iter().any(player_hit) {
+                    return sim.player_body().health();
+                }
+            }
+            panic!("the enemy at {distance} m never hit the player");
+        };
+
+        let near = health_after_the_first_hit(10.0);
+        let far = health_after_the_first_hit(80.0);
+
+        assert_eq!(near, 85, "a 15-damage torso hit");
+        assert_eq!(far, 85, "enemy damage is not scaled by distance");
     }
 
     #[test]

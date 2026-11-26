@@ -160,7 +160,7 @@ impl FlightBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::{prop_assert, proptest};
+    use proptest::{prop_assert, prop_assert_eq, proptest};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -366,6 +366,20 @@ mod tests {
             speed in 0.0f32..5000.0,
         )| {
             prop_assert!(arrival_damage(damage, muzzle_velocity, speed) <= damage);
+        });
+    }
+
+    #[test]
+    fn arrival_damage_is_exact_at_and_above_the_muzzle_velocity() {
+        proptest!(|(
+            damage in 1u32..=1_000_000,
+            muzzle_velocity in (MIN_SPEED + 0.01)..=5000.0f32,
+        )| {
+            prop_assert_eq!(arrival_damage(damage, muzzle_velocity, muzzle_velocity), damage);
+            prop_assert_eq!(
+                arrival_damage(damage, muzzle_velocity, 2.0 * muzzle_velocity),
+                damage
+            );
         });
     }
 
