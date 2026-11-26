@@ -43,6 +43,7 @@ Order is the GDD's: systems arrive in the order they create costs, so the ledger
 | P.9 | [FPS-F11](https://github.com/WrackedFella/moho/issues/630) group tactics (AI slice 2, before FPS-M3); [FPS-F12](https://github.com/WrackedFella/moho/issues/631) placeholder art and animation (FPS-M2 to FPS-M4) | ENG-F16 positional audio (done), ENG-F42 hidden routes and cover; ENG-F39 |
 | P.10 | [FPS-F19](https://github.com/WrackedFella/moho/issues/930) grid inventory (after the FPS-M2 list playtest) | ENG-F18-23 #935, -24 #936 (row 3.4g) |
 | P.11 | FPS-F21 difficulty page and presets (draft; after the prototype gate, [section 12.1](#121-difficulty-settings-gdd-415)) | none |
+| P.12 | [FPS-F23](https://github.com/WrackedFella/moho/issues/1036) loot pips, look-at panel and hold-to-use or equip (beside FPS-M3; hold-to-equip #1041 can run beside FPS-M2) | [#1035](https://github.com/WrackedFella/moho/issues/1035) world-anchored HUD elements and shaped panels (not fast-tracked) |
 
 ## 3 FPS-M1 Arena baseline (FPS-F2 #297)
 
@@ -118,6 +119,7 @@ Ballistics is a core feature (Justin, 2026-10-26; GDD §4.14, §9 Q7). This mile
 - **Cut lines:** more than four components, per-weapon unique parts, ammo crafting (GDD "Later"). Attachments move to FPS-M3.1.
 - **Fifty-enemy slowdown guard (FPS-F13-02 #929):** a CI test that fails when the fifty-enemy fight gets slower; arrives with the first large map, on ENG-F46-01's headless frame measure (row 3.4i).
 - **Grid inventory ([FPS-F19](https://github.com/WrackedFella/moho/issues/930)):** the grid view over FPS-M2's list (one grid, unbounded, sorted on demand, coloured status per cell) lands after the FPS-M2 list playtest, beside this milestone; engine side ENG-F18-23 #935 and -24 #936 (row 3.4g).
+- **Loot pips and the look-at panel ([FPS-F23](https://github.com/WrackedFella/moho/issues/1036), GDD §4.1):** a soft dot over loot in sight and in range, and a cut-corner panel for the thing looked at that names it and slides open its details, one condition pip per weapon part; hold interact uses meds and food or equips gear. Beside this milestone, not an exit item: it comes after the FPS-M2 list playtest and the grid's cell overlays (#936), whose reading the panel reuses, and needs engine request #1035. Component pips (#1040) wait for this milestone's weapon components; hold-to-equip (#1041) needs neither the panel nor #1035 and can land beside FPS-M2 once #606 and #626 are in; hold-to-use (#1042) waits for FPS-M4 meds. Why here: it is a convenience over loot, inventory and parts, so it is built once they are settled. Cut first: Shift+F toggle, Far range, Simple and Complex modes.
 - **Enemy AI slice 2** (group alerts, leader lift, fire and maneuver, suppressive fire) lands before this milestone. It is [FPS-F11](https://github.com/WrackedFella/moho/issues/630); engine needs are ENG-F16 #228 (done) and ENG-F42 #638 hidden routes and cover.
 
 ## 7.1 FPS-M3.1 Attachments (GDD Phase 3.1)
@@ -200,6 +202,7 @@ The engine lane designs the answers.
 | [#917](https://github.com/WrackedFella/moho/issues/917) a mesh that casts a shadow but is not drawn in the camera | ENG-F38-02 [#946](https://github.com/WrackedFella/moho/issues/946) (accepted 2026-11-25) | FPS-M1.2 slice 1: the placeholder body's shadow (card not yet drafted; blocked by #946) |
 | #893 an action on an item in a list | ENG-F18-22 #898 (done) | FPS-M2 inventory rows |
 | [#955](https://github.com/WrackedFella/moho/issues/955) ground scatter by surface and detail levels for distant models | ENG-F52 [#962](https://github.com/WrackedFella/moho/issues/962) scatter (row 3.4j), ENG-F53 [#963](https://github.com/WrackedFella/moho/issues/963) detail levels (row 3.4k), ENG-M3, ready by FPS-M3 entry (accepted 2026-11-25) | FPS-M3 first large map; a painted density mask needs an FPS-F16 density-channel export |
+| [#1035](https://github.com/WrackedFella/moho/issues/1035) HUD elements tied to world points; translucent panels with cut corners, fades and slides | not yet answered | FPS-F23 (beside FPS-M3); not fast-tracked |
 
 New requests come from FPS-M3 onward (workbench interaction, save kinds, level switching). File them when a milestone's feature is drafted.
 
@@ -221,7 +224,7 @@ Difficulty is a set of per-system complexity settings (FPS-F21, not yet filed). 
 
 - **Scope:** FPS-M1 to FPS-M5, plus FPS-M1.2, FPS-M1.3, FPS-M3.1 and FPS-M4.1; enemy grades and group tactics; placeholder art and animation (weapons, magazines, gear, player and enemy models; stand, crouch, prone, walk, run, crawl, lean, a ground clip for the injured) from free or generated assets; test levels with scripted states (FPS-F9, FPS-F10, plus a debug action per milestone: set a limb, set a survival meter, advance the clock).
 - **Difficulty:** the prototype builds the Hard line of GDD §4.15 only; Easy, Medium and the FPS-F21 page come after the gate ([section 12.1](#121-difficulty-settings-gdd-415)).
-- **Beside the milestones, not gate items:** FPS-F17 menu polish (except #812), FPS-F20 ammo readout, FPS-F19 grid inventory, and the FPS-F14 cut line (#723 to #725).
+- **Beside the milestones, not gate items:** FPS-F17 menu polish (except #812), FPS-F20 ammo readout, FPS-F19 grid inventory, FPS-F23 loot pips and look-at panel, and the FPS-F14 cut line (#723 to #725).
 - **Engine blockers are fast-tracked** (Justin, 2026-11-25): when a feature on the way to the gate meets an engine requirement, the Engine lane raises unblocking it in its own roadmap. This lane says so on the request and in a relay note.
 - **At the gate:** playtest, promote `dev` to `main`, and take the split to the Engine project. The plan is to split at FPS-M5 completion; the Engine project agreed (2026-10-23): the last two FPS features before the split are FPS-M4.1 and FPS-M5, and the split is the later of FPS-M5 completion and the engine's own ENG-M3 gate ([roadmap](../roadmap.md#milestone-gates-that-span-lines)). Every engine item the prototype uses lands by FPS-M4, and level unload for FPS-M6 lands before the split.
 - **Cut order if time presses:** grenades (FPS-M4.1), then attachments (FPS-M3.1), then the fifth archetype.
