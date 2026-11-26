@@ -366,7 +366,8 @@ impl Model {
     /// The pose of `base` (clip, time) with every node from `from` down (the node and all
     /// below it) taking its local from `action` (clip, time); other nodes keep the base's.
     /// Locals are swapped, not globals, so the upper body rides the base's pelvis. A
-    /// `from` past the last node layers nothing, so the result is the base pose.
+    /// `from` past the last node layers nothing, so the result is the base pose;
+    /// [`crate::Animator::play_action`] rejects such a region before it gets here.
     ///
     /// # Panics
     /// When a clip is not an index into [`Model::clips`].

@@ -202,8 +202,8 @@ pub enum Playback {
 pub enum Region {
     /// Every node.
     Whole,
-    /// This node index and every node below it. An index past the node count layers
-    /// nothing, so the pose is the base's.
+    /// This node index and every node below it. [`Animator::play_action`] rejects an
+    /// index past the last node.
     From(usize),
 }
 
@@ -220,6 +220,8 @@ struct Action {
 pub enum ClipError {
     #[error("model has no clip named `{name}`")]
     UnknownClip { name: String },
+    #[error("region starts at node {node}, but the model has {count} nodes")]
+    NodeOutOfRange { node: usize, count: usize },
 }
 
 /// One character's playback position in one clip of a model.
@@ -380,7 +382,9 @@ impl Animator {
     /// Replace any running action with `clip` over `region`, restarted at time 0.
     ///
     /// # Errors
-    /// [`ClipError::UnknownClip`] when the model has no such clip; nothing changes.
+    /// [`ClipError::UnknownClip`] when the model has no such clip;
+    /// [`ClipError::NodeOutOfRange`] when `region` starts past the model's last node.
+    /// Nothing changes on an error.
     pub fn play_action(
         &mut self,
         model: &Model,
@@ -388,6 +392,12 @@ impl Animator {
         playback: Playback,
         region: Region,
     ) -> Result<(), ClipError> {
+        let count = model.nodes().len();
+        if let Region::From(node) = region
+            && node >= count
+        {
+            return Err(ClipError::NodeOutOfRange { node, count });
+        }
         self.action = Some(Action {
             player: ClipPlayer::new(model, clip, playback)?,
             region,
