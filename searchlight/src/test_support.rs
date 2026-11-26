@@ -216,7 +216,6 @@ pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
     standing.eye_height = height + standing.hull.length / 2.0;
 }
 
-/// Sets the damage of `test_round` in `config`.
 pub(crate) fn set_round_damage(config: &mut SimConfig, damage: u32) {
     config
         .rounds

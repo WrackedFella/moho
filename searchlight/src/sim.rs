@@ -3131,7 +3131,6 @@ mod tests {
         assert_eq!(dragged, 5, "at 5/s the round has slowed to 61 m by tick 5");
     }
 
-    /// A config whose only round flies with `ballistics` and does `damage` at the muzzle.
     fn with_round(ballistics: Ballistics, damage: u32) -> SimConfig {
         let mut config = with_ball(ballistics);
         set_round_damage(&mut config, damage);
