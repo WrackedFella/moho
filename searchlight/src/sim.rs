@@ -15,7 +15,7 @@ use moho_physics::{
 use searchlight_rules::{
     Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport,
     ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, RoundStats,
-    Shot, disc_offset, leaned_parts,
+    Shot, arrival_damage, disc_offset, leaned_parts,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -956,7 +956,11 @@ impl SearchlightSim {
                 step.end,
                 step.strike,
                 round.from,
-                round.damage,
+                arrival_damage(
+                    round.damage,
+                    round.ballistics.muzzle_velocity,
+                    step.flight.velocity.length(),
+                ),
                 &mut round.near_missed,
             );
             if !ended {

@@ -31,11 +31,14 @@ pub struct RoundStats {
     pub damage: u32,
 }
 
-/// The damage of a hit by a round of base `damage` and `muzzle_velocity` arriving at `speed`.
+/// The damage of a hit by a round of base `damage` and `muzzle_velocity` arriving at `speed`:
+/// in proportion to the speed, never more than `damage` and never less than 1.
+///
+/// Uses only correctly rounded IEEE operations so replays do not differ between platforms.
 #[must_use]
 pub fn arrival_damage(damage: u32, muzzle_velocity: f32, speed: f32) -> u32 {
-    let _ = (damage, muzzle_velocity, speed);
-    todo!("scale the damage by the arrival speed")
+    let ratio = (speed / muzzle_velocity).min(1.0);
+    ((damage as f32 * ratio).round() as u32).max(1)
 }
 
 /// A round in the air.

@@ -143,6 +143,9 @@ impl TryFrom<RawRoundSpec> for RoundSpec {
         if !(raw.drag.is_finite() && raw.drag >= 0.0) {
             return Err(RoundSpecError::Drag(raw.drag));
         }
+        if raw.damage == 0 {
+            return Err(RoundSpecError::Damage(raw.damage));
+        }
         Ok(Self {
             caliber: raw.caliber,
             muzzle_velocity: raw.muzzle_velocity,
