@@ -562,10 +562,10 @@ mod tests {
             .collect();
         assert_eq!(app.crew.len(), CREW_SIZE, "the crew of a new world");
         assert_eq!(bodies.len(), CREW_SIZE, "a body for each pawn");
-        assert_eq!(app.possessed, FIRST_PAWN);
+        assert_eq!(app.possessed, Some(FIRST_PAWN));
         assert_eq!(
             app.physics.player,
-            app.physics.pawns.get(&app.possessed).copied(),
+            app.physics.pawns.get(&FIRST_PAWN).copied(),
             "the player's body is the possessed pawn's"
         );
         let possessed_at = app

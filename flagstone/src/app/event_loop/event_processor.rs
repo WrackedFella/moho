@@ -188,7 +188,9 @@ impl EventProcessor {
                 self.handle_mine_requested(app);
             }
             InputEvent::SlotSelected { slot } => {
-                app.possessed_pawn_mut().select_slot(slot);
+                if let Some(pawn) = app.possessed.and_then(|id| app.crew.get_mut(id)) {
+                    pawn.select_slot(slot);
+                }
             }
         }
     }
@@ -203,11 +205,14 @@ impl EventProcessor {
             return;
         }
 
+        let Some(possessed) = app.possessed.and_then(|id| app.crew.get_mut(id)) else {
+            return;
+        };
         let (view_matrix, _, _) = app.camera;
         let camera_pos = view_matrix.inverse().col(3).truncate();
         let forward = -view_matrix.inverse().col(2).truncate().normalize();
 
-        if app.possessed_pawn().equipped_tool.is_none() {
+        if possessed.equipped_tool.is_none() {
             tracing::debug!("Mine attempt blocked: no tool equipped");
             return;
         }
@@ -217,10 +222,6 @@ impl EventProcessor {
         };
         let grid = light_system.grid_mut();
 
-        let possessed = app
-            .crew
-            .get_mut(app.possessed)
-            .expect("the possessed pawn is in the crew");
         let Some(outcome) = possessed.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(
                 distance = MINE_REACH,
