@@ -47,6 +47,7 @@ use crate::menu::{
     MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
     settings_categories_screen, settings_page,
 };
+use crate::menu_feed::{MenuCamera, MenuFeed};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
@@ -900,6 +901,8 @@ pub struct SearchlightGame {
     /// Whether the window has focus; look is sampled only while it does.
     focused: bool,
     stage: Stage,
+    /// The views the main menu cuts between behind itself.
+    menu_feed: MenuFeed,
     god_mode: bool,
     /// The grade the `grade` command forces on new enemies; not saved, a force is a tuning
     /// session's lever. A host action like `god_mode`: once commands are per player slot, only
@@ -946,6 +949,7 @@ impl SearchlightGame {
             lean_side: None,
             focused: true,
             stage: Stage::new(),
+            menu_feed: MenuFeed::new(Vec::new()),
             god_mode: false,
             forced_grade: None,
             simple: false,
@@ -1372,6 +1376,13 @@ impl SearchlightGame {
         self.stage.body = *self.mode.sim().character_body();
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
+        self
+    }
+
+    /// Shows the main menu over the level from `cameras`, cutting between them.
+    #[must_use]
+    pub fn with_menu_cameras(mut self, cameras: Vec<MenuCamera>) -> Self {
+        self.menu_feed = MenuFeed::new(cameras);
         self
     }
 
@@ -8209,6 +8220,122 @@ mod mutation_tests {
         let frame = drawn.expect("the menu text makes the shell draw with the console closed");
         assert!(!frame.meshes.is_empty());
     }
+
+    fn feed_camera(x: f32, forward: Vec3) -> MenuCamera {
+        MenuCamera {
+            eye: Vec3::new(x, 1.7, -30.0),
+            forward,
+        }
+    }
+
+    fn two_cameras() -> Vec<MenuCamera> {
+        vec![feed_camera(40.0, Vec3::X), feed_camera(-40.0, Vec3::NEG_X)]
+    }
+
+    fn frame_of(game: &mut SearchlightGame, renderer: &mut FakeRenderer, dt: Duration) {
+        let clock = moho_app::GameClock::default();
+        let backend: &mut dyn RendererBackend = renderer;
+        let mut ctx = FrameContext::new(dt, &clock, Some(backend), None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    /// The eye the last frame was drawn from, and where its view carries a point `ahead` of it.
+    fn seen_from(renderer: &FakeRenderer, ahead: Vec3) -> (Vec3, Vec3) {
+        let (view, _, eye) = renderer.camera.expect("a frame began");
+        (eye, view.transform_point3(eye + ahead))
+    }
+
+    #[test]
+    fn the_main_menu_draws_the_level_from_the_first_menu_camera() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let (eye, in_view) = seen_from(&renderer, Vec3::X * 3.0);
+
+        assert_eq!(eye, Vec3::new(40.0, 1.7, -30.0));
+        assert!(
+            (in_view - Vec3::new(0.0, 0.0, -3.0)).length() < 1e-4,
+            "the first camera looks along +X: {in_view}"
+        );
+        assert_eq!(
+            renderer.draws.len(),
+            1 + 6,
+            "the arena and its dummies are drawn, as in play"
+        );
+        let enemies = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        assert_eq!(enemies, 0, "enemies synced behind the menu");
+        assert_eq!(crosshair_vertices(&game), 0, "crosshair drawn on the menu");
+    }
+
+    #[test]
+    fn the_main_menu_cuts_to_the_next_camera_after_five_seconds_of_frames() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+
+        frame_of(&mut game, &mut renderer, Duration::from_millis(4900));
+        let (before, _) = seen_from(&renderer, Vec3::X);
+        frame_of(&mut game, &mut renderer, Duration::from_millis(100));
+        let (after, _) = seen_from(&renderer, Vec3::X);
+
+        assert_eq!(before.x, 40.0, "cut before five seconds");
+        assert_eq!(after.x, -40.0, "no cut at five seconds");
+    }
+
+    #[test]
+    fn the_main_menu_feed_loops_back_to_the_first_camera() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+        let mut shown = Vec::new();
+
+        for _ in 0..3 {
+            frame_of(&mut game, &mut renderer, Duration::from_secs(5));
+            shown.push(seen_from(&renderer, Vec3::X).0.x);
+        }
+
+        assert_eq!(shown, [-40.0, 40.0, -40.0]);
+    }
+
+    #[test]
+    fn without_menu_cameras_the_menu_draws_the_empty_backdrop() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(Vec::new());
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let (view, _, eye) = renderer.camera.expect("the backdrop frame began");
+
+        assert!(renderer.draws.is_empty(), "the level drawn without cameras");
+        assert_eq!(view, Mat4::IDENTITY);
+        assert_eq!(eye, Vec3::ZERO);
+    }
+
+    #[test]
+    fn play_from_a_camera_view_starts_at_the_player_spawn() {
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(two_cameras());
+        let mut renderer = FakeRenderer::default();
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut reference = game_with_an_arena_on_the_main_menu();
+        let mut reference_renderer = FakeRenderer::default();
+        reference.enter_play();
+        frame_with(&mut reference, &mut reference_renderer);
+        frame_with(&mut game, &mut renderer);
+        assert_eq!(seen_from(&renderer, Vec3::X).0.x, 40.0, "a camera shows");
+
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        frame_with(&mut game, &mut renderer);
+
+        let (eye, _) = seen_from(&renderer, Vec3::X);
+        let (spawn_eye, _) = seen_from(&reference_renderer, Vec3::X);
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(eye, spawn_eye, "play began from a menu camera");
+        let player = game.sim().player().position;
+        assert!(
+            (eye.x - player.x).abs() < 1e-3 && (eye.z - player.z).abs() < 1e-3,
+            "{eye} is not over the player at {player}"
+        );
+        assert_eq!(renderer.draws.len(), 1 + 6 + 7);
+    }
 }
 
 #[cfg(test)]
@@ -8398,25 +8525,6 @@ mod enemy_and_hud_tests {
         stage.sync_enemies(sim);
         stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
         renderer.drawn()
-    }
-
-    #[test]
-    fn the_backdrop_draws_its_own_scene_and_not_the_arena() {
-        let mut stage = Stage::new();
-        stage.add_arena(vec![box_mesh(Vec3::new(50.0, 0.0, 0.0), Vec3::ONE)], &[]);
-        let backdrop_material = stage.backdrop.material_table.find_or_push(&Paint::Arena);
-        stage.backdrop.world_meshes_mut().upsert(
-            WorldMeshId(1),
-            box_mesh(Vec3::new(-7.0, 0.0, 0.0), Vec3::ONE),
-            backdrop_material,
-        );
-        let mut renderer = RecordingRenderer::default();
-
-        stage.draw_backdrop(&mut renderer);
-        let drawn = renderer.drawn();
-
-        assert_eq!(drawn.len(), 1);
-        assert_eq!(drawn[0].0, Vec3::new(-7.0, 0.0, 0.0));
     }
 
     fn is_paint(material: MaterialGpu, paint: Paint) -> bool {

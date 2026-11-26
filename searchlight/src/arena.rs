@@ -11,6 +11,7 @@ use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::FlightBounds;
 
 use crate::control::ControlAction;
+use crate::menu_feed::MenuCamera;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 
@@ -48,6 +49,9 @@ pub enum ArenaError {
     /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
     #[error("level waypoint `{marker}` needs a unique numeric suffix")]
     BadWaypoint { marker: String },
+    /// A menu camera's suffix is not a number, or repeats an earlier menu camera's number.
+    #[error("level menu camera `{marker}` needs a unique numeric suffix")]
+    BadMenuCamera { marker: String },
     /// The walkable area could not be built from the level's meshes.
     #[error(transparent)]
     Nav(#[from] NavBuildError),
@@ -200,6 +204,8 @@ pub struct Arena {
     pub covers: Vec<Vec3>,
     /// The usable posts, in file order; an index is the control's id.
     pub controls: Vec<ArenaControl>,
+    /// The views the main menu cuts between, in suffix order.
+    pub menu_cameras: Vec<MenuCamera>,
     /// Where an enemy of [`nav_profile`] size can walk.
     pub nav: Arc<NavMesh>,
     /// Whether the navmesh could not be built and `nav` is empty (levels without enemy spawns only).
@@ -296,6 +302,7 @@ impl Arena {
             route,
             covers: positions(&markers.covers),
             controls,
+            menu_cameras: Vec::new(),
         })
     }
 
@@ -1148,6 +1155,147 @@ mod tests {
             "{} controls",
             arena.controls.len()
         );
+    }
+
+    /// A 20 m floor, a player spawn and one marker per `(name, position, rotation)` entry.
+    fn camera_level(cameras: &[(&str, Vec3, Quat)]) -> Level {
+        let mut level = control_level(&[]);
+        for &(name, position, rotation) in cameras {
+            let mut camera = marker(name, position);
+            camera.rotation = rotation;
+            level.markers.push(camera);
+        }
+        level
+    }
+
+    fn assert_close(actual: Vec3, expected: Vec3, what: &str) {
+        assert!(
+            (actual - expected).length() < 1e-5,
+            "{what}: {actual} is not {expected}"
+        );
+    }
+
+    #[test]
+    fn menu_cameras_are_read_in_suffix_order_with_their_facing() {
+        let level = camera_level(&[
+            ("menu_camera_2", Vec3::new(2.0, 1.7, 0.0), Quat::IDENTITY),
+            (
+                "menu_camera_10",
+                Vec3::new(10.0, 1.7, 0.0),
+                Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            ),
+            (
+                "menu_camera_1",
+                Vec3::new(1.0, 1.7, 0.0),
+                Quat::from_rotation_x(std::f32::consts::FRAC_PI_6),
+            ),
+        ]);
+
+        let arena = build(&level).expect("the level builds");
+
+        let eyes: Vec<Vec3> = arena.menu_cameras.iter().map(|c| c.eye).collect();
+        assert_eq!(
+            eyes,
+            [
+                Vec3::new(1.0, 1.7, 0.0),
+                Vec3::new(2.0, 1.7, 0.0),
+                Vec3::new(10.0, 1.7, 0.0)
+            ],
+            "numeric order of the suffix, not file order or text order"
+        );
+        assert_close(
+            arena.menu_cameras[0].forward,
+            Vec3::new(0.0, -0.5, 0.866_025_4),
+            "pitched down 30 degrees",
+        );
+        assert_close(arena.menu_cameras[1].forward, Vec3::Z, "no turn");
+        assert_close(arena.menu_cameras[2].forward, Vec3::X, "turned 90 degrees");
+    }
+
+    #[test]
+    fn a_menu_cameras_roll_does_not_change_where_it_looks() {
+        let level = camera_level(&[(
+            "menu_camera_1",
+            Vec3::new(0.0, 1.7, 0.0),
+            Quat::from_rotation_z(1.0),
+        )]);
+
+        let arena = build(&level).expect("the level builds");
+
+        assert_close(arena.menu_cameras[0].forward, Vec3::Z, "a rolled camera");
+    }
+
+    #[test]
+    fn a_repeated_menu_camera_suffix_is_refused() {
+        let level = camera_level(&[
+            ("menu_camera_1", Vec3::ZERO, Quat::IDENTITY),
+            ("menu_camera_2", Vec3::ZERO, Quat::IDENTITY),
+            ("menu_camera_01", Vec3::ZERO, Quat::IDENTITY),
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::BadMenuCamera { marker } if marker == "menu_camera_01"),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("menu_camera_01"), "{error}");
+    }
+
+    #[test]
+    fn a_menu_camera_with_a_non_numeric_suffix_is_refused() {
+        let level = camera_level(&[
+            ("menu_camera_1", Vec3::ZERO, Quat::IDENTITY),
+            ("menu_camera_north", Vec3::ZERO, Quat::IDENTITY),
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::BadMenuCamera { marker } if marker == "menu_camera_north"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_level_without_menu_cameras_loads_with_none() {
+        let level = camera_level(&[]);
+
+        let arena = build(&level).expect("menu cameras are optional");
+
+        assert!(arena.menu_cameras.is_empty());
+    }
+
+    #[test]
+    fn the_shipped_arena_has_three_menu_cameras() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+
+        assert_eq!(arena.menu_cameras.len(), 3);
+        for camera in &arena.menu_cameras {
+            assert!(
+                (camera.forward.length() - 1.0).abs() < 1e-4,
+                "{camera:?} does not face a unit direction"
+            );
+        }
+        let eyes: Vec<Vec3> = arena.menu_cameras.iter().map(|c| c.eye).collect();
+        assert!(
+            eyes.iter()
+                .enumerate()
+                .all(|(i, a)| eyes[..i].iter().all(|b| a != b)),
+            "the three views must differ: {eyes:?}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_proving_ground_has_no_menu_cameras() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/proving_ground.glb");
+        let (level, markers) = load(&path).expect("the shipped proving ground loads");
+
+        let arena = Arena::from_level(&level, &markers).expect("the proving ground builds");
+
+        assert!(arena.menu_cameras.is_empty());
     }
 
     #[test]
