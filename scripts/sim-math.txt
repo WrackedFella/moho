@@ -3,6 +3,7 @@ moho_physics/src/world.rs
 moho_physics/src/world/slide.rs
 moho_physics/src/world/character.rs
 moho_physics/src/world/query.rs
+moho_physics/src/world/loose.rs
 searchlight/src/sim.rs
 searchlight/src/brain.rs
 searchlight/src/lean.rs
