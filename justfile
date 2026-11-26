@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering run-record-test chain-test replay-hashes-test assets-check
+check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check
 
 fmt-check:
     cargo fmt --all --check
@@ -124,7 +124,7 @@ merge-eligibility-test:
         [[ -z $edit || $edit == \#* ]] && continue
         jq "$edit" "$f/eligible.json" > "$facts"
         rc=0
-        got="$(scripts/merge-eligibility.sh decide "$facts" | paste -sd'|' | sed 's/|/ | /g')" || rc=$?
+        got="$(scripts/merge-eligibility.sh decide "$facts" | tr -d '\r' | paste -sd'|' - | sed 's/|/ | /g')" || rc=$?
         want_rc=1
         [[ $want == eligible* ]] && want_rc=0
         if [[ $got != "$want" || $rc != "$want_rc" ]]; then
@@ -238,6 +238,58 @@ run-record-test:
         || { echo "run-record: a run that was not cut off has no reset time"; exit 1; }
     diff "$f/digest.md" <(cat "$f/records.jsonl" <(scripts/run-record.sh record "$f/execution-limit.json") | scripts/run-record.sh digest)
     echo "run-record: OK"
+
+# Platform-transcendental check on the engine sim files in scripts/sim-math.txt, plus
+# self-tests that the script rejects and accepts its fixtures (each fixture's list is scripts/fixtures/<name>.txt).
+sim-math:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run() { status=0; out=$(scripts/check-sim-math.sh "scripts/fixtures/$1.txt" 2>&1) || status=$?; }
+    fail() {
+        echo "sim-math self-test failed: $1" >&2
+        echo "  expected: $2" >&2
+        echo "  got: exit $status, output:" >&2
+        sed 's/^/    /' <<<"$out" >&2
+        exit 1
+    }
+    # rejects <fixture> <expected>...: non-zero exit; every word containing ':<digits>' is a
+    # file:line and the flagged file:line set must equal those exactly; every other word must
+    # appear in the output.
+    rejects() {
+        local fixture=$1 e ok=1 want=()
+        shift
+        run "$fixture"
+        [ "$status" -ne 0 ] || ok=0
+        for e in "$@"; do
+            if [[ "$e" =~ :[0-9]+$ ]]; then
+                want+=("$e")
+            else
+                grep -qF -- "$e" <<<"$out" || ok=0
+            fi
+        done
+        if [ "${#want[@]}" -gt 0 ]; then
+            [ "$(grep -oE '[A-Za-z0-9_./-]+:[0-9]+' <<<"$out" | sort -u)" = "$(printf '%s\n' "${want[@]}" | sort -u)" ] || ok=0
+        fi
+        [ "$ok" -eq 1 ] || fail "$fixture" "non-zero exit, exactly these file:line flags, and these words: $*"
+    }
+    # accepts <fixture>: exit 0.
+    accepts() {
+        run "$1"
+        [ "$status" -eq 0 ] || fail "$1" "exit 0"
+    }
+    scripts/check-sim-math.sh scripts/sim-math.txt
+    c=scripts/fixtures/sim-math-call.rs
+    rejects sim-math-call moho_core::sim_math "$c":{2..21}
+    rejects sim-math-gated-decl scripts/fixtures/sim-math-gated-decl.rs:5
+    rejects sim-math-qualified scripts/fixtures/sim-math-qualified.rs:2 scripts/fixtures/sim-math-qualified.rs:3
+    rejects sim-math-paths scripts/fixtures/sim-math-paths.rs:2 scripts/fixtures/sim-math-paths.rs:3 scripts/fixtures/sim-math-paths.rs:4
+    rejects sim-math-missing scripts/fixtures/sim-math-nonexistent.rs
+    accepts sim-math-clean
+    accepts sim-math-unlisted
+    accepts sim-math-after-tests
+    accepts sim-math-gated-item
+    # Per package: `--workspace --all-features` lets rapier's glamx enable glam/libm and mask a missing feature.
+    cargo nextest run -p moho_core -E 'test(glam_rotation_uses_libm_sin_and_cos)'
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:

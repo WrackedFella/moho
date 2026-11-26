@@ -10,6 +10,25 @@ work and architecture, kept apart from the [strategy line](../flagstone/README.m
 | [Roadmap](roadmap.md) | Milestones FPS-M1 to FPS-M7, entry gates, exit goals, engine requests |
 | [Architecture](architecture.md) | The `searchlight` arena, shot path, simulation and game adapter |
 
+## Determinism call sites
+
+Simulation transcendentals go through `moho_core::sim_math` ([determinism](../architecture/determinism.md)).
+Each line migrates its sites under its own card and adds the files to `scripts/sim-math.txt`.
+Today's non-test platform calls in `searchlight_rules` and `searchlight`:
+
+| Site | Calls | Status |
+|---|---|---|
+| `searchlight_rules/src/accuracy.rs` `disc_offset` | `tan`, `cos`, `sin` | sim: shot spread |
+| `searchlight/src/brain.rs` `flat_distance` | `hypot` | sim: enemy brain |
+| `searchlight/src/brain.rs` `turn_towards` | `atan2` | sim: enemy bearing |
+| `searchlight/src/sim.rs` `nearest_waypoint` | `hypot`, `atan2` | sim: patrol start and heading |
+| `searchlight/src/lean.rs` `lean_offset` | `sin_cos` | check: view maths for the lean offset; used by `Bob::offset`, which is presentation |
+| `searchlight/src/game.rs` `tick` | `hypot` | check: player speed passed to the head bob |
+| `searchlight/src/game.rs` `gap` | `tan` | presentation: crosshair |
+| `searchlight/src/game.rs` `frame` | `atan2` | presentation: view yaw |
+| `searchlight/src/head_bob.rs` `Bob::offset` | `sin` | presentation: head bob |
+| `searchlight/src/hud.rs` `hit_edge` | `sin`, `cos` | presentation: HUD |
+
 Not here: card and feature text, status and specs (GitHub issues and the
 [board](https://github.com/users/WrackedFella/projects/1)); unfiled drafts ([`_todo/searchlight/`](../../_todo/searchlight/));
 cross-line dependencies ([`wiki/roadmap.md`](../roadmap.md)).
