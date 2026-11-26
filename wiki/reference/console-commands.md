@@ -62,4 +62,3 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | `fullscreen` | none | Flips between windowed and borderless fullscreen and prints the new mode. Saved like the F11 and Alt+Enter flips |
 | `grade` | `<rookie\|novice\|experienced\|veteran\|professional\|off>` | Forces the grade of enemies spawned from then on; `off` clears the force. Not saved; applies to later waves and restarts, not to enemies already alive |
 | `head_bob` | `[percent]` | Head bob, 0 to 100 in steps of 5. No argument prints the current value. Stored as `head_bob` under `[game]` in the prefs file, the value the Settings slider edits |
-| `items` | none | Opens the demo item lists screen (the player's items and a test container) |
