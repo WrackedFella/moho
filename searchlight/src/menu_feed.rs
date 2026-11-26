@@ -7,6 +7,9 @@ use glam::{Mat4, Vec3};
 /// How long each camera shows before the feed cuts to the next.
 pub const CUT_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How far along Y a unit direction points before Y is no use as the view's up.
+const NEAR_VERTICAL: f32 = 0.9999;
+
 /// One view of the level: where the eye is and the way it looks.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MenuCamera {
@@ -39,18 +42,29 @@ impl MenuFeed {
         if self.cameras.is_empty() {
             return;
         }
-        self.elapsed += dt;
-        while let Some(rest) = self.elapsed.checked_sub(CUT_INTERVAL) {
-            self.elapsed = rest;
-            self.shown = (self.shown + 1) % self.cameras.len();
-        }
+        let interval = CUT_INTERVAL.as_nanos();
+        // Whole nanoseconds in u128 cannot overflow for any two `Duration`s, however long.
+        let total = self.elapsed.as_nanos() + dt.as_nanos();
+        let cuts = total / interval;
+        let count = self.cameras.len() as u128;
+        let shown = (self.shown as u128 + cuts % count) % count;
+        self.shown = usize::try_from(shown).expect("below the camera count");
+        self.elapsed = Duration::from_nanos(
+            u64::try_from(total % interval).expect("a remainder under five seconds fits"),
+        );
     }
 
     /// The view matrix and eye of the camera showing now, or `None` without cameras.
     pub fn view(&self) -> Option<(Mat4, Vec3)> {
         let camera = self.cameras.get(self.shown)?;
+        // Straight up or down, Y gives no sideways direction; any horizontal axis will do.
+        let up = if camera.forward.normalize().dot(Vec3::Y).abs() > NEAR_VERTICAL {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
         Some((
-            glam::camera::rh::view::look_to_mat4(camera.eye, camera.forward, Vec3::Y),
+            glam::camera::rh::view::look_to_mat4(camera.eye, camera.forward, up),
             camera.eye,
         ))
     }
@@ -201,5 +215,66 @@ mod tests {
         feed.advance(CUT_INTERVAL * 3);
 
         assert_eq!(shown_x(&feed), 0.0);
+    }
+
+    #[test]
+    fn a_camera_looking_straight_up_or_down_still_has_a_finite_view() {
+        for forward in [Vec3::Y, Vec3::NEG_Y] {
+            let eye = Vec3::new(3.0, 1.7, -2.0);
+            let feed = MenuFeed::new(vec![MenuCamera { eye, forward }]);
+
+            let (view, shown_eye) = feed.view().expect("one camera");
+
+            assert!(view.is_finite(), "{forward}: {view:?}");
+            assert_eq!(shown_eye, eye);
+            let at_eye = view.transform_point3(eye);
+            assert!(at_eye.length() < EPSILON, "{forward}: {at_eye}");
+            let ahead = view.transform_point3(eye + forward * 3.0);
+            assert!(
+                (ahead - Vec3::new(0.0, 0.0, -3.0)).length() < EPSILON,
+                "{forward}: looks down its own -Z: {ahead}"
+            );
+        }
+    }
+
+    /// The camera a feed of three shows after `secs` whole seconds, by the arithmetic of cuts.
+    fn expected_after(secs: u64) -> f32 {
+        let index = usize::try_from(secs / CUT_INTERVAL.as_secs() % 3).expect("below three");
+        [0.0, 10.0, 20.0][index]
+    }
+
+    #[test]
+    fn a_year_of_frame_time_lands_on_the_camera_its_cuts_give() {
+        let secs = 3600 * 24 * 365 + 5;
+        let mut feed = feed_of(3);
+
+        feed.advance(Duration::from_secs(secs));
+
+        assert_eq!(shown_x(&feed), expected_after(secs));
+        assert_eq!(expected_after(secs), 10.0, "the case must move the feed");
+    }
+
+    #[test]
+    fn an_enormous_frame_time_neither_hangs_nor_panics_and_lands_on_the_right_camera() {
+        let secs = u64::MAX / 4 + 5;
+        let mut feed = feed_of(3);
+
+        feed.advance(Duration::from_secs(secs));
+        let first = shown_x(&feed);
+        feed.advance(Duration::from_secs(2));
+        feed.advance(Duration::from_secs(3));
+
+        assert_eq!(first, expected_after(secs));
+        assert_eq!(shown_x(&feed), expected_after(secs + 5));
+    }
+
+    #[test]
+    fn two_enormous_frames_in_a_row_do_not_overflow_the_clock() {
+        let mut feed = feed_of(3);
+
+        feed.advance(Duration::MAX);
+        feed.advance(Duration::MAX);
+
+        assert!(feed.view().is_some());
     }
 }
