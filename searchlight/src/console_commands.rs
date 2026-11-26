@@ -23,6 +23,13 @@ pub enum ConsoleCommand {
     HeadBob(HeadBobArg),
     /// Open the demo item lists.
     Items,
+    /// Show or hide the outlines of every character's hit volumes.
+    HitVolumes,
+}
+
+/// Parses `hitvolumes`; it takes no arguments.
+pub fn parse_hitvolumes(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    Err("not implemented".to_owned())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +230,14 @@ fn console_with_grade(
             parse: parse_items,
         })
         .expect("\"items\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "hitvolumes".to_owned(),
+            usage: "hitvolumes".to_owned(),
+            help: "toggle hit-volume outlines".to_owned(),
+            parse: parse_hitvolumes,
+        })
+        .expect("\"hitvolumes\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -619,6 +634,38 @@ mod tests {
 
         assert_eq!(queued, vec![ConsoleCommand::Items]);
         assert_eq!(refused, (vec![], "Usage: items".to_owned()));
+    }
+
+    #[test]
+    fn hitvolumes_toggles_outlines() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("hitvolumes");
+        let queued = (console.take_commands(), last_line(&console));
+        console.submit("hitvolumes");
+        let again = console.take_commands();
+        for line in ["hitvolumes 1", "hitvolumes now", "hitvolumes fullscreen"] {
+            console.submit(line);
+
+            assert_eq!(
+                (console.take_commands(), last_line(&console)),
+                (vec![], "Usage: hitvolumes".to_owned()),
+                "{line}"
+            );
+        }
+        console.submit("help");
+
+        assert_eq!(
+            queued,
+            (vec![ConsoleCommand::HitVolumes], "> hitvolumes".to_owned()),
+            "a bare hitvolumes queues the toggle and prints nothing itself"
+        );
+        assert_eq!(again, vec![ConsoleCommand::HitVolumes]);
+        let lines = printed(&console);
+        assert!(
+            lines.iter().any(|line| line.starts_with("  hitvolumes - ")),
+            "{lines:?}"
+        );
     }
 
     #[test]
