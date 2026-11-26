@@ -98,8 +98,7 @@ impl DebugSettings {
     pub fn zoom(&self) -> Magnification {
         self.prefs
             .debug_value(ZOOM)
-            .and_then(|text| text.parse::<f32>().ok())
-            .and_then(|factor| Magnification::new(factor).ok())
+            .and_then(Magnification::parse)
             .unwrap_or(Magnification::DEFAULT)
     }
 

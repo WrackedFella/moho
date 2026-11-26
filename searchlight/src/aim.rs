@@ -22,6 +22,11 @@ impl Magnification {
         }
     }
 
+    /// The magnification `text` spells, if it is a number `new` accepts.
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::new(text.parse().ok()?).ok()
+    }
+
     /// The factor.
     pub fn get(self) -> f32 {
         self.0

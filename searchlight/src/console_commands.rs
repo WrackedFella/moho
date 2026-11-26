@@ -34,11 +34,7 @@ pub fn parse_zoom(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     let [text] = args else {
         return Err(usage());
     };
-    let zoom = text
-        .parse::<f32>()
-        .ok()
-        .and_then(|factor| Magnification::new(factor).ok())
-        .ok_or_else(usage)?;
+    let zoom = Magnification::parse(text).ok_or_else(usage)?;
     Ok((ConsoleCommand::Zoom(zoom), format!("Zoom: {}x", zoom.get())))
 }
 
