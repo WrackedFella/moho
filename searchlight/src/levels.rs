@@ -580,7 +580,6 @@ mod tests {
             Vec3::new(across.x, 0.0, across.z).normalize()
         }
 
-        /// The movement tuning the game ships with, from the start kit.
         fn shipped_config() -> SimConfig {
             let roots = ContentRoots::base(&content_root()).expect("the shipped content");
             let kit = kit::load(&roots, START_KIT_ID).expect("the shipped start kit");
@@ -648,12 +647,10 @@ mod tests {
                 (self.sim.player().position - self.origin).dot(self.facing)
             }
 
-            /// The height of the player's feet above the marker's floor.
             fn feet_above_floor(&self) -> f32 {
                 self.sim.player().position.y - STAND_HEIGHT - self.floor
             }
 
-            /// Runs forward until the centre reaches the marker.
             fn run_to_the_marker(&mut self) {
                 for _ in 0..TRIAL_TICKS {
                     if self.along() >= 0.0 {
