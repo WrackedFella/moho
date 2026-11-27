@@ -763,4 +763,114 @@ mod tests {
 
         assert!(result.is_ok(), "{:?}", result.err());
     }
+
+    impl Gltf {
+        fn set_neck_height(&mut self, height: f64) {
+            let neck = self.node("neck_01");
+            self.json["nodes"][neck]["translation"] = json!([0.0, height, 0.0]);
+        }
+
+        /// Writes a NaN over the first key of a rotation channel of `clip`.
+        fn poison_rotation_of(&mut self, clip: &str) {
+            let animation = self.json["animations"]
+                .as_array()
+                .expect("animations")
+                .iter()
+                .find(|animation| animation["name"] == clip)
+                .expect("fixture has the clip")
+                .clone();
+            let channel = animation["channels"]
+                .as_array()
+                .expect("channels")
+                .iter()
+                .find(|channel| channel["target"]["path"] == "rotation")
+                .expect("clip has a rotation channel");
+            let sampler = channel["sampler"].as_u64().expect("sampler") as usize;
+            let accessor = animation["samplers"][sampler]["output"]
+                .as_u64()
+                .expect("output") as usize;
+            let view = self.json["accessors"][accessor]["bufferView"]
+                .as_u64()
+                .expect("bufferView") as usize;
+            let at = self.json["bufferViews"][view]["byteOffset"]
+                .as_u64()
+                .unwrap_or(0) as usize;
+            self.bin[at..at + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+        }
+    }
+
+    fn refusal_message(art: &TempDir) -> String {
+        check_over(Some(art.path()))
+            .expect_err("the body is refused")
+            .to_string()
+    }
+
+    #[test]
+    fn head_ten_cm_under_eye_is_refused() {
+        let art = art_editing(&[BODY], |gltf| gltf.set_neck_height(0.33));
+
+        assert_refused(&art, BODY, "the head height");
+    }
+
+    #[test]
+    fn head_just_inside_tolerance_passes() {
+        let art = art_editing(&[BODY], |gltf| gltf.set_neck_height(0.46));
+
+        let result = check_over(Some(art.path()));
+
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn head_weighted_vertex_names_head_not_neck() {
+        let art = art_editing(&[PLAYER_BODY], |gltf| gltf.weight_first_vertex_on(3));
+
+        let message = refusal_message(&art);
+
+        assert!(message.contains("mesh on head"), "{message}");
+        assert!(!message.contains("neck_01"), "{message}");
+    }
+
+    #[test]
+    fn unskinned_mesh_under_head_names_head() {
+        let art = art_editing(&[PLAYER_BODY], |gltf| {
+            let head = gltf.node("head");
+            let cap = gltf.json["nodes"].as_array().expect("nodes").len();
+            gltf.json["nodes"]
+                .as_array_mut()
+                .expect("nodes")
+                .push(json!({ "name": "cap", "mesh": 0 }));
+            gltf.push_child(head, cap);
+        });
+
+        let message = refusal_message(&art);
+
+        assert!(message.contains("mesh on head"), "{message}");
+        assert!(!message.contains("neck_01"), "{message}");
+    }
+
+    #[test]
+    fn missing_bone_is_named_not_echoed() {
+        let art = art_editing(&[BODY], |gltf| gltf.rename_node("hand_r", "wrist_r"));
+
+        assert_refused(&art, BODY, "hand_r");
+    }
+
+    #[test]
+    fn missing_clip_is_named_not_echoed() {
+        let art = art_editing(&[BODY], |gltf| gltf.rename_clip("crawl", "slither"));
+
+        assert_refused(&art, BODY, "crawl");
+    }
+
+    #[test]
+    fn non_finite_pose_is_refused() {
+        let art = art_editing(&[BODY], |gltf| gltf.poison_rotation_of("run"));
+
+        let message = refusal_message(&art);
+
+        assert!(message.contains(file_name(BODY)), "{message}");
+        assert!(message.contains("clip run"), "{message}");
+        assert!(message.contains("non-finite"), "{message}");
+    }
 }
