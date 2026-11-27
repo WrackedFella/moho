@@ -45,10 +45,7 @@ on:
         options: [default, opus, fable]
         default: default
       dry_run_prior:
-        description: "Dry run, later round: last reviewed SHA, with dry_run_prior_run"
-        required: false
-      dry_run_prior_run:
-        description: "Dry run, later round: run ID of the dry run whose review is the prior round"
+        description: "Dry run, later round: <pr>/<review id> of the earlier review; its commit is the last reviewed SHA"
         required: false
       devflow_ref:
         description: "Dry run: claude-skills branch or SHA to load devflow from (empty for main)"
@@ -476,7 +473,6 @@ jobs:
       ISSUE: ${{ inputs.dry_run_issue }}
       CRITIC: ${{ inputs.dry_run_critic_model }}
       PRIOR: ${{ inputs.dry_run_prior }}
-      PRIOR_RUN: ${{ inputs.dry_run_prior_run }}
       DEVFLOW_REF: ${{ inputs.devflow_ref }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
@@ -501,9 +497,11 @@ jobs:
         run: |
           ARGS=""
           if [ -n "$PRIOR" ]; then
-            [[ $PRIOR =~ ^[0-9a-f]{7,40}$ && $PRIOR_RUN =~ ^[0-9]+$ ]] || { echo "::error::dry_run_prior needs a SHA and dry_run_prior_run a run ID."; exit 1; }
-            gh run download "$PRIOR_RUN" -n "pr-review-dry-run-$PRIOR_RUN" -D "$RUNNER_TEMP/prior"
-            ARGS="--prior $PRIOR $RUNNER_TEMP/prior/pr-review-dry-run.md"
+            [[ $PRIOR =~ ^[0-9]+/[0-9]+$ ]] || { echo "::error::dry_run_prior must be <pr>/<review id>."; exit 1; }
+            mkdir -p "$RUNNER_TEMP/prior"
+            gh api "repos/$GITHUB_REPOSITORY/pulls/${PRIOR%/*}/reviews/${PRIOR#*/}" > "$RUNNER_TEMP/prior/review.json"
+            jq -r .body "$RUNNER_TEMP/prior/review.json" > "$RUNNER_TEMP/prior/review.md"
+            ARGS="--prior $(jq -r .commit_id "$RUNNER_TEMP/prior/review.json") $RUNNER_TEMP/prior/review.md"
           fi
           echo "PRIOR_ARGS=$ARGS" >> "$GITHUB_ENV"
           if [ -z "$DEVFLOW_REF" ]; then
