@@ -1,6 +1,6 @@
 # 0044 — Seam 11 answers routes shaped by a game's area rule, over a gridded navmesh
 
-**Status:** Accepted on merge of #PR (extends [0019](0019-navigation-is-an-engine-seam.md))
+**Status:** Accepted on merge of #1091 (extends [0019](0019-navigation-is-an-engine-seam.md))
 
 ## Context
 
