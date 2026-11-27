@@ -56,8 +56,40 @@ impl Install {
     /// [`InstallError::Incomplete`] for a partial install beside the executable;
     /// [`InstallError::NotFound`] when neither place holds every folder.
     pub fn locate(exe_dir: &Path, checkout: &Path, folders: &[&str]) -> Result<Self, InstallError> {
-        let _ = (exe_dir, checkout, folders);
-        todo!("locate the install")
+        let holds_any = folders.iter().any(|folder| exe_dir.join(folder).exists());
+        let (root, origin) = if holds_any {
+            let missing: Vec<String> = folders
+                .iter()
+                .filter(|folder| !exe_dir.join(folder).is_dir())
+                .map(|folder| (*folder).to_owned())
+                .collect();
+            if !missing.is_empty() {
+                return Err(InstallError::Incomplete {
+                    root: exe_dir.to_owned(),
+                    missing,
+                });
+            }
+            (exe_dir, Origin::BesideExecutable)
+        } else {
+            if !folders.iter().all(|folder| checkout.join(folder).is_dir()) {
+                return Err(InstallError::NotFound {
+                    searched: [exe_dir, checkout]
+                        .iter()
+                        .flat_map(|place| folders.iter().map(|folder| place.join(folder)))
+                        .collect(),
+                });
+            }
+            (checkout, Origin::SourceCheckout)
+        };
+        let place = match origin {
+            Origin::BesideExecutable => "beside the executable",
+            Origin::SourceCheckout => "source checkout",
+        };
+        tracing::info!(root = %root.display(), origin = place, "shipped folders located");
+        Ok(Self {
+            root: root.to_owned(),
+            origin,
+        })
     }
 
     /// The folder holding the shipped folders.

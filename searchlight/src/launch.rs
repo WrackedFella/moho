@@ -5,12 +5,15 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use moho_core::assets::{AssetError, AssetRoots};
+use moho_core::content::ContentRoots;
 use moho_core::install::{Install, InstallError};
 use thiserror::Error;
 
+use crate::kit::{ENEMY_KIT_ID, START_KIT_ID};
 use crate::levels::LevelChoice;
 use crate::sim::SimConfig;
-use crate::{SHIPPED_FOLDERS, checkout_root};
+use crate::tuning::shipped_with_enemy;
+use crate::{SHIPPED_FOLDERS, checkout_root, mods_dir};
 
 const ASSETS_OPTION: &str = "--assets";
 
@@ -100,8 +103,8 @@ pub fn resolve_shipped(
 /// # Errors
 /// The content or kit load failure.
 pub fn load_start_kit(content: &Path, mods: &[String]) -> Result<SimConfig, Box<dyn StdError>> {
-    let _ = (content, mods);
-    todo!("load the starting kit")
+    let roots = ContentRoots::base(content)?.with_mods(&mods_dir(), mods)?;
+    Ok(shipped_with_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID)?)
 }
 
 #[cfg(test)]

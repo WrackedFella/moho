@@ -201,6 +201,18 @@ assets-check:
 assets-check:
     @echo "assets-check: skipped, Linux only"
 
+# Release build of `game` laid out for copying: the executable with its committed `assets`
+# and `content` beside it, in target/package/<game>/.
+package game:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p {{game}}
+    exe="target/release/{{game}}"
+    [[ -f "$exe.exe" ]] && exe="$exe.exe"
+    out="target/package/{{game}}"
+    scripts/package.sh {{game}} "$exe" "$out"
+    echo "packaged {{game}} in $out"
+
 # Self-test of scripts/package.sh with a stub executable: the package holds the executable and
 # the committed assets and content, no generator tool or README, and a second run drops
 # whatever the first left in the output folder. It never builds.

@@ -51,7 +51,8 @@ impl AssetRoots {
     /// Starts the search order with `path` as the lowest layer.
     ///
     /// # Errors
-    /// [`AssetError::MissingFolder`] when `path` is not a folder.
+    /// [`AssetError::MissingFolder`] when `path` does not exist;
+    /// [`AssetError::NotAFolder`] when it exists but is not a folder.
     pub fn placeholders(path: &Path) -> Result<Self, AssetError> {
         Self { layers: Vec::new() }.with_folder(path)
     }
@@ -59,11 +60,15 @@ impl AssetRoots {
     /// Adds `path` as a layer above every existing one.
     ///
     /// # Errors
-    /// [`AssetError::MissingFolder`] when `path` is not a folder.
+    /// [`AssetError::MissingFolder`] when `path` does not exist;
+    /// [`AssetError::NotAFolder`] when it exists but is not a folder.
     pub fn with_folder(mut self, path: &Path) -> Result<Self, AssetError> {
         if !path.is_dir() {
-            return Err(AssetError::MissingFolder {
-                path: path.to_owned(),
+            let path = path.to_owned();
+            return Err(if path.exists() {
+                AssetError::NotAFolder { path }
+            } else {
+                AssetError::MissingFolder { path }
             });
         }
         self.layers.push(path.to_owned());
@@ -76,7 +81,14 @@ impl AssetRoots {
     /// [`AssetError::InvalidName`] for an absolute name or one with a `..`, `.`, root or prefix
     /// component; [`AssetError::NotFound`] listing every folder searched.
     pub fn resolve(&self, name: &Path) -> Result<PathBuf, AssetError> {
+        // `components()` drops an interior or trailing `.`, so the segments are split by hand.
+        let dot_segment = name
+            .as_os_str()
+            .as_encoded_bytes()
+            .split(|byte| std::path::is_separator(char::from(*byte)))
+            .any(|segment| segment == b".");
         let plain = !name.as_os_str().is_empty()
+            && !dot_segment
             && name
                 .components()
                 .all(|part| matches!(part, Component::Normal(_)));
