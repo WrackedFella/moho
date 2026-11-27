@@ -1,8 +1,8 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
-use crate::ballistics::Ballistics;
+use crate::ballistics::RoundStats;
 use crate::inventory::{Item, Remains, RoundStack};
-use crate::item::{ItemDef, ItemId, ItemKind, RoundSpec};
+use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
 use crate::rifle::Rifle;
@@ -71,8 +71,8 @@ pub struct Kit {
     pub weapon: RifleDef,
     /// The rifle and rig, ready to play.
     pub loadout: Loadout,
-    /// The ballistics of every round the kit names.
-    pub rounds: BTreeMap<ItemId, Ballistics>,
+    /// The ballistics and damage of every round the kit names.
+    pub rounds: BTreeMap<ItemId, RoundStats>,
 }
 
 /// Why a kit could not be resolved.
@@ -140,7 +140,7 @@ pub enum KitError {
 impl KitDef {
     /// Resolves the kit's ids through `lookup` as the gear of a dead enemy: its rig with the
     /// magazines stowed, its backpack, and its carried items with its rifle, and the magazine
-    /// in it, first. Also returns the ballistics of every round the kit names.
+    /// in it, first. Also returns the ballistics and damage of every round the kit names.
     ///
     /// # Errors
     ///
@@ -149,7 +149,7 @@ impl KitDef {
     pub fn resolve_remains<'a>(
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
-    ) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitError> {
+    ) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitError> {
         let parts = self.resolve_parts(lookup)?;
         let mut carried = vec![Item::Weapon(parts.rifle)];
         carried.extend(parts.carried);
@@ -209,7 +209,7 @@ impl KitDef {
         }
 
         let mut rounds = BTreeMap::new();
-        let build = |rounds: &mut BTreeMap<ItemId, Ballistics>,
+        let build = |rounds: &mut BTreeMap<ItemId, RoundStats>,
                      magazine: &ItemId,
                      round: &ItemId,
                      held: Option<u32>|
@@ -234,7 +234,7 @@ impl KitDef {
                     capacity: spec.capacity,
                 }
             })?;
-            rounds.insert(round.clone(), ballistics_of(spec_round));
+            rounds.insert(round.clone(), spec_round.stats());
             Ok(filled)
         };
 
@@ -273,7 +273,7 @@ impl KitDef {
                     else {
                         return Err(fields());
                     };
-                    rounds.insert(entry.item.clone(), ballistics_of(spec_round));
+                    rounds.insert(entry.item.clone(), spec_round.stats());
                     Item::Rounds(RoundStack {
                         round: entry.item.clone(),
                         count,
@@ -304,14 +304,7 @@ struct Parts {
     rifle: Rifle,
     rig: Rig,
     carried: Vec<Item>,
-    rounds: BTreeMap<ItemId, Ballistics>,
-}
-
-fn ballistics_of(round: &RoundSpec) -> Ballistics {
-    Ballistics {
-        muzzle_velocity: round.muzzle_velocity,
-        drag: round.drag,
-    }
+    rounds: BTreeMap<ItemId, RoundStats>,
 }
 
 #[cfg(test)]
@@ -330,7 +323,7 @@ mod tests {
             "rifle": {
                 "class": "weapon", "size": [2, 5], "condition": 100,
                 "weapon": {
-                    "well": "rifle", "damage": 30, "fire": "semi_auto", "cooldown_ticks": 6,
+                    "well": "rifle", "fire": "semi_auto", "cooldown_ticks": 6,
                     "reload_ticks": 120, "charge_ticks": 30
                 }
             },
@@ -344,15 +337,19 @@ mod tests {
             },
             "round_ball": {
                 "class": "consumable", "size": [1, 1],
-                "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0}
+                "round": {
+                    "caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0, "damage": 30
+                }
             },
             "round_heavy": {
                 "class": "consumable", "size": [1, 1],
-                "round": {"caliber": "5.56x45", "muzzle_velocity": 800.0, "drag": 2.5}
+                "round": {
+                    "caliber": "5.56x45", "muzzle_velocity": 800.0, "drag": 2.5, "damage": 55
+                }
             },
             "round_9mm": {
                 "class": "consumable", "size": [1, 1],
-                "round": {"caliber": "9mm", "muzzle_velocity": 400.0, "drag": 3.0}
+                "round": {"caliber": "9mm", "muzzle_velocity": 400.0, "drag": 3.0, "damage": 20}
             },
             "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
@@ -426,7 +423,6 @@ mod tests {
             kit.weapon,
             RifleDef {
                 well: MagazineWell::new("rifle"),
-                damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,
@@ -436,7 +432,7 @@ mod tests {
     }
 
     #[test]
-    fn a_resolved_kit_carries_the_ballistics_of_every_round_it_names() {
+    fn a_resolved_kit_carries_the_stats_of_every_round_it_names() {
         let def = kit_def(json!({
             "rig": "rig_chest",
             "weapon": "rifle",
@@ -452,16 +448,22 @@ mod tests {
         let expected = BTreeMap::from([
             (
                 id("round_ball"),
-                Ballistics {
-                    muzzle_velocity: 940.0,
-                    drag: 1.0,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: 940.0,
+                        drag: 1.0,
+                    },
+                    damage: 30,
                 },
             ),
             (
                 id("round_heavy"),
-                Ballistics {
-                    muzzle_velocity: 800.0,
-                    drag: 2.5,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: 800.0,
+                        drag: 2.5,
+                    },
+                    damage: 55,
                 },
             ),
         ]);
@@ -751,7 +753,7 @@ mod tests {
         def.resolve(|item| items.get(item))
     }
 
-    fn remains_of(def: &KitDef) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitError> {
+    fn remains_of(def: &KitDef) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitError> {
         let items = loot_items();
         def.resolve_remains(|item| items.get(item))
     }
@@ -958,16 +960,22 @@ mod tests {
 
         assert_eq!(
             rounds.get(&id("round_heavy")),
-            Some(&Ballistics {
-                muzzle_velocity: 800.0,
-                drag: 2.5
+            Some(&RoundStats {
+                ballistics: Ballistics {
+                    muzzle_velocity: 800.0,
+                    drag: 2.5
+                },
+                damage: 55
             })
         );
         assert_eq!(
             rounds.get(&id("round_9mm")),
-            Some(&Ballistics {
-                muzzle_velocity: 400.0,
-                drag: 3.0
+            Some(&RoundStats {
+                ballistics: Ballistics {
+                    muzzle_velocity: 400.0,
+                    drag: 3.0
+                },
+                damage: 20
             }),
             "a round only carried loose"
         );

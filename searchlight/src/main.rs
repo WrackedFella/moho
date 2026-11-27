@@ -122,6 +122,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             &arena.dummy_spawns,
         )
         .with_controls(arena.controls.iter().map(|control| control.mesh.clone()))
+        .with_menu_cameras(arena.menu_cameras.clone())
         .with_shot_sound(&shot_sound)
         .with_main_menu();
 

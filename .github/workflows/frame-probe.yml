@@ -39,6 +39,7 @@ jobs:
       - name: Install system deps and the software Vulkan driver
         timeout-minutes: 5
         run: |
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev mesa-vulkan-drivers libvulkan1
@@ -76,6 +77,7 @@ jobs:
       - name: Install system deps
         timeout-minutes: 5
         run: |
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev

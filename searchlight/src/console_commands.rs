@@ -21,6 +21,16 @@ pub enum ConsoleCommand {
     RoundGravity(GravityScale),
     /// Show or set how much the view bobs while moving.
     HeadBob(HeadBobArg),
+    /// Show or hide the outlines of every character's hit volumes.
+    HitVolumes,
+}
+
+/// Parses `hitvolumes`; it takes no arguments.
+pub fn parse_hitvolumes(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::HitVolumes, String::new())),
+        _ => Err("Usage: hitvolumes".to_owned()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -205,6 +215,14 @@ fn console_with_grade(
             parse: parse_head_bob,
         })
         .expect("\"head_bob\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "hitvolumes".to_owned(),
+            usage: "hitvolumes".to_owned(),
+            help: "show or hide every character's hit volumes".to_owned(),
+            parse: parse_hitvolumes,
+        })
+        .expect("\"hitvolumes\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -588,5 +606,37 @@ mod tests {
         let lines = printed(&console);
         let expected = "  head_bob [percent] - view bob while moving (0 to 100 %)".to_owned();
         assert!(lines.contains(&expected), "{lines:?}");
+    }
+
+    #[test]
+    fn hitvolumes_toggles_outlines() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("hitvolumes");
+        let queued = (console.take_commands(), last_line(&console));
+        console.submit("hitvolumes");
+        let again = console.take_commands();
+        for line in ["hitvolumes 1", "hitvolumes now", "hitvolumes fullscreen"] {
+            console.submit(line);
+
+            assert_eq!(
+                (console.take_commands(), last_line(&console)),
+                (vec![], "Usage: hitvolumes".to_owned()),
+                "{line}"
+            );
+        }
+        console.submit("help");
+
+        assert_eq!(
+            queued,
+            (vec![ConsoleCommand::HitVolumes], "> hitvolumes".to_owned()),
+            "a bare hitvolumes queues the toggle and prints nothing itself"
+        );
+        assert_eq!(again, vec![ConsoleCommand::HitVolumes]);
+        let lines = printed(&console);
+        assert!(
+            lines.iter().any(|line| line.starts_with("  hitvolumes - ")),
+            "{lines:?}"
+        );
     }
 }

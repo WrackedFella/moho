@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use moho_core::content::{ContentError, ContentRoots, load_kind};
-use searchlight_rules::{Ballistics, ItemDef, ItemId, Kit, KitDef, KitError, Remains};
+use searchlight_rules::{ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats};
 use thiserror::Error;
 
 /// The id of the kit a run starts with.
@@ -31,7 +31,7 @@ pub enum KitLoadError {
 pub const ENEMY_KIT_ID: &str = "enemy";
 
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit` as the gear of a dead
-/// enemy, with the ballistics of every round it names.
+/// enemy, with the ballistics and damage of every round it names.
 ///
 /// # Errors
 ///
@@ -39,7 +39,7 @@ pub const ENEMY_KIT_ID: &str = "enemy";
 pub fn load_enemy(
     roots: &ContentRoots,
     kit: &str,
-) -> Result<(Remains, BTreeMap<ItemId, Ballistics>), KitLoadError> {
+) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
     resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup))
 }
 
@@ -77,7 +77,9 @@ mod tests {
     use super::*;
     use crate::content_root;
     use moho_core::content::{ContentError, ContentRoots, load_kind};
-    use searchlight_rules::{ItemClass, ItemDef, ItemId, ItemKind, KitError, MagazineWell, Shot};
+    use searchlight_rules::{
+        Ballistics, ItemClass, ItemDef, ItemId, ItemKind, KitError, MagazineWell, Shot,
+    };
     use std::path::Path;
 
     use crate::tuning::{tuning, with_enemy_kit};
@@ -91,7 +93,6 @@ condition = 100
 weight = 3.0
 [rifle.weapon]
 well = "rifle"
-damage = 30
 fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
@@ -108,7 +109,7 @@ weight = 0.25
 [round_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0, damage = 30 }
 weight = 0.01
 
 [rig_chest]
@@ -192,7 +193,6 @@ weight = 2.0
                 .magazines()
                 .all(|m| m.capacity() == 30 && m.rounds() == 30)
         );
-        assert_eq!(kit.weapon.damage, 30);
         assert_eq!(kit.weapon.cooldown_ticks, 6);
         assert_eq!(kit.weapon.reload_ticks, 120);
         assert_eq!(kit.weapon.charge_ticks, 30);
@@ -209,14 +209,37 @@ weight = 2.0
             .rounds
             .get(&ItemId::new("round_rifle_ball"))
             .expect("the start kit names the ball round");
-        assert_eq!(ball.muzzle_velocity, 940.0);
-        assert_eq!(ball.drag, 1.0);
+        assert_eq!(ball.ballistics.muzzle_velocity, 940.0);
+        assert_eq!(ball.ballistics.drag, 1.0);
+        assert_eq!(ball.damage, 30);
         assert_eq!(kit.rounds.len(), 1);
+    }
+
+    #[test]
+    fn a_weapon_that_still_names_damage_fails_the_load_naming_the_weapon_and_the_field() {
+        let items = items_toml().replace(
+            "well = \"rifle\"\nfire",
+            "well = \"rifle\"\ndamage = 30\nfire",
+        );
+        let (dir, roots) = base_with(&items, &start_kit(2));
+
+        let Err(error) = load(&roots, START_KIT_ID) else {
+            panic!("a weapon that names damage loaded");
+        };
+
+        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+            panic!("expected Invalid content, got {error:?}");
+        };
+        assert_eq!(file, &dir.path().join("items.toml"));
+        assert_eq!(id, "rifle");
+        assert!(reason.contains("damage"), "{reason}");
     }
 
     #[test]
     fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
         let cases = [
+            ("damage = 30", "damage = 0", "damage"),
+            (", damage = 30", "", "damage"),
             (
                 "muzzle_velocity = 940.0",
                 "muzzle_velocity = 0.0",
@@ -413,7 +436,7 @@ weight = 0.2
 class = "consumable"
 size = [1, 1]
 weight = 0.02
-round = { caliber = "5.56x45", muzzle_velocity = 800.0, drag = 2.5 }
+round = { caliber = "5.56x45", muzzle_velocity = 800.0, drag = 2.5, damage = 55 }
 
 [bandage]
 class = "consumable"
@@ -468,8 +491,9 @@ carried = [{ item = "bandage" }]
         let ball = rounds
             .get(&ItemId::new("round_rifle_ball"))
             .expect("the enemy kit names the ball round");
-        assert_eq!(ball.muzzle_velocity, 940.0);
-        assert_eq!(ball.drag, 1.0);
+        assert_eq!(ball.ballistics.muzzle_velocity, 940.0);
+        assert_eq!(ball.ballistics.drag, 1.0);
+        assert_eq!(ball.damage, 30);
     }
 
     #[test]
@@ -485,16 +509,22 @@ carried = [{ item = "bandage" }]
         let expected = BTreeMap::from([
             (
                 ItemId::new("round_ball"),
-                Ballistics {
-                    muzzle_velocity: 940.0,
-                    drag: 1.0,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: 940.0,
+                        drag: 1.0,
+                    },
+                    damage: 30,
                 },
             ),
             (
                 ItemId::new("round_heavy"),
-                Ballistics {
-                    muzzle_velocity: 800.0,
-                    drag: 2.5,
+                RoundStats {
+                    ballistics: Ballistics {
+                        muzzle_velocity: 800.0,
+                        drag: 2.5,
+                    },
+                    damage: 55,
                 },
             ),
         ]);

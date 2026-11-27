@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
-    AccuracyTuning, Ballistics, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains,
+    AccuracyTuning, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains, RoundStats,
 };
 
 use crate::brain::EnemyTuning;
@@ -75,7 +75,6 @@ pub fn tuning(kit: Kit) -> SimConfig {
         gravity: 18.0,
         character_body: SHIPPED_BODY,
         rounds,
-        damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
         charge_ticks: weapon.charge_ticks,
@@ -106,14 +105,14 @@ pub fn tuning(kit: Kit) -> SimConfig {
 }
 
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
-/// the ballistics the sim flies rounds with, so a looted round still fires.
+/// the round stats the sim flies and scores rounds with, so a looted round still fires.
 pub fn with_enemy_kit(
     mut config: SimConfig,
     remains: Remains,
-    rounds: BTreeMap<ItemId, Ballistics>,
+    rounds: BTreeMap<ItemId, RoundStats>,
 ) -> SimConfig {
-    for (round, ballistics) in rounds {
-        config.rounds.entry(round).or_insert(ballistics);
+    for (round, stats) in rounds {
+        config.rounds.entry(round).or_insert(stats);
     }
     config.enemy_remains = remains;
     config
@@ -129,6 +128,7 @@ mod tests {
     use moho_physics::{Hull, HullShape, Stature};
     use searchlight_rules::{
         Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
+        RoundStats,
     };
     use std::collections::BTreeMap;
 
@@ -136,7 +136,6 @@ mod tests {
     fn every_rifle_number_comes_from_the_kits_weapon() {
         let weapon = RifleDef {
             well: MagazineWell::new("test"),
-            damage: 41,
             fire: FireBehaviour::SemiAuto,
             cooldown_ticks: 9,
             reload_ticks: 77,
@@ -147,9 +146,12 @@ mod tests {
         let loadout = Loadout::new(rifle_from(mag(17, 17)), rig);
         let rounds = BTreeMap::from([(
             ItemId::new("test_round"),
-            Ballistics {
-                muzzle_velocity: 812.0,
-                drag: 1.5,
+            RoundStats {
+                ballistics: Ballistics {
+                    muzzle_velocity: 812.0,
+                    drag: 1.5,
+                },
+                damage: 41,
             },
         )]);
         let kit = Kit {
@@ -160,7 +162,6 @@ mod tests {
 
         let config = tuning(kit);
 
-        assert_eq!(config.damage, 41);
         assert_eq!(config.cooldown_ticks, 9);
         assert_eq!(config.reload_ticks, 77);
         assert_eq!(config.charge_ticks, 13);
@@ -174,7 +175,6 @@ mod tests {
         tuning(Kit {
             weapon: RifleDef {
                 well: MagazineWell::new("test"),
-                damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,
@@ -240,7 +240,6 @@ mod tests {
         let kit = Kit {
             weapon: RifleDef {
                 well: MagazineWell::new("test"),
-                damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,

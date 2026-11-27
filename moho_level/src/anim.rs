@@ -207,6 +207,18 @@ pub enum Region {
     From(usize),
 }
 
+/// One node of an aim chain and its share of the aim pitch; see [`Animator::set_aim_pitch`].
+///
+/// Shares need not sum to 1: the body above the chain turns by `pitch × Σ share`. The chain's
+/// shape is not checked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AimLink {
+    /// Index into [`Model::nodes`].
+    pub node: usize,
+    /// The fraction of the pitch this node turns by, relative to its parent.
+    pub share: f32,
+}
+
 /// A running action: its player and the nodes it poses.
 #[derive(Clone, Debug, PartialEq)]
 struct Action {
@@ -355,16 +367,26 @@ impl ClipPlayer {
 /// started on a tick then shows its first pose on that tick. An action started on tick 100
 /// as `Playback::Ticks(156)` (2.6 s at 60 Hz) shows its last pose on tick 256, and the base
 /// returns on tick 257. Advancing after the commands makes a timed clip end one tick early.
+///
+/// It also holds an aim chain and an aim pitch the sim sets; [`Animator::advance`] leaves both
+/// alone, so set the pitch each tick from the eye, in that tick's commands.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Animator {
     base: ClipPlayer,
     action: Option<Action>,
+    aim: Vec<AimLink>,
+    pitch: f32,
 }
 
 impl Animator {
-    /// An animator playing `base` with no action.
+    /// An animator playing `base` with no action, an empty aim chain and no pitch.
     pub fn new(base: ClipPlayer) -> Self {
-        Self { base, action: None }
+        Self {
+            base,
+            action: None,
+            aim: Vec::new(),
+            pitch: 0.0,
+        }
     }
 
     pub fn base(&self) -> &ClipPlayer {
@@ -405,6 +427,33 @@ impl Animator {
         Ok(())
     }
 
+    /// Replace the aim chain: the nodes the aim pitch turns, each by its share.
+    pub fn set_aim_chain(&mut self, links: impl IntoIterator<Item = AimLink>) {
+        self.aim = links.into_iter().collect();
+    }
+
+    /// Hold the aim pitch, in radians, until it is set again; see [`Animator::pose`] for what
+    /// it does.
+    ///
+    /// Positive raises the front. Bodies face +Z with +Y up (glTF's front), so a pitch `θ` up
+    /// turns a node by `Quat::from_rotation_x(-θ)`. A rig exported facing -Z pitches inverted;
+    /// that is an export fix.
+    ///
+    /// # Panics
+    /// In debug builds, when `radians` is not finite.
+    pub fn set_aim_pitch(&mut self, radians: f32) {
+        debug_assert!(
+            radians.is_finite(),
+            "aim pitch must be finite, got {radians}"
+        );
+        self.pitch = radians;
+    }
+
+    /// The held aim pitch in radians; 0 until set.
+    pub fn aim_pitch(&self) -> f32 {
+        self.pitch
+    }
+
     /// Drop the action; the pose is the base's from now on.
     pub fn cancel_action(&mut self) {
         self.action = None;
@@ -429,27 +478,42 @@ impl Animator {
         }
     }
 
-    /// The base's pose, with the action's clip posing its region if one is running; see
-    /// [`Model::layered_pose`].
+    /// The base's pose, with the action's clip posing its region if one is running (see
+    /// [`Model::layered_pose`]), then the aim pitch applied.
+    ///
+    /// The pitch turns each aim-chain node's posed global by `share × pitch` about the model's
+    /// X axis (the character's side axis, whatever the clip does to the pelvis), pivoting on
+    /// the node's own origin, which stays where its already turned parent puts it. Everything
+    /// above the chain moves by one rigid motion whose rotation is `pitch × Σ share`; with
+    /// shares summing to 1 that is the full pitch. Links with a share of exactly 0, a zero
+    /// pitch or an empty chain turn nothing, so the pose is then bit-equal to the unpitched
+    /// one. Sign and axis are as in [`Animator::set_aim_pitch`].
     ///
     /// # Panics
-    /// When `model` has fewer clips than a player was made on.
+    /// When `model` has fewer clips than a player was made on, or when a turned link's node
+    /// is not a node of `model`.
     pub fn pose(&self, model: &Model) -> Pose {
-        match &self.action {
-            None => self.base.pose(model),
-            Some(Action {
-                player,
-                region: Region::Whole,
-            }) => player.pose(model),
-            Some(Action {
-                player,
-                region: Region::From(node),
-            }) => model.layered_pose(
-                (self.base.clip(), self.base.time()),
-                (player.clip(), player.time()),
-                *node,
-            ),
+        let action = self
+            .action
+            .as_ref()
+            .map(|action| ((action.player.clip(), action.player.time()), action.region));
+        model.pose_turned(
+            (self.base.clip(), self.base.time()),
+            action,
+            &self.aim_turns(),
+        )
+    }
+
+    /// One `(node, turn)` per aim link whose angle is not exactly 0.
+    fn aim_turns(&self) -> Vec<(usize, Quat)> {
+        let mut turns = Vec::new();
+        for link in &self.aim {
+            let angle = -self.pitch * link.share;
+            if angle != 0.0 {
+                turns.push((link.node, Quat::from_rotation_x(angle)));
+            }
         }
+        turns
     }
 }
 

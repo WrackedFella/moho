@@ -62,3 +62,4 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | `fullscreen` | none | Flips between windowed and borderless fullscreen and prints the new mode. Saved like the F11 and Alt+Enter flips |
 | `grade` | `<rookie\|novice\|experienced\|veteran\|professional\|off>` | Forces the grade of enemies spawned from then on; `off` clears the force. Not saved; applies to later waves and restarts, not to enemies already alive |
 | `head_bob` | `[percent]` | Head bob, 0 to 100 in steps of 5. No argument prints the current value. Stored as `head_bob` under `[game]` in the prefs file, the value the Settings slider edits |
+| `hitvolumes` | none | Shows or hides wireframe outlines of every character's hit volumes: the player's (green), each living enemy's (red) and each dummy's (yellow), where the sim has them, leaned volumes included. Not saved; off at every launch |

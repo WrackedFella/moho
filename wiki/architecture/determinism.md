@@ -35,8 +35,10 @@ This is the groundwork for L1. Cross-OS agreement is reported per CI run, not ga
 
 ## 3 Rules
 
-- Simulation code takes transcendentals from `moho_core::sim_math` (`sin_cos`, `atan2`),
+- Simulation code takes transcendentals from `moho_core::sim_math` (`sin_cos`, `tan`, `atan2`),
   thin wrappers over `libm`. A function the sim needs and `sim_math` lacks is added there.
+- A ground-plane distance is `Vec2::new(dx, dz).length()` or `(dx * dx + dz * dz).sqrt()`,
+  not `hypot`.
 - No `target-cpu` or `+fma` build flags.
 - rapier's and parry's `parallel` feature stays banned (`deny.toml`); it reorders float
   work.
@@ -46,7 +48,7 @@ This is the groundwork for L1. Cross-OS agreement is reported per CI run, not ga
 ## 4 The sim-math gate
 
 `just check` runs `scripts/check-sim-math.sh` over the files in `scripts/sim-math.txt`
-(the `moho_physics` movement and world files, `searchlight/src/brain.rs` and `searchlight/src/lean.rs`). It prints the file and line of each
+(the `moho_physics` movement and world files, including loose objects, `searchlight/src/sim.rs`, `searchlight/src/brain.rs` and `searchlight/src/lean.rs`). It prints the file and line of each
 method call or `f32::`/`f64::` path of a platform transcendental and fails.
 
 - The list is the boundary. Files outside it (camera, rendering, UI) are never scanned.
@@ -62,8 +64,6 @@ method call or `f32::`/`f64::` path of a platform transcendental and fails.
 
 - glam's SIMD paths: `Quat` products and `Vec4`/`Vec3A` dot and normalize can fuse or
   reorder float work per target, which blocks L2.
-- `PhysicsWorld::brake_rolling` (`moho_physics/src/world/loose.rs`) calls `tan` and
-  `cos`, and `loose.rs` is not on the list; it needs a `tan` wrapper in `sim_math` first.
 - Game call sites in the flagstone and searchlight lines still use platform
   transcendentals; each line lists them under its README's "Determinism call sites"
   ([flagstone](../flagstone/README.md#determinism-call-sites),
