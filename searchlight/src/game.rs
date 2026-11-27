@@ -728,6 +728,12 @@ impl Stage {
     /// missing enemy is not placed.
     fn sync_enemies(&mut self, sim: &SearchlightSim) {
         let segments = enemy_segments(sim.character_body());
+        let known = self.dummy_count + sim.enemy_count();
+        for rig in &mut self.enemies {
+            if usize::from(rig.target) >= known {
+                rig.gun_flash = 0;
+            }
+        }
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
@@ -9963,6 +9969,51 @@ mod enemy_and_hud_tests {
         play_frame(&mut game, &mut renderer);
 
         assert_eq!(materials_placed(&renderer), [plain; 7]);
+    }
+
+    #[test]
+    fn an_enemy_spawned_after_a_restart_into_a_vanished_index_does_not_inherit_its_gun_flash() {
+        let mut game = game_on(
+            arena_with(
+                &[],
+                Vec3::new(0.0, 0.0, -20.0),
+                &[Vec3::new(-3.0, 0.0, 4.0), Vec3::new(3.0, 0.0, 4.0)],
+                &[Vec3::new(13.0, 0.0, 4.0)],
+            ),
+            2,
+        );
+        let mut renderer = RecordingRenderer::default();
+        let plain = game.stage.enemy_material;
+        game.stage.react(&Feedback::EnemyFired { target: 1 }, None);
+        play_frame(&mut game, &mut renderer);
+        assert!(
+            game.stage.enemy_rig(1).gun_flash > 0,
+            "the flash must be running at the restart"
+        );
+
+        game.mode.sim_mut().kill_player();
+        game.mode.sim_mut().tick(
+            &SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+            1.0 / 60.0,
+        );
+        assert_eq!(
+            game.sim().enemy_count(),
+            0,
+            "the restart emptied the markers"
+        );
+        play_frame(&mut game, &mut renderer);
+        for marker in 0..2 {
+            game.mode
+                .sim_mut()
+                .spawn_enemy(marker, Grade::default())
+                .expect("the restart emptied the markers");
+        }
+        play_frame(&mut game, &mut renderer);
+
+        assert_eq!(materials_placed(&renderer), [plain; 14]);
     }
 
     #[test]
