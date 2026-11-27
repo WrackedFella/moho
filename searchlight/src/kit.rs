@@ -53,8 +53,14 @@ pub fn load_enemy_for_grade(
     roots: &ContentRoots,
     grade: Grade,
 ) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    let _ = (roots, grade);
-    todo!("FPS-F7-02: pick the grade's kit, else the default enemy kit")
+    let own = format!("{ENEMY_KIT_ID}_{}", grade.name());
+    let kits = load_kind::<KitDef>(roots, "kits")?;
+    let kit = if kits.get(&own).is_some() {
+        own.as_str()
+    } else {
+        ENEMY_KIT_ID
+    };
+    load_enemy(roots, kit)
 }
 
 /// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`,

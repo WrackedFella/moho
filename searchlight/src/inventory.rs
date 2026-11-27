@@ -1,9 +1,9 @@
 //! The inventory screen's data: the lists the shell draws, built from what the sim holds. The
 //! screen only shows and asks; the sim owns the items and applies every move.
 
-use moho_ui_shell::{ItemList, ItemLists, ListId};
+use moho_ui_shell::{ActionTarget, ItemList, ItemLists, ListId, RowAction};
 use searchlight_rules::{
-    Item, ItemDef, ItemId, LoadThresholds, Loadout, Magazine, Place, Remains, Source,
+    Item, ItemDef, ItemId, ItemKind, LoadThresholds, Loadout, Magazine, Place, Remains, Source,
 };
 
 use crate::menu::{MenuAction, item_row};
@@ -32,14 +32,38 @@ pub fn gear_lists<'a>(
     loadout: &Loadout,
     lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
 ) -> ItemLists<MenuAction> {
-    let _ = lookup;
+    let rig = loadout.rig();
+    let slots_title = format!(
+        "Magazine slots: {} ({} slots)",
+        rig.item(),
+        rig.slots().len()
+    );
+    let mut inventory = list(INVENTORY, "Inventory", loadout, None);
+    for (row, item) in inventory.rows.iter_mut().zip(loadout.inventory()) {
+        if is_wearable(item, &lookup) {
+            row.actions.push(RowAction {
+                label: "Wear".to_owned(),
+                action: MenuAction::ItemAction(ItemAction::Wear),
+                target: ActionTarget::Itself,
+            });
+        }
+    }
     ItemLists {
         lists: vec![
             list(EQUIPMENT, "Equipment", loadout, None),
-            list(MAGAZINE_SLOTS, "Magazine slots", loadout, None),
-            list(INVENTORY, "Inventory", loadout, None),
+            list(MAGAZINE_SLOTS, &slots_title, loadout, None),
+            inventory,
         ],
         back: Some(MenuAction::Back),
+    }
+}
+
+/// Whether `item` is a rig or a backpack by its definition through `lookup`.
+fn is_wearable<'a>(item: &Item, lookup: &impl Fn(&ItemId) -> Option<&'a ItemDef>) -> bool {
+    match item {
+        Item::Rig(id) => matches!(lookup(id).map(|def| &def.kind), Some(ItemKind::Rig(_))),
+        Item::Other(id) => matches!(lookup(id).map(|def| &def.kind), Some(ItemKind::Backpack(_))),
+        _ => false,
     }
 }
 

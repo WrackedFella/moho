@@ -16,8 +16,8 @@ use searchlight_rules::{
     Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Contribution, Flight, FlightBounds,
     Grade, HitReport, ItemDef, ItemId, Lean, LeanReach, LeanSide, LeanTuning, LoadState,
     LoadThresholds, Loadout, MagazineLevel, Place, PlayerDef, Remains, Rifle, Rig, RoundStats,
-    Shot, Source, SourceLabel, Stat, Verb, arrival_damage, disc_offset, equipment_contributions,
-    leaned_parts, load, load_contributions, load_state, resolve,
+    Shot, Source, SourceLabel, Stat, Verb, Worn, arrival_damage, disc_offset,
+    equipment_contributions, leaned_parts, load, load_contributions, load_state, resolve,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -768,7 +768,8 @@ impl SearchlightSim {
                 }
             }
             Some(InventoryCommand::Move { from, to }) => self.move_item(from, to),
-            Some(InventoryCommand::Wear { .. }) | None => {}
+            Some(InventoryCommand::Wear { from }) => self.wear(from),
+            None => {}
         }
         match self.loot {
             LootState::Searching { body, left } => {
@@ -796,6 +797,26 @@ impl SearchlightSim {
                 }
             }
             LootState::Idle | LootState::Open { .. } => {}
+        }
+    }
+
+    /// Wears the rig or backpack at inventory index `from`, on the gear screen only: a search or
+    /// an open body ignores it. A new rig stops a reload under way, which has not yet taken its
+    /// magazine, so the rifle keeps the one it has. A refused wear changes nothing.
+    fn wear(&mut self, from: usize) {
+        if !matches!(self.loot, LootState::Idle) {
+            tracing::debug!(from, "wear ignored while looting");
+            return;
+        }
+        let items = &self.origin.1.carry.items;
+        match self.loadout.wear(|id| items.get(id), from) {
+            Ok(Worn::Rig) => {
+                if matches!(self.weapon, Weapon::Reloading(_)) {
+                    self.weapon = Weapon::Ready;
+                }
+            }
+            Ok(Worn::Backpack) => {}
+            Err(refused) => tracing::debug!(%refused, from, "wear refused"),
         }
     }
 
@@ -1105,7 +1126,11 @@ impl SearchlightSim {
                     number,
                     DeadBody {
                         point: standing_floor(&self.body, centre),
-                        remains: self.origin.1.enemy_remains.clone(),
+                        remains: target
+                            .enemy
+                            .and_then(|enemy| self.origin.1.grade_remains.get(&enemy.grade))
+                            .unwrap_or(&self.origin.1.enemy_remains)
+                            .clone(),
                         searched: false,
                     },
                 );

@@ -83,7 +83,7 @@ impl Rig {
 
     /// Empties every slot and returns the magazines that were in them, in slot order.
     pub fn take_all(&mut self) -> Vec<Magazine> {
-        todo!("FPS-F7-02: empty the slots in order")
+        self.slots.iter_mut().filter_map(Option::take).collect()
     }
 
     /// Takes the first magazine satisfying `fits`, scanning from the cursor and wrapping,

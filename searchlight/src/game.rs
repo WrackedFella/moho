@@ -1271,6 +1271,22 @@ impl SearchlightGame {
         });
     }
 
+    /// Queues the wearing of row `row` of the inventory list for the next tick. Like a move, one
+    /// command is sent per tick and a second request before it is sent is dropped; a wear
+    /// picked on any other list is dropped.
+    fn queue_wear(&mut self, row: u32, list: ListId) {
+        if list != inventory::INVENTORY {
+            tracing::debug!(list = list.0, "wear dropped: not an inventory row");
+            return;
+        }
+        if let Some(pending) = self.queued_inventory {
+            tracing::debug!(?pending, row, "wear dropped: one is already queued");
+            return;
+        }
+        let from = usize::try_from(row).expect("a row index fits usize");
+        self.queued_inventory = Some(InventoryCommand::Wear { from });
+    }
+
     /// Answers what the player chose on the menu screens since the last call.
     fn answer_menu(&mut self, ctx: &mut EventContext<'_>) {
         let events = self.stage.shell().menu_mut().take_events();
@@ -1346,11 +1362,11 @@ impl SearchlightGame {
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
                 MenuEvent::ActionPicked {
-                    action: MenuAction::ItemAction(action),
+                    action: MenuAction::ItemAction(inventory::ItemAction::Wear),
+                    item: MenuAction::Item(row),
+                    list,
                     ..
-                } => match action {
-                    inventory::ItemAction::Wear => {}
-                },
+                } => self.queue_wear(row, list),
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
                 | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}

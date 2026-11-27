@@ -2,7 +2,7 @@
 //! the inventory of everything else.
 
 use crate::inventory::{Item, MoveRefused, Place, Remains, Source, WearRefused};
-use crate::item::{ItemDef, ItemId};
+use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::magazine::Magazine;
 use crate::rifle::{Rifle, Shot};
 use crate::rig::Rig;
@@ -116,7 +116,9 @@ impl Loadout {
     }
 
     /// Wears the rig or backpack at `from` in the inventory, looking definitions up through
-    /// `lookup`.
+    /// `lookup`. The worn one of its kind goes to `from`; a replaced rig's magazines leave its
+    /// slots, in slot order, for the end of the inventory, and the new rig starts empty. With
+    /// no backpack worn, a worn one leaves nothing behind.
     ///
     /// # Errors
     ///
@@ -127,8 +129,33 @@ impl Loadout {
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
         from: usize,
     ) -> Result<Worn, WearRefused> {
-        let _ = (lookup, from);
-        todo!("FPS-F7-02: swap the worn rig or backpack with the inventory item")
+        let item = self.inventory.get(from).ok_or(WearRefused::NoSuchItem)?;
+        let kind = |id: &ItemId| lookup(id).map(|def| &def.kind);
+        match item {
+            Item::Rig(id) => {
+                let Some(ItemKind::Rig(spec)) = kind(id) else {
+                    return Err(WearRefused::NotWearable);
+                };
+                let new_rig = Rig::new(id.clone(), spec);
+                let mut old_rig = std::mem::replace(&mut self.rig, new_rig);
+                let magazines = old_rig.take_all();
+                self.inventory[from] = Item::Rig(old_rig.item().clone());
+                self.inventory
+                    .extend(magazines.into_iter().map(Item::Magazine));
+                Ok(Worn::Rig)
+            }
+            Item::Other(id) if matches!(kind(id), Some(ItemKind::Backpack(_))) => {
+                let id = id.clone();
+                match self.backpack.replace(id) {
+                    Some(old) => self.inventory[from] = Item::Other(old),
+                    None => {
+                        self.inventory.remove(from);
+                    }
+                }
+                Ok(Worn::Backpack)
+            }
+            _ => Err(WearRefused::NotWearable),
+        }
     }
 
     /// Whether `from` holds an item, and if so whether it is a magazine.
