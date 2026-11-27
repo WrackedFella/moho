@@ -359,6 +359,35 @@ mod tests {
     }
 
     #[test]
+    fn keys_after_a_conflict_are_ignored_and_the_pending_key_survives() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {}); // Shift: Sprint's
+
+        // Release, then Alt alone, then a plain key.
+        let released =
+            handler.capture_modifier_if_listening(0, &bindings, |a, b| changed.push((a, b)));
+        let alt = handler.capture_modifier_if_listening(4, &bindings, |a, b| changed.push((a, b)));
+        let key = handler.apply_key_while_listening(Key::Q, &bindings, |a, b| changed.push((a, b)));
+
+        assert!(!released && !alt && !key, "nothing is listening");
+        assert!(changed.is_empty());
+        handler.apply_pending(&bindings, |a, b| changed.push((a, b)));
+        assert!(changed.contains(&(
+            StrategyAction::MoveForward,
+            vec![
+                Binding::key(Key::Shift),
+                Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+            ]
+        )));
+        assert!(changed.iter().all(
+            |(_, b)| !b.contains(&Binding::key(Key::Alt)) && !b.contains(&Binding::key(Key::Q))
+        ));
+    }
+
+    #[test]
     fn new_handler_has_no_pending_binding() {
         assert!(!KeybindCaptureHandler::new().has_pending_binding());
     }
