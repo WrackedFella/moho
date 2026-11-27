@@ -4235,7 +4235,7 @@ mod tests {
     fn a_press_made_as_the_console_opens_does_not_act_on_close() {
         for press_binding in [
             Input::Mouse(moho_input::key::MouseButton::Left),
-            Input::Key(Key::C),
+            Input::Key(Key::Q),
             // Reload taps on R's release, so the release after close must not tap either.
             Input::Key(Key::R),
         ] {

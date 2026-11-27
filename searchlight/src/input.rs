@@ -382,24 +382,43 @@ mod tests {
     }
 
     #[test]
-    fn a_c_tap_checks_the_magazine_on_release() {
+    fn c_does_not_check_the_magazine() {
         let mut map = fresh_map();
         map.key(Key::C, true);
-        let down = SearchlightCommand::from_frame(&map.end_tick());
-
+        let tap_down = SearchlightCommand::from_frame(&map.end_tick());
         map.key(Key::C, false);
-        let up = SearchlightCommand::from_frame(&map.end_tick());
-        let after = SearchlightCommand::from_frame(&map.end_tick());
+        let tap_up = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::C, true);
+        let frames: Vec<_> = (0..20)
+            .map(|_| SearchlightCommand::from_frame(&map.end_tick()))
+            .collect();
+        map.key(Key::C, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
 
         assert!(
-            !down.check && !down.check_gear,
-            "a press alone fires nothing"
+            !tap_down.check && !tap_up.check && !tap_up.reload,
+            "tapping C does nothing"
         );
         assert!(
-            up.check && !up.reload && !up.check_gear,
-            "the tap checks on release"
+            frames.iter().all(|f| !f.check && !f.reload),
+            "holding C does nothing"
         );
-        assert!(!after.check);
+        assert!(
+            !released.check && !released.reload,
+            "releasing a held C does nothing"
+        );
+    }
+
+    #[test]
+    fn no_default_binds_c() {
+        for action in SearchlightAction::ALL {
+            let binds_c = action
+                .default_bindings()
+                .iter()
+                .any(|b| b.input == Input::Key(Key::C));
+
+            assert!(!binds_c, "{action:?} binds C by default");
+        }
     }
 
     #[test]

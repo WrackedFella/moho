@@ -431,27 +431,27 @@ mod tests {
     #[test]
     fn replace_empties_only_the_slot_that_held_the_input() {
         let mut draft = draft();
-        let outcome = draft.capture(SearchlightAction::Fire, Slot::Primary, Input::Key(Key::C));
+        let outcome = draft.capture(SearchlightAction::Fire, Slot::Primary, Input::Key(Key::Tab));
 
         draft.replace();
 
         assert_eq!(
             outcome,
             Capture::Conflict {
-                by: SearchlightAction::CheckMagazine,
+                by: SearchlightAction::Inventory,
                 slot: Some(Slot::Primary)
             }
         );
         assert_eq!(
-            draft.slots(SearchlightAction::CheckMagazine),
-            [None, Some(Binding::key(Key::R).held())],
-            "Check magazine keeps Hold R"
+            draft.slots(SearchlightAction::Inventory),
+            [None, Some(Binding::key(Key::I))],
+            "Inventory keeps I"
         );
         assert_eq!(
             draft.slots(SearchlightAction::Fire),
-            [Some(Binding::key(Key::C)), None]
+            [Some(Binding::key(Key::Tab)), None]
         );
-        assert!(!draft.is_unbound(SearchlightAction::CheckMagazine));
+        assert!(!draft.is_unbound(SearchlightAction::Inventory));
     }
 
     #[test]
