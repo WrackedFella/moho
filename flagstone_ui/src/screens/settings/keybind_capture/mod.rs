@@ -341,6 +341,55 @@ mod tests {
     }
 
     #[test]
+    fn lone_modifier_after_conflict_release_is_ignored() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+
+        let released = handler.capture_modifier_if_listening(0, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+        let alt = handler.capture_modifier_if_listening(4, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+
+        assert!(!released);
+        assert!(!alt);
+        assert!(changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
+    }
+
+    #[test]
+    fn key_after_modifier_conflict_is_ignored_and_keeps_the_pending_binding() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+
+        let consumed = handler.apply_key_while_listening(Key::Alt, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+        handler.apply_pending(&bindings, |a, b| changed.push((a, b)));
+
+        assert!(!consumed);
+        assert_eq!(changed.len(), 2);
+        assert!(changed.contains(&(StrategyAction::Sprint, vec![THUMB])));
+        assert!(changed.contains(&(
+            StrategyAction::MoveForward,
+            vec![
+                Binding::key(Key::Shift),
+                Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+            ]
+        )));
+    }
+
+    #[test]
     fn new_handler_has_no_pending_binding() {
         assert!(!KeybindCaptureHandler::new().has_pending_binding());
     }
