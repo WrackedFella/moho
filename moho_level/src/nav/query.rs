@@ -7,9 +7,6 @@ use glam::{Vec2, Vec3};
 
 use super::{NavMesh, Polygon};
 
-#[cfg(test)]
-mod spike;
-
 struct Snapped {
     polygon: usize,
     point: Vec3,
