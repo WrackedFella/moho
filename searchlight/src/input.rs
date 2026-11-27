@@ -90,7 +90,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Inventory => {
                 const { &[Binding::key(Key::Tab), Binding::key(Key::I)] }
             }
-            SearchlightAction::Character => const { &[Binding::key(Key::F9)] },
+            SearchlightAction::Character => const { &[Binding::key(Key::K)] },
             SearchlightAction::Aim => const { &[Binding::mouse(MouseButton::Right)] },
         }
     }

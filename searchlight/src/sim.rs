@@ -16,7 +16,8 @@ use searchlight_rules::{
     Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Contribution, Flight, FlightBounds,
     Grade, HitReport, ItemDef, ItemId, Lean, LeanReach, LeanSide, LeanTuning, LoadState,
     LoadThresholds, Loadout, MagazineLevel, Place, PlayerDef, Remains, Rifle, Rig, RoundStats,
-    Shot, Source, Stat, arrival_damage, disc_offset, leaned_parts,
+    Shot, Source, SourceLabel, Stat, Verb, arrival_damage, disc_offset, equipment_contributions,
+    leaned_parts, load, load_contributions, load_state, resolve,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -501,6 +502,9 @@ pub struct SearchlightSim {
     weapon: Weapon,
     lean: Lean,
     lean_tuning: LeanTuning,
+    /// Whether the last tick's command held a lean, which the stance source reads. Simulation
+    /// state; every stat contribution is derived from it and the loadout.
+    leaning_held: bool,
     accuracy: Accuracy,
     /// Whether the player has touched ground since spawning: a fresh spawn reads airborne until
     /// its first move, and that is not a jump.
@@ -658,6 +662,7 @@ impl SearchlightSim {
             weapon: Weapon::Ready,
             lean: Lean::default(),
             lean_tuning: config.lean,
+            leaning_held: false,
             accuracy: Accuracy::default(),
             landed: false,
             accuracy_tuning: config.accuracy,
@@ -689,13 +694,9 @@ impl SearchlightSim {
             return;
         }
         let firing = self.move_enemies(dt);
-        let factor = if command.lean.is_some() {
-            self.lean_tuning.speed_factor
-        } else {
-            1.0
-        };
+        self.leaning_held = command.lean.is_some();
         let settings = MoveSettings {
-            max_speed: self.move_settings.max_speed * factor,
+            max_speed: self.move_settings.max_speed * self.stat(Stat::MovementSpeed),
             ..self.move_settings
         };
         self.world
@@ -1481,25 +1482,56 @@ impl SearchlightSim {
         self.move_settings.max_speed
     }
 
-    /// Everything the player carries and wears, in kilograms, as of the last tick.
+    /// Everything the player carries and wears, in kilograms, as it stands now.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
     pub fn load_kg(&self) -> f32 {
-        todo!("the weight of the loadout")
+        let carry = &self.config().carry;
+        load(&self.loadout, &carry.weapon, |id| carry.items.get(id))
+            .expect("every item the player holds is defined in the carry config")
     }
 
-    /// The player's resolved `stat` as of the last tick.
-    pub fn stat(&self, _stat: Stat) -> f32 {
-        todo!("resolve the stat from equipment, load and stance")
+    /// The player's resolved `stat`, from what they wear, carry and hold now.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        let player = &self.config().carry.player;
+        resolve(stat, player.baseline(stat), 0.0, &self.stat_contributions())
     }
 
-    /// How far load has taken the player's capability as of the last tick.
+    /// How far load has taken the player's capability.
     pub fn load_state(&self) -> LoadState {
-        todo!("the load state from load and carry capacity")
+        load_state(
+            self.load_kg(),
+            self.stat(Stat::CarryCapacity),
+            self.load_thresholds(),
+        )
     }
 
-    /// Every contribution to the player's stats as of the last tick, from equipment, load and
-    /// stance.
+    /// Every contribution to the player's stats now, from equipment, load and stance. Derived
+    /// from the loadout and the held lean each call, never stored (ADR-0041).
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
     pub fn stat_contributions(&self) -> Vec<Contribution> {
-        todo!("the contributions of every source")
+        let carry = &self.config().carry;
+        let mut contributions = equipment_contributions(&self.loadout, |id| carry.items.get(id))
+            .expect("every worn item is defined in the carry config");
+        let capacity = resolve(
+            Stat::CarryCapacity,
+            carry.player.baseline(Stat::CarryCapacity),
+            0.0,
+            &contributions,
+        );
+        let state = load_state(self.load_kg(), capacity, &carry.player.thresholds);
+        contributions.extend(load_contributions(state, carry.player.slowed_scale));
+        if self.leaning_held {
+            contributions.push(Contribution {
+                source: SourceLabel::Stance,
+                stat: Stat::MovementSpeed,
+                verb: Verb::Scale(self.lean_tuning.speed_factor),
+            });
+        }
+        contributions
     }
 
     /// Where load, as a fraction of carry capacity, changes the player's state.

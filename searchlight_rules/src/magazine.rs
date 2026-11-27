@@ -168,6 +168,12 @@ impl Magazine {
         round_count(&self.rounds)
     }
 
+    /// The round item of each round held, last loaded last.
+    #[must_use]
+    pub fn round_items(&self) -> &[ItemId] {
+        &self.rounds
+    }
+
     /// Approximate fill, for HUD display without exact counts.
     #[must_use]
     pub fn level(&self) -> MagazineLevel {

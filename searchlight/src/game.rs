@@ -19,7 +19,7 @@ use moho_render_api::{
     UiTextureSet, UiVertex, WorldMesh, WorldMeshId,
 };
 use moho_renderer::{EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle};
-use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
+use searchlight_rules::{Grade, GravityScale, Lean, LeanSide, Stat};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -32,6 +32,7 @@ use moho_ui_shell::{
 
 use crate::aim::{Magnification, aimed_fov_y, look_scale};
 use crate::arena::{box_mesh, control_mesh_id};
+use crate::character;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::control::ControlAction;
 use crate::controls::{Capture, ControlsDraft, label};
@@ -97,6 +98,20 @@ const PROMPT_COLOR: [u8; 4] = [255, 255, 255, 230];
 const STRIP_OFFSET_Y: f32 = -96.0;
 const STRIP_SIZE: f32 = 20.0;
 const STRIP_COLOR: [u8; 4] = [220, 220, 220, 230];
+/// The load icon's distance from the bottom left corner, in logical points. It is drawn at the
+/// strip's size.
+const LOAD_ICON_OFFSET: [f32; 2] = [24.0, -24.0];
+/// The inventory's load header's distance below the top edge, in logical points.
+const LOAD_HEADER_OFFSET_Y: f32 = 32.0;
+
+/// The colour the load icon is drawn in.
+fn load_icon_color(icon: hud::LoadIcon) -> [u8; 4] {
+    match icon {
+        hud::LoadIcon::White => [255, 255, 255, 230],
+        hud::LoadIcon::Yellow => [255, 214, 51, 230],
+        hud::LoadIcon::Red => [230, 51, 51, 230],
+    }
+}
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
 fn aspect_ratio(width: u32, height: u32) -> f32 {
@@ -976,6 +991,9 @@ enum Screen {
     Paused,
     /// The inventory: takes input like a menu while the loop keeps running.
     Inventory,
+    /// The character screen: the player's stats and what contributes to them; takes input like
+    /// a menu while the loop keeps running.
+    Character,
 }
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
@@ -1131,8 +1149,10 @@ impl SearchlightGame {
     /// Whether the loop stands still: on the main menu or the pause menu, or with the console
     /// open. The inventory screen takes input but leaves the world running.
     fn loop_paused(&self) -> bool {
-        !matches!(self.screen, Screen::Playing | Screen::Inventory)
-            || self.stage.shell().console_mut().is_open()
+        !matches!(
+            self.screen,
+            Screen::Playing | Screen::Inventory | Screen::Character
+        ) || self.stage.shell().console_mut().is_open()
     }
 
     /// The lists the inventory screen shows: the loot screen while a body is open, otherwise
@@ -1147,12 +1167,36 @@ impl SearchlightGame {
 
     /// The colour of the HUD's load icon, from the sim's load state.
     pub fn load_icon(&self) -> hud::LoadIcon {
-        todo!("the HUD icon for the sim's load state")
+        hud::load_icon(self.mode.sim().load_state())
     }
 
     /// The load line the open inventory screen shows; `None` while it is closed.
     pub fn inventory_header(&self) -> Option<inventory::LoadHeader> {
-        todo!("the load header while the inventory is open")
+        let sim = self.mode.sim();
+        (self.screen == Screen::Inventory).then(|| {
+            inventory::load_header(
+                sim.load_kg(),
+                sim.stat(Stat::CarryCapacity),
+                sim.load_thresholds(),
+            )
+        })
+    }
+
+    /// Whether `input` is bound to the character screen action.
+    fn is_character_key(&self, input: Input) -> bool {
+        self.input
+            .bindings()
+            .get(SearchlightAction::Character)
+            .iter()
+            .any(|binding| binding.input == input)
+    }
+
+    /// Opens the character screen over play, the world still running behind it.
+    fn open_character(&mut self) {
+        self.screen = Screen::Character;
+        let lists = character::character_lists(self.mode.sim());
+        self.stage.shell().menu_mut().push_lists(lists);
+        self.hand_input_to_screen();
     }
 
     /// `command` with the host's levels and the inventory command the screen queued, the parts
@@ -1268,6 +1312,9 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
                 MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Inventory => {
                     self.close_inventory();
+                }
+                MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Character => {
+                    self.enter_play();
                 }
                 MenuEvent::Chosen(MenuAction::Back) => {
                     self.controls = None;
@@ -1674,6 +1721,29 @@ impl SearchlightGame {
             })
             .into_iter()
             .collect();
+        // Nothing carried, nothing to weigh: the icon appears with the first kilogram.
+        if live && sim.load_kg() > 0.0 {
+            texts.push(ScreenText {
+                text: "LOAD".to_owned(),
+                anchor: Anchor::BottomLeft,
+                offset: LOAD_ICON_OFFSET,
+                size: STRIP_SIZE,
+                color: load_icon_color(self.load_icon()),
+            });
+        }
+        if let Some(header) = self.inventory_header().filter(|_| !dead) {
+            let [slowed, no_sprint, cannot_move] = header.marks;
+            texts.push(ScreenText {
+                text: format!(
+                    "{}  (slowed {slowed:.1}, no sprint {no_sprint:.1}, cannot move {cannot_move:.1})",
+                    header.text
+                ),
+                anchor: Anchor::Top,
+                offset: [0.0, LOAD_HEADER_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: PROMPT_COLOR,
+            });
+        }
         if let Some(marks) = self.strip_marks().filter(|_| !dead) {
             texts.push(ScreenText {
                 text: hud::strip_text(&marks),
@@ -1762,6 +1832,14 @@ impl SearchlightGame {
             {
                 self.close_inventory();
             }
+            Routing::Menu
+                if self.screen == Screen::Character
+                    && pressed
+                    && !repeat
+                    && self.is_character_key(input) =>
+            {
+                self.enter_play();
+            }
             Routing::Menu => self.answer_menu(ctx),
             Routing::Game if self.screen != Screen::Playing => {}
             Routing::Game => {
@@ -1775,6 +1853,14 @@ impl SearchlightGame {
                     && !self.mode.sim().player_body().is_dead()
                 {
                     self.open_inventory();
+                    return routing;
+                }
+                if pressed
+                    && !repeat
+                    && self.is_character_key(input)
+                    && !self.mode.sim().player_body().is_dead()
+                {
+                    self.open_character();
                     return routing;
                 }
                 match input {
@@ -1814,7 +1900,9 @@ impl Game for SearchlightGame {
             self.aiming = false;
             // The inventory screen leaves the world running: it keeps the host levels and sends
             // what the player asked of it, and nothing the player's hands would do.
-            return if self.screen == Screen::Inventory && !self.loop_paused() {
+            return if matches!(self.screen, Screen::Inventory | Screen::Character)
+                && !self.loop_paused()
+            {
                 self.with_host_levels(SearchlightCommand::default())
             } else {
                 SearchlightCommand::default()
@@ -1973,6 +2061,14 @@ impl Game for SearchlightGame {
                 self.enter_play();
             } else {
                 let lists = self.inventory_lists();
+                self.stage.shell().menu_mut().set_lists(lists);
+            }
+        }
+        if self.screen == Screen::Character {
+            if dead {
+                self.enter_play();
+            } else {
+                let lists = character::character_lists(self.mode.sim());
                 self.stage.shell().menu_mut().set_lists(lists);
             }
         }

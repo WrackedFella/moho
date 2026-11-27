@@ -62,7 +62,7 @@ pub struct UnknownItem {
 
 /// The player's attribute sheet and the baselines it gives every stat, from data.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawPlayerDef")]
 pub struct PlayerDef {
     /// The attribute carry capacity grows with.
     pub strength: f32,
@@ -78,25 +78,133 @@ pub struct PlayerDef {
     pub thresholds: LoadThresholds,
 }
 
+/// Why a player sheet was refused.
+#[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
+pub enum PlayerDefError {
+    /// A number that must be finite and at least 0 is not.
+    #[error("{field} must be a finite number of 0 or more, got {value}")]
+    Value {
+        /// The key.
+        field: &'static str,
+        /// The value given.
+        value: f32,
+    },
+    /// The slowed scale is above 1, which would speed the player up.
+    #[error("slowed_scale must be at most 1, got {0}")]
+    SlowedScale(f32),
+}
+
+/// Unvalidated wire form of a [`PlayerDef`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPlayerDef {
+    strength: f32,
+    carry_capacity_per_strength: f32,
+    movement_speed: f32,
+    stamina_pool: f32,
+    slowed_scale: f32,
+    thresholds: LoadThresholds,
+}
+
+impl TryFrom<RawPlayerDef> for PlayerDef {
+    type Error = PlayerDefError;
+
+    fn try_from(raw: RawPlayerDef) -> Result<Self, Self::Error> {
+        let checks = [
+            ("strength", raw.strength),
+            (
+                "carry_capacity_per_strength",
+                raw.carry_capacity_per_strength,
+            ),
+            ("movement_speed", raw.movement_speed),
+            ("stamina_pool", raw.stamina_pool),
+            ("slowed_scale", raw.slowed_scale),
+        ];
+        for (field, value) in checks {
+            if !(value.is_finite() && value >= 0.0) {
+                return Err(PlayerDefError::Value { field, value });
+            }
+        }
+        if raw.slowed_scale > 1.0 {
+            return Err(PlayerDefError::SlowedScale(raw.slowed_scale));
+        }
+        Ok(Self {
+            strength: raw.strength,
+            carry_capacity_per_strength: raw.carry_capacity_per_strength,
+            movement_speed: raw.movement_speed,
+            stamina_pool: raw.stamina_pool,
+            slowed_scale: raw.slowed_scale,
+            thresholds: raw.thresholds,
+        })
+    }
+}
+
 impl PlayerDef {
     /// The value `stat` starts from before any source contributes.
     #[must_use]
-    pub fn baseline(&self, _stat: Stat) -> f32 {
-        todo!("the baseline of each stat from the attribute sheet")
+    pub fn baseline(&self, stat: Stat) -> f32 {
+        match stat {
+            Stat::CarryCapacity => self.strength * self.carry_capacity_per_strength,
+            Stat::MovementSpeed => self.movement_speed,
+            Stat::Stamina => self.stamina_pool,
+        }
     }
+}
+
+/// The values of `contributions` to `stat` that `pick` selects, smallest first, so that
+/// summing or multiplying them gives the same float whatever order the sources came in.
+fn sorted_values(
+    stat: Stat,
+    contributions: &[Contribution],
+    pick: impl Fn(Verb) -> Option<f32>,
+) -> Vec<f32> {
+    let mut values: Vec<f32> = contributions
+        .iter()
+        .filter(|c| c.stat == stat)
+        .filter_map(|c| pick(c.verb))
+        .collect();
+    values.sort_by(f32::total_cmp);
+    values
 }
 
 /// `stat` from `baseline`: every add, then every scale, then the lowest cap, then `floor`.
 /// Contributions to other stats are ignored; the order of `contributions` never matters.
 #[must_use]
-pub fn resolve(_stat: Stat, _baseline: f32, _floor: f32, _contributions: &[Contribution]) -> f32 {
-    todo!("resolve a stat from its contributions")
+pub fn resolve(stat: Stat, baseline: f32, floor: f32, contributions: &[Contribution]) -> f32 {
+    let adds = sorted_values(stat, contributions, |verb| match verb {
+        Verb::Add(x) => Some(x),
+        _ => None,
+    });
+    let scales = sorted_values(stat, contributions, |verb| match verb {
+        Verb::Scale(x) => Some(x),
+        _ => None,
+    });
+    let caps = sorted_values(stat, contributions, |verb| match verb {
+        Verb::Cap(x) => Some(x),
+        _ => None,
+    });
+    let added = adds.into_iter().fold(baseline, |sum, x| sum + x);
+    let scaled = scales.into_iter().fold(added, |product, x| product * x);
+    let capped = caps.into_iter().fold(scaled, f32::min);
+    capped.max(floor)
 }
 
 /// The contributions to `stat` in the order [`resolve`] applies them: adds, scales, caps.
 #[must_use]
-pub fn explain(_stat: Stat, _contributions: &[Contribution]) -> Vec<Contribution> {
-    todo!("list the contributions to a stat in resolution order")
+pub fn explain(stat: Stat, contributions: &[Contribution]) -> Vec<Contribution> {
+    let rank = |verb: Verb| match verb {
+        Verb::Add(_) => 0,
+        Verb::Scale(_) => 1,
+        Verb::Cap(_) => 2,
+    };
+    let mut lines: Vec<Contribution> = contributions
+        .iter()
+        .filter(|c| c.stat == stat)
+        .cloned()
+        .collect();
+    lines.sort_by_key(|c| rank(c.verb));
+    lines
 }
 
 /// What the worn rig and backpack of `loadout` contribute through the `stats` of their
@@ -106,10 +214,20 @@ pub fn explain(_stat: Stat, _contributions: &[Contribution]) -> Vec<Contribution
 ///
 /// [`UnknownItem`] when a worn item has no definition.
 pub fn equipment_contributions<'a>(
-    _loadout: &Loadout,
-    _lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+    loadout: &Loadout,
+    lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
 ) -> Result<Vec<Contribution>, UnknownItem> {
-    todo!("one contribution per stat entry of each worn item")
+    let worn = std::iter::once(loadout.rig().item()).chain(loadout.backpack());
+    let mut contributions = Vec::new();
+    for id in worn {
+        let def = lookup(id).ok_or_else(|| UnknownItem { id: id.clone() })?;
+        contributions.extend(def.stats.iter().map(|entry| Contribution {
+            source: SourceLabel::Equipment(id.clone()),
+            stat: entry.stat,
+            verb: entry.verb,
+        }));
+    }
+    Ok(contributions)
 }
 
 #[cfg(test)]

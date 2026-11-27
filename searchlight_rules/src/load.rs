@@ -1,13 +1,17 @@
 //! Load: what the player carries, set against what they can carry.
 
+use crate::inventory::Item;
 use crate::item::{ItemDef, ItemId};
 use crate::loadout::Loadout;
-use crate::stats::{Contribution, UnknownItem};
+use crate::magazine::Magazine;
+use crate::rifle::Rifle;
+use crate::stats::{Contribution, SourceLabel, Stat, UnknownItem, Verb};
 use serde::Deserialize;
+use thiserror::Error;
 
 /// Where load, as a fraction of carry capacity, changes the player's state.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawLoadThresholds")]
 pub struct LoadThresholds {
     /// From here the player is slowed.
     pub slowed: f32,
@@ -15,6 +19,61 @@ pub struct LoadThresholds {
     pub no_sprint: f32,
     /// From here the player cannot move.
     pub cannot_move: f32,
+}
+
+/// Why a set of load thresholds was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[non_exhaustive]
+pub enum LoadThresholdsError {
+    /// The thresholds are not finite and increasing from above 0.
+    #[error(
+        "thresholds must be finite with 0 < slowed < no_sprint < cannot_move, got {slowed}, {no_sprint}, {cannot_move}"
+    )]
+    Order {
+        /// The slowed threshold given.
+        slowed: f32,
+        /// The no-sprint threshold given.
+        no_sprint: f32,
+        /// The cannot-move threshold given.
+        cannot_move: f32,
+    },
+}
+
+/// Unvalidated wire form of [`LoadThresholds`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLoadThresholds {
+    slowed: f32,
+    no_sprint: f32,
+    cannot_move: f32,
+}
+
+impl TryFrom<RawLoadThresholds> for LoadThresholds {
+    type Error = LoadThresholdsError;
+
+    fn try_from(raw: RawLoadThresholds) -> Result<Self, Self::Error> {
+        let RawLoadThresholds {
+            slowed,
+            no_sprint,
+            cannot_move,
+        } = raw;
+        let finite = [slowed, no_sprint, cannot_move]
+            .iter()
+            .all(|x| x.is_finite());
+        if finite && 0.0 < slowed && slowed < no_sprint && no_sprint < cannot_move {
+            Ok(Self {
+                slowed,
+                no_sprint,
+                cannot_move,
+            })
+        } else {
+            Err(LoadThresholdsError::Order {
+                slowed,
+                no_sprint,
+                cannot_move,
+            })
+        }
+    }
 }
 
 /// How far load has taken the player's capability, each state including the ones before it.
@@ -38,26 +97,87 @@ pub enum LoadState {
 ///
 /// [`UnknownItem`] when something carried has no definition through `lookup`.
 pub fn load<'a>(
-    _loadout: &Loadout,
-    _weapon: &ItemId,
-    _lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+    loadout: &Loadout,
+    weapon: &ItemId,
+    lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
 ) -> Result<f32, UnknownItem> {
-    todo!("sum the weights of everything carried")
+    let kg = |id: &ItemId| {
+        lookup(id)
+            .map(|def| def.weight)
+            .ok_or_else(|| UnknownItem { id: id.clone() })
+    };
+    let magazine = |magazine: &Magazine| -> Result<f32, UnknownItem> {
+        let mut total = kg(magazine.item())?;
+        for round in magazine.round_items() {
+            total += kg(round)?;
+        }
+        Ok(total)
+    };
+    let rifle = |rifle: &Rifle| -> Result<f32, UnknownItem> {
+        let mut total = kg(weapon)? + magazine(rifle.magazine())?;
+        if let Some(round) = rifle.chamber() {
+            total += kg(round)?;
+        }
+        Ok(total)
+    };
+
+    let mut total = rifle(loadout.rifle())? + kg(loadout.rig().item())?;
+    for spare in loadout.rig().magazines() {
+        total += magazine(spare)?;
+    }
+    if let Some(backpack) = loadout.backpack() {
+        total += kg(backpack)?;
+    }
+    for item in loadout.inventory() {
+        total += match item {
+            Item::Weapon(held) => rifle(held)?,
+            Item::Magazine(spare) => magazine(spare)?,
+            Item::Rounds(stack) => kg(&stack.round)? * stack.count as f32,
+            Item::Rig(id) | Item::Other(id) => kg(id)?,
+        };
+    }
+    Ok(total)
 }
 
 /// The state `load_kg` puts the player in against `capacity_kg`: each threshold is a
 /// fraction of capacity and is reached at exactly that load.
 #[must_use]
-pub fn load_state(_load_kg: f32, _capacity_kg: f32, _thresholds: &LoadThresholds) -> LoadState {
-    todo!("compare load to the thresholds")
+pub fn load_state(load_kg: f32, capacity_kg: f32, thresholds: &LoadThresholds) -> LoadState {
+    if load_kg <= 0.0 {
+        LoadState::Fine
+    } else if load_kg >= thresholds.cannot_move * capacity_kg {
+        LoadState::CannotMove
+    } else if load_kg >= thresholds.no_sprint * capacity_kg {
+        LoadState::NoSprint
+    } else if load_kg >= thresholds.slowed * capacity_kg {
+        LoadState::Slowed
+    } else {
+        LoadState::Fine
+    }
 }
 
 /// What a load state contributes to the stats: slowed and no-sprint scale movement speed by
 /// `slowed_scale`, no-sprint and cannot-move cap the stamina pool at 0, and cannot-move caps
 /// movement speed at 0.
 #[must_use]
-pub fn load_contributions(_state: LoadState, _slowed_scale: f32) -> Vec<Contribution> {
-    todo!("the contributions of a load state")
+pub fn load_contributions(state: LoadState, slowed_scale: f32) -> Vec<Contribution> {
+    let load = |stat, verb| Contribution {
+        source: SourceLabel::Load,
+        stat,
+        verb,
+    };
+    match state {
+        LoadState::Fine => Vec::new(),
+        LoadState::Slowed => vec![load(Stat::MovementSpeed, Verb::Scale(slowed_scale))],
+        LoadState::NoSprint => vec![
+            load(Stat::MovementSpeed, Verb::Scale(slowed_scale)),
+            load(Stat::Stamina, Verb::Cap(0.0)),
+        ],
+        LoadState::CannotMove => vec![
+            load(Stat::MovementSpeed, Verb::Cap(0.0)),
+            load(Stat::Stamina, Verb::Cap(0.0)),
+        ],
+    }
 }
 
 #[cfg(test)]

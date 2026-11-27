@@ -83,8 +83,15 @@ pub struct LoadHeader {
 }
 
 /// The header for `load_kg` carried against `capacity_kg`, with the marks of `thresholds`.
-pub fn load_header(_load_kg: f32, _capacity_kg: f32, _thresholds: &LoadThresholds) -> LoadHeader {
-    todo!("the load header text and threshold marks")
+pub fn load_header(load_kg: f32, capacity_kg: f32, thresholds: &LoadThresholds) -> LoadHeader {
+    LoadHeader {
+        text: format!("{load_kg:.1} of {capacity_kg:.1} kg"),
+        marks: [
+            thresholds.slowed * capacity_kg,
+            thresholds.no_sprint * capacity_kg,
+            thresholds.cannot_move * capacity_kg,
+        ],
+    }
 }
 
 /// An action a row of the inventory offers; the enum has no variants.

@@ -260,8 +260,19 @@ impl TryFrom<RawItemStat> for ItemStat {
     type Error = ItemDefError;
 
     fn try_from(raw: RawItemStat) -> Result<Self, Self::Error> {
-        let _ = (raw.stat, raw.add, raw.scale, raw.cap);
-        todo!("exactly one finite verb; scale and cap not below 0")
+        let stat = raw.stat;
+        let refused = Err(ItemDefError::StatEntry { stat });
+        let (verb, value, non_negative) = match (raw.add, raw.scale, raw.cap) {
+            (Some(x), None, None) => (Verb::Add(x), x, false),
+            (None, Some(x), None) => (Verb::Scale(x), x, true),
+            (None, None, Some(x)) => (Verb::Cap(x), x, true),
+            _ => return refused,
+        };
+        if value.is_finite() && !(non_negative && value < 0.0) {
+            Ok(Self { stat, verb })
+        } else {
+            refused
+        }
     }
 }
 

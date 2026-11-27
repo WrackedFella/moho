@@ -62,6 +62,43 @@ fn resolve_kit<T>(
     })
 }
 
+/// A resolved kit with the item catalogue it was resolved against and the id of its weapon.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Catalogue {
+    /// The resolved kit.
+    pub kit: Kit,
+    /// The item id of the kit's weapon.
+    pub weapon: ItemId,
+    /// Every item defined in the content roots, by id.
+    pub items: BTreeMap<ItemId, ItemDef>,
+}
+
+/// Loads `items` and `kits` through `roots`, resolves the kit `kit`, and returns it with the
+/// whole item catalogue.
+///
+/// # Errors
+///
+/// As [`load`].
+pub fn load_catalogue(roots: &ContentRoots, kit: &str) -> Result<Catalogue, KitLoadError> {
+    let items = load_kind::<ItemDef>(roots, "items")?;
+    let kits = load_kind::<KitDef>(roots, "kits")?;
+    let def = kits.require(kit)?;
+    let resolved = def
+        .resolve(|id: &ItemId| items.get(id.as_str()))
+        .map_err(|source| KitLoadError::Kit {
+            kit: kit.to_owned(),
+            source,
+        })?;
+    Ok(Catalogue {
+        kit: resolved,
+        weapon: def.weapon.clone(),
+        items: items
+            .iter()
+            .map(|(id, def)| (ItemId::new(id), def.clone()))
+            .collect(),
+    })
+}
+
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit`.
 ///
 /// # Errors

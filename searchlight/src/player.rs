@@ -1,6 +1,6 @@
 //! Loads the player's attribute sheet from the content roots.
 
-use moho_core::content::{ContentError, ContentRoots};
+use moho_core::content::{ContentError, ContentRoots, load_kind};
 use searchlight_rules::PlayerDef;
 
 /// The id of the player's sheet in `player.toml`.
@@ -11,8 +11,9 @@ pub const PLAYER_ID: &str = "player";
 /// # Errors
 ///
 /// A [`ContentError`] naming the file and id when the table is missing or malformed.
-pub fn load(_roots: &ContentRoots) -> Result<PlayerDef, ContentError> {
-    todo!("load_kind the player sheet and require the player id")
+pub fn load(roots: &ContentRoots) -> Result<PlayerDef, ContentError> {
+    let sheets = load_kind::<PlayerDef>(roots, "player")?;
+    sheets.require(PLAYER_ID).cloned()
 }
 
 #[cfg(test)]
@@ -32,7 +33,7 @@ mod tests {
         (dir, roots)
     }
 
-    const SHEET: &str = r#"
+    const SHEET: &str = r"
 [player]
 strength = 8.0
 carry_capacity_per_strength = 2.5
@@ -43,7 +44,7 @@ slowed_scale = 0.55
 slowed = 0.5
 no_sprint = 0.7
 cannot_move = 0.9
-"#;
+";
 
     #[test]
     fn the_shipped_player_sheet_matches_the_shipped_tuning_constant() {

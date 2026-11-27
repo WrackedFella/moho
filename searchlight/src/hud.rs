@@ -193,8 +193,12 @@ pub enum LoadIcon {
 
 /// The icon colour for `state`: white while fine, yellow while slowed or unable to sprint, red
 /// while unable to move.
-pub fn load_icon(_state: LoadState) -> LoadIcon {
-    todo!("the icon colour of a load state")
+pub fn load_icon(state: LoadState) -> LoadIcon {
+    match state {
+        LoadState::Fine => LoadIcon::White,
+        LoadState::Slowed | LoadState::NoSprint => LoadIcon::Yellow,
+        LoadState::CannotMove => LoadIcon::Red,
+    }
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.

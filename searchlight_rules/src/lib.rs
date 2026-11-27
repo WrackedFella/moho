@@ -33,7 +33,9 @@ pub use item::{
     MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size,
 };
 pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};
-pub use load::{LoadState, LoadThresholds, load, load_contributions, load_state};
+pub use load::{
+    LoadState, LoadThresholds, LoadThresholdsError, load, load_contributions, load_state,
+};
 pub use loadout::Loadout;
 pub use magazine::{Magazine, MagazineError, MagazineLevel};
 pub use mix::{GradeMix, GradeMixError, WaveGrades};
@@ -41,7 +43,7 @@ pub use posture::{BODY_RIGHT, Lean, LeanReach, LeanSide, LeanTuning, PartOffset,
 pub use rifle::{Rifle, RifleError, Shot};
 pub use rig::Rig;
 pub use stats::{
-    Contribution, PlayerDef, SourceLabel, Stat, UnknownItem, Verb, equipment_contributions,
-    explain, resolve,
+    Contribution, PlayerDef, PlayerDefError, SourceLabel, Stat, UnknownItem, Verb,
+    equipment_contributions, explain, resolve,
 };
 pub use weapon::{FireBehaviour, RifleDef};

@@ -21,7 +21,7 @@ use searchlight::launch;
 use searchlight::levels;
 use searchlight::mode::ArenaMode;
 use searchlight::sim::SimConfig;
-use searchlight::tuning::{tuning, with_enemy_kit};
+use searchlight::tuning::{shipped, with_enemy_kit};
 use searchlight::wave::WaveTuning;
 use searchlight::{TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
 
@@ -29,9 +29,9 @@ use searchlight::{TICK_HZ, content_root, mods_dir, prefs_path, split_console_bin
 /// content folder and the listed mod roots.
 fn load_tuning(mods: &[String]) -> Result<SimConfig, Box<dyn Error>> {
     let roots = ContentRoots::base(&content_root())?.with_mods(&mods_dir(), mods)?;
-    let start = kit::load(&roots, START_KIT_ID)?;
+    let start = shipped(&roots, START_KIT_ID)?;
     let (remains, rounds) = kit::load_enemy(&roots, ENEMY_KIT_ID)?;
-    Ok(with_enemy_kit(tuning(start), remains, rounds))
+    Ok(with_enemy_kit(start, remains, rounds))
 }
 
 /// The level file and the rifle shot sound, each from the highest asset folder holding it.
