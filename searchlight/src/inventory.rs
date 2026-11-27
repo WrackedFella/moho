@@ -3,7 +3,7 @@
 
 use moho_ui_shell::{ActionTarget, ItemList, ItemLists, ListId, RowAction};
 use searchlight_rules::{
-    Item, ItemDef, ItemId, ItemKind, LoadThresholds, Loadout, Magazine, Place, Remains, Source,
+    Item, ItemDef, ItemId, LoadThresholds, Loadout, Magazine, Place, Remains, Source, Worn,
 };
 
 use crate::menu::{MenuAction, item_row};
@@ -40,7 +40,7 @@ pub fn gear_lists<'a>(
     );
     let mut inventory = list(INVENTORY, "Inventory", loadout, None);
     for (row, item) in inventory.rows.iter_mut().zip(loadout.inventory()) {
-        if is_wearable(item, &lookup) {
+        if Worn::of(item, &lookup).is_some() {
             row.actions.push(RowAction {
                 label: "Wear".to_owned(),
                 action: MenuAction::ItemAction(ItemAction::Wear),
@@ -55,15 +55,6 @@ pub fn gear_lists<'a>(
             inventory,
         ],
         back: Some(MenuAction::Back),
-    }
-}
-
-/// Whether `item` is a rig or a backpack by its definition through `lookup`.
-fn is_wearable<'a>(item: &Item, lookup: &impl Fn(&ItemId) -> Option<&'a ItemDef>) -> bool {
-    match item {
-        Item::Rig(id) => matches!(lookup(id).map(|def| &def.kind), Some(ItemKind::Rig(_))),
-        Item::Other(id) => matches!(lookup(id).map(|def| &def.kind), Some(ItemKind::Backpack(_))),
-        _ => false,
     }
 }
 

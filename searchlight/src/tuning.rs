@@ -11,7 +11,7 @@ use searchlight_rules::{
 use moho_core::content::ContentRoots;
 
 use crate::brain::EnemyTuning;
-use crate::kit::{ENEMY_KIT_ID, KitLoadError, load_catalogue, load_enemy_for_grade};
+use crate::kit::{EnemyKits, KitLoadError, ResolvedEnemy, load_catalogue};
 use crate::sim::{CarryConfig, SimConfig};
 
 /// The player's and every target's body: Source's 0.81 m wide, 1.83 m tall capsule, eye at
@@ -195,14 +195,15 @@ fn assemble(
 ) -> Result<SimConfig, KitLoadError> {
     let catalogue = load_catalogue(roots, kit)?;
     let player = crate::player::load(roots)?;
-    let enemy = enemy_kit
-        .map(|enemy_kit| crate::kit::load_enemy(roots, enemy_kit))
-        .transpose()?;
-    // Grades follow the default enemy kit unless the kits define one of their own; a custom
-    // enemy kit is every enemy's remains as it stands.
-    let graded = match (&enemy, enemy_kit) {
-        (Some((default, _)), Some(ENEMY_KIT_ID)) => graded_remains(roots, default)?,
-        _ => BTreeMap::new(),
+    // Grades follow the enemy kit unless the kits define `{enemy_kit}_{grade}`.
+    let (enemy, graded) = match enemy_kit {
+        Some(base) => {
+            let kits = EnemyKits::load(roots)?;
+            let default = kits.resolve(base)?;
+            let graded = graded_remains(&kits, base, &default.0)?;
+            (Some(default), graded)
+        }
+        None => (None, BTreeMap::new()),
     };
     let mut carried = loadout_items(&catalogue.kit.loadout, &catalogue.weapon);
     if let Some((remains, _)) = &enemy {
@@ -225,25 +226,21 @@ fn assemble(
         None => config,
     };
     for (grade, (remains, rounds)) in graded {
-        for (round, stats) in rounds {
-            config.rounds.entry(round).or_insert(stats);
-        }
+        join_rounds(&mut config, rounds);
         config.grade_remains.insert(grade, remains);
     }
     Ok(config)
 }
 
-/// An enemy kit resolved: what it leaves, and the stats of the rounds it names.
-type ResolvedEnemy = (Remains, BTreeMap<ItemId, RoundStats>);
-
 /// What each grade whose kit differs from `default` leaves, with its rounds' stats.
 fn graded_remains(
-    roots: &ContentRoots,
+    kits: &EnemyKits,
+    base: &str,
     default: &Remains,
 ) -> Result<BTreeMap<Grade, ResolvedEnemy>, KitLoadError> {
     let mut graded = BTreeMap::new();
     for grade in Grade::LADDER {
-        let resolved = load_enemy_for_grade(roots, grade)?;
+        let resolved = kits.resolve_for_grade(base, grade)?;
         if resolved.0 != *default {
             graded.insert(grade, resolved);
         }
@@ -251,16 +248,22 @@ fn graded_remains(
     Ok(graded)
 }
 
+/// Joins `rounds` to the round stats of `config`, which the sim flies and scores rounds with,
+/// so a looted round still fires. A round the config already has keeps its stats.
+fn join_rounds(config: &mut SimConfig, rounds: BTreeMap<ItemId, RoundStats>) {
+    for (round, stats) in rounds {
+        config.rounds.entry(round).or_insert(stats);
+    }
+}
+
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
-/// the round stats the sim flies and scores rounds with, so a looted round still fires.
+/// its round stats.
 fn with_enemy(
     mut config: SimConfig,
     remains: Remains,
     rounds: BTreeMap<ItemId, RoundStats>,
 ) -> SimConfig {
-    for (round, stats) in rounds {
-        config.rounds.entry(round).or_insert(stats);
-    }
+    join_rounds(&mut config, rounds);
     config.enemy_remains = remains;
     config
 }

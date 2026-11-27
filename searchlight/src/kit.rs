@@ -30,17 +30,74 @@ pub enum KitLoadError {
 /// The id of the kit every enemy carries and wears.
 pub const ENEMY_KIT_ID: &str = "enemy";
 
+/// An enemy kit resolved: what it leaves, and the stats of the rounds it names.
+pub type ResolvedEnemy = (Remains, BTreeMap<ItemId, RoundStats>);
+
+/// The items and kits of the content `roots`, loaded once, for resolving any number of enemy
+/// kits from them.
+#[derive(Debug)]
+pub struct EnemyKits {
+    items: Definitions<ItemDef>,
+    kits: Definitions<KitDef>,
+}
+
+impl EnemyKits {
+    /// Loads `items` and `kits` through `roots`.
+    ///
+    /// # Errors
+    ///
+    /// [`KitLoadError::Content`] when a file or entry is malformed.
+    pub fn load(roots: &ContentRoots) -> Result<Self, KitLoadError> {
+        Ok(Self {
+            items: load_kind::<ItemDef>(roots, "items")?,
+            kits: load_kind::<KitDef>(roots, "kits")?,
+        })
+    }
+
+    /// The kit `kit` as the gear of a dead enemy, with the ballistics and damage of every round
+    /// it names.
+    ///
+    /// # Errors
+    ///
+    /// As [`load`].
+    pub fn resolve(&self, kit: &str) -> Result<ResolvedEnemy, KitLoadError> {
+        self.kits
+            .require(kit)?
+            .resolve_remains(|id: &ItemId| self.items.get(id.as_str()))
+            .map_err(|source| KitLoadError::Kit {
+                kit: kit.to_owned(),
+                source,
+            })
+    }
+
+    /// [`Self::resolve`] for an enemy of `grade`: the kit `{base}_{grade}` (the grade's
+    /// lower-case name) when the kits define one, else `base`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve`], for the kit that was chosen.
+    pub fn resolve_for_grade(
+        &self,
+        base: &str,
+        grade: Grade,
+    ) -> Result<ResolvedEnemy, KitLoadError> {
+        let own = format!("{base}_{}", grade.name());
+        self.resolve(if self.kits.get(&own).is_some() {
+            &own
+        } else {
+            base
+        })
+    }
+}
+
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit` as the gear of a dead
 /// enemy, with the ballistics and damage of every round it names.
 ///
 /// # Errors
 ///
 /// As [`load`].
-pub fn load_enemy(
-    roots: &ContentRoots,
-    kit: &str,
-) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup)).map(|(enemy, _)| enemy)
+pub fn load_enemy(roots: &ContentRoots, kit: &str) -> Result<ResolvedEnemy, KitLoadError> {
+    EnemyKits::load(roots)?.resolve(kit)
 }
 
 /// [`load_enemy`] for an enemy of `grade`: the kit `enemy_<grade>` (the grade's lower-case name)
@@ -52,15 +109,8 @@ pub fn load_enemy(
 pub fn load_enemy_for_grade(
     roots: &ContentRoots,
     grade: Grade,
-) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    let own = format!("{ENEMY_KIT_ID}_{}", grade.name());
-    let kits = load_kind::<KitDef>(roots, "kits")?;
-    let kit = if kits.get(&own).is_some() {
-        own.as_str()
-    } else {
-        ENEMY_KIT_ID
-    };
-    load_enemy(roots, kit)
+) -> Result<ResolvedEnemy, KitLoadError> {
+    EnemyKits::load(roots)?.resolve_for_grade(ENEMY_KIT_ID, grade)
 }
 
 /// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`,

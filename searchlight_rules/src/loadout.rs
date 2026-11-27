@@ -2,7 +2,7 @@
 //! the inventory of everything else.
 
 use crate::inventory::{Item, MoveRefused, Place, Remains, Source, WearRefused};
-use crate::item::{ItemDef, ItemId, ItemKind};
+use crate::item::{ItemDef, ItemId, ItemKind, RigSpec};
 use crate::magazine::Magazine;
 use crate::rifle::{Rifle, Shot};
 use crate::rig::Rig;
@@ -14,6 +14,39 @@ pub enum Worn {
     Rig,
     /// The backpack was swapped or put on.
     Backpack,
+}
+
+impl Worn {
+    /// What wearing `item` would swap, or `None` when it is not a rig or backpack by its
+    /// definition through `lookup`. [`Loadout::wear`] wears exactly the items this names.
+    pub fn of<'a>(item: &Item, lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>) -> Option<Self> {
+        Gear::of(item, lookup).map(|gear| match gear {
+            Gear::Rig(..) => Self::Rig,
+            Gear::Backpack(_) => Self::Backpack,
+        })
+    }
+}
+
+/// An inventory item that can be worn, with what wearing it needs.
+enum Gear<'i, 'd> {
+    Rig(&'i ItemId, &'d RigSpec),
+    Backpack(&'i ItemId),
+}
+
+impl<'i, 'd> Gear<'i, 'd> {
+    fn of(item: &'i Item, lookup: impl Fn(&ItemId) -> Option<&'d ItemDef>) -> Option<Self> {
+        match item {
+            Item::Rig(id) => match &lookup(id)?.kind {
+                ItemKind::Rig(spec) => Some(Self::Rig(id, spec)),
+                _ => None,
+            },
+            Item::Other(id) => match &lookup(id)?.kind {
+                ItemKind::Backpack(_) => Some(Self::Backpack(id)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
 }
 
 /// A rifle, the rig it reloads from, the backpack worn and the inventory.
@@ -118,7 +151,7 @@ impl Loadout {
     /// Wears the rig or backpack at `from` in the inventory, looking definitions up through
     /// `lookup`. The worn one of its kind goes to `from`; a replaced rig's magazines leave its
     /// slots, in slot order, for the end of the inventory, and the new rig starts empty. With
-    /// no backpack worn, a worn one leaves nothing behind.
+    /// no backpack worn, the inventory entry is removed and nothing goes back.
     ///
     /// # Errors
     ///
@@ -130,12 +163,8 @@ impl Loadout {
         from: usize,
     ) -> Result<Worn, WearRefused> {
         let item = self.inventory.get(from).ok_or(WearRefused::NoSuchItem)?;
-        let kind = |id: &ItemId| lookup(id).map(|def| &def.kind);
-        match item {
-            Item::Rig(id) => {
-                let Some(ItemKind::Rig(spec)) = kind(id) else {
-                    return Err(WearRefused::NotWearable);
-                };
+        match Gear::of(item, lookup).ok_or(WearRefused::NotWearable)? {
+            Gear::Rig(id, spec) => {
                 let new_rig = Rig::new(id.clone(), spec);
                 let mut old_rig = std::mem::replace(&mut self.rig, new_rig);
                 let magazines = old_rig.take_all();
@@ -144,7 +173,7 @@ impl Loadout {
                     .extend(magazines.into_iter().map(Item::Magazine));
                 Ok(Worn::Rig)
             }
-            Item::Other(id) if matches!(kind(id), Some(ItemKind::Backpack(_))) => {
+            Gear::Backpack(id) => {
                 let id = id.clone();
                 match self.backpack.replace(id) {
                     Some(old) => self.inventory[from] = Item::Other(old),
@@ -154,7 +183,6 @@ impl Loadout {
                 }
                 Ok(Worn::Backpack)
             }
-            _ => Err(WearRefused::NotWearable),
         }
     }
 

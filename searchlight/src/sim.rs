@@ -182,6 +182,17 @@ pub struct SimConfig {
     pub carry: CarryConfig,
 }
 
+impl SimConfig {
+    /// What an enemy of `grade` leaves when it dies: its grade's remains, else `enemy_remains`.
+    /// A target with no grade, a dummy, leaves `enemy_remains`.
+    #[must_use]
+    pub fn remains_for(&self, grade: Option<Grade>) -> &Remains {
+        grade
+            .and_then(|grade| self.grade_remains.get(&grade))
+            .unwrap_or(&self.enemy_remains)
+    }
+}
+
 /// The data the player's load and stats resolve from.
 #[derive(Clone, Debug)]
 pub struct CarryConfig {
@@ -1126,10 +1137,10 @@ impl SearchlightSim {
                     number,
                     DeadBody {
                         point: standing_floor(&self.body, centre),
-                        remains: target
-                            .enemy
-                            .and_then(|enemy| self.origin.1.grade_remains.get(&enemy.grade))
-                            .unwrap_or(&self.origin.1.enemy_remains)
+                        remains: self
+                            .origin
+                            .1
+                            .remains_for(target.enemy.map(|enemy| enemy.grade))
                             .clone(),
                         searched: false,
                     },
