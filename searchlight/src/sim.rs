@@ -242,17 +242,24 @@ fn hip_piece(volumes: &[HitVolume; 6]) -> HitVolume {
     let legs = [of(BodyPart::LeftLeg), of(BodyPart::RightLeg)];
     let arms = [of(BodyPart::LeftArm), of(BodyPart::RightArm)];
 
+    // Half the extent of the box's rotated shape along each world axis.
+    let reach = |volume: HitVolume| {
+        let axes = glam::Mat3::from_quat(volume.rotation);
+        let half = volume.half_extents;
+        axes.x_axis.abs() * half.x + axes.y_axis.abs() * half.y + axes.z_axis.abs() * half.z
+    };
+
     let left = legs
         .iter()
-        .map(|leg| leg.offset.x - leg.half_extents.x)
+        .map(|&leg| leg.offset.x - reach(leg).x)
         .fold(f32::INFINITY, f32::min);
     let right = legs
         .iter()
-        .map(|leg| leg.offset.x + leg.half_extents.x)
+        .map(|&leg| leg.offset.x + reach(leg).x)
         .fold(f32::NEG_INFINITY, f32::max);
     let low = legs
         .iter()
-        .map(|leg| leg.offset.y + leg.half_extents.y)
+        .map(|&leg| leg.offset.y + reach(leg).y)
         .chain(bottom_corners(torso).map(|corner| corner.y))
         .fold(f32::INFINITY, f32::min);
     let high = bottom_corners(torso)
@@ -261,8 +268,8 @@ fn hip_piece(volumes: &[HitVolume; 6]) -> HitVolume {
         .fold(f32::NEG_INFINITY, f32::max);
     let half_depth = legs
         .iter()
-        .map(|leg| leg.half_extents.z)
-        .fold(torso.half_extents.z, f32::min)
+        .map(|&leg| reach(leg).z)
+        .fold(reach(torso).z, f32::min)
         - HIP_PIECE_DEPTH_MARGIN;
 
     HitVolume {
