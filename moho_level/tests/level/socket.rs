@@ -1476,3 +1476,46 @@ fn release_under_a_scaled_root_reports_the_unscaled_turn_and_an_unscaled_transfo
         );
     }
 }
+
+#[test]
+fn release_under_an_unevenly_scaled_turned_root_is_rigid() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let before_pose = reload_pose(&models, 114);
+    let now_pose = reload_pose(&models, 115);
+    let root = Affine3A::from_scale_rotation_translation(
+        Vec3::new(2.0, 1.0, 1.0),
+        Quat::from_rotation_y(0.3),
+        Vec3::new(5.0, -2.0, 1.0),
+    );
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
+
+    let released = character
+        .release(
+            &lookup,
+            &["hand_l"],
+            Posed {
+                root,
+                pose: &now_pose,
+            },
+            Posed {
+                root,
+                pose: &before_pose,
+            },
+            TICK,
+        )
+        .expect("hand_l holds the magazine");
+
+    let columns = released.transform.matrix3;
+    for column in [columns.x_axis, columns.y_axis, columns.z_axis] {
+        assert!(
+            (column.length() - 1.0).abs() < 1e-5,
+            "{column} is not a unit axis"
+        );
+    }
+    let rotation = Quat::from_mat3a(&columns);
+    assert!(rotation.is_normalized(), "{rotation} is not normalised");
+}
