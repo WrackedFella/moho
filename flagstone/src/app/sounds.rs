@@ -4,6 +4,9 @@ use std::path::{Path, PathBuf};
 
 use moho_core::assets::{AssetError, AssetRoots};
 
+const CLICK: &str = "audio/ui/button_click.mp3";
+const MENU_MUSIC: &str = "audio/music/menu.ogg";
+
 /// The files flagstone plays: four cues every build ships, and a UI click and menu music a
 /// folder may supply.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,9 +49,6 @@ impl Sounds {
         Self::resolve(&roots).expect("the checkout holds every cue")
     }
 }
-
-const CLICK: &str = "audio/ui/button_click.mp3";
-const MENU_MUSIC: &str = "audio/music/menu.ogg";
 
 /// The file `name` if some folder holds it; `None`, logged with the folders searched, if none
 /// does.
