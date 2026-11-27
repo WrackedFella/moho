@@ -586,6 +586,115 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
+fn modifiers_frame(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
+    render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
+}
+
+/// Shift down, Shift up, Alt down: the release-then-press order that leaks on unfixed code.
+fn press_shift_then_alt(menu: &mut SettingsMenu) {
+    modifiers_frame(menu, egui::Modifiers::SHIFT);
+    modifiers_frame(menu, egui::Modifiers::NONE);
+    modifiers_frame(menu, egui::Modifiers::ALT);
+}
+
+fn all_bindings(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    (0..7)
+        .map(|i| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+fn sprint_pad() -> Binding {
+    Binding::pad(PadInput::Button(PadButton::LeftThumb))
+}
+
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifiers_frame(&mut menu, egui::Modifiers::SHIFT);
+
+    assert_eq!(menu.conflict_modal().conflict_key_name(), "Sprint");
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Shift");
+    assert!(!menu.is_listening());
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    menu.apply_key_while_listening(Key::S);
+
+    assert_eq!(menu.conflict_modal().conflict_key_name(), "Move Back");
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "S");
+    assert!(!menu.is_listening());
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+}
+
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_bindings(&menu);
+    menu.start_listening(0);
+
+    press_shift_then_alt(&mut menu);
+
+    assert!(!menu.is_listening());
+    assert_eq!(all_bindings(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+}
+
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    press_shift_then_alt(&mut menu);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(menu.get_staged_binding(6), [sprint_pad()]);
+    assert!(
+        !all_bindings(&menu)
+            .iter()
+            .flatten()
+            .any(|b| *b == Binding::key(Key::Alt)),
+        "Alt must not be bound"
+    );
+}
+
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_bindings(&menu);
+    menu.start_listening(0);
+    press_shift_then_alt(&mut menu);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(all_bindings(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::key(Key::Shift), sprint_pad()]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
