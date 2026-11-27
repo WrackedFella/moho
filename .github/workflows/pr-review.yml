@@ -499,10 +499,10 @@ jobs:
           ARGS=""
           if [ -n "$PRIOR" ]; then
             [[ $PRIOR =~ ^[0-9]+/[0-9]+$ ]] || { echo "::error::dry_run_prior must be <pr>/<review id>."; exit 1; }
-            mkdir -p "$RUNNER_TEMP/prior"
-            gh api "repos/$GITHUB_REPOSITORY/pulls/${PRIOR%/*}/reviews/${PRIOR#*/}" > "$RUNNER_TEMP/prior/review.json"
-            jq -r .body "$RUNNER_TEMP/prior/review.json" > "$RUNNER_TEMP/prior/review.md"
-            ARGS="--prior $(jq -r .commit_id "$RUNNER_TEMP/prior/review.json") $RUNNER_TEMP/prior/review.md"
+            mkdir -p /tmp/prior
+            gh api "repos/$GITHUB_REPOSITORY/pulls/${PRIOR%/*}/reviews/${PRIOR#*/}" > /tmp/prior/review.json
+            jq -r .body /tmp/prior/review.json > /tmp/prior/review.md
+            ARGS="--prior $(jq -r .commit_id /tmp/prior/review.json) /tmp/prior/review.md"
           fi
           echo "PRIOR_ARGS=$ARGS" >> "$GITHUB_ENV"
           if [ -z "$DEVFLOW_REF" ]; then
@@ -546,7 +546,7 @@ jobs:
             ${{ env.PLUGIN_ARG }}
             --max-turns 150
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, comment, label or file an issue. ${{ env.CRITIC_NOTE }}"
-            --add-dir /home/runner/.claude/plugins/cache /tmp
+            --add-dir /home/runner/.claude/plugins/cache /tmp ${{ runner.temp }}/claude-skills
             --allowedTools "Bash(cd:*),Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-verdict *),Bash(${{ runner.temp }}/claude-skills/plugins/devflow/scripts/pr-facts *),Bash(${{ runner.temp }}/claude-skills/plugins/devflow/scripts/pr-verdict *),Edit,Write,Task,Skill"
       # Also printed to the job log: the log is readable through the REST API, where the
       # Step Summary and artifacts are not reachable from every client.
