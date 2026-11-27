@@ -18,24 +18,32 @@ pub const INVENTORY: ListId = ListId(2);
 /// The body being looted.
 pub const BODY: ListId = ListId(3);
 
-/// The lists of the screen, left to right: equipment, magazine slots and inventory, then the
-/// body's list while `body` is being looted. Escape is back.
+/// The gear screen, left to right: equipment, magazine slots and inventory. Escape is back.
 ///
 /// A row is labelled with its item's id; a magazine's count is its rounds and a stack of
 /// rounds' is its size. The magazine slots list has one row per slot, a free one labelled
-/// [`EMPTY_SLOT`] with no count. The body's list shows its rig, the magazines in the rig (not
-/// its free slots), its backpack, then its carried items.
-pub fn lists(loadout: &Loadout, body: Option<&Remains>) -> ItemLists<MenuAction> {
-    let mut shown = vec![
-        list(EQUIPMENT, "Equipment", loadout, body),
-        list(MAGAZINE_SLOTS, "Magazine slots", loadout, body),
-        list(INVENTORY, "Inventory", loadout, body),
-    ];
-    if body.is_some() {
-        shown.push(list(BODY, "Body", loadout, body));
-    }
+/// [`EMPTY_SLOT`] with no count.
+pub fn gear_lists(loadout: &Loadout) -> ItemLists<MenuAction> {
     ItemLists {
-        lists: shown,
+        lists: vec![
+            list(EQUIPMENT, "Equipment", loadout, None),
+            list(MAGAZINE_SLOTS, "Magazine slots", loadout, None),
+            list(INVENTORY, "Inventory", loadout, None),
+        ],
+        back: Some(MenuAction::Back),
+    }
+}
+
+/// The loot screen, left to right: the player's flat inventory and one container's flat
+/// contents. This is the shape every container takes; today the only one is a dead enemy's
+/// body, whose list shows its rig, the magazines in the rig (not its free slots), its backpack,
+/// then its carried items.
+pub fn loot_lists(loadout: &Loadout, container: &Remains) -> ItemLists<MenuAction> {
+    ItemLists {
+        lists: vec![
+            list(INVENTORY, "Inventory", loadout, Some(container)),
+            list(BODY, "Body", loadout, Some(container)),
+        ],
         back: Some(MenuAction::Back),
     }
 }
@@ -182,16 +190,6 @@ mod tests {
 
     use super::*;
     use crate::test_support::{mag, rifle_from};
-
-    // TEMPORARY test-side stand-ins for the production `gear_lists` and `loot_lists` the
-    // implement step adds; delete them then so the tests reach the real functions.
-    fn gear_lists(loadout: &Loadout) -> ItemLists<MenuAction> {
-        lists(loadout, None)
-    }
-
-    fn loot_lists(loadout: &Loadout, container: &Remains) -> ItemLists<MenuAction> {
-        lists(loadout, Some(container))
-    }
 
     fn bandage() -> Item {
         Item::Other(ItemId::new("bandage"))

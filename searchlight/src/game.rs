@@ -1130,10 +1130,14 @@ impl SearchlightGame {
             || self.stage.shell().console_mut().is_open()
     }
 
-    /// The lists the inventory screen shows: the player's side and, while one is open, the body.
+    /// The lists the inventory screen shows: the loot screen while a body is open, otherwise
+    /// the gear screen.
     fn inventory_lists(&self) -> ItemLists<MenuAction> {
         let sim = self.mode.sim();
-        inventory::lists(sim.loadout(), sim.looted_remains())
+        match sim.looted_remains() {
+            Some(remains) => inventory::loot_lists(sim.loadout(), remains),
+            None => inventory::gear_lists(sim.loadout()),
+        }
     }
 
     /// `command` with the host's levels and the inventory command the screen queued, the parts
@@ -7695,12 +7699,29 @@ mod tests {
     fn a_second_move_before_the_command_is_taken_is_dropped() {
         use crate::inventory::{BODY, INVENTORY};
 
-        let mut game = open_body_screen();
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
+        let (mut game, _clock) = body_screen_carrying_a_magazine_then_a_rag();
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let (body_at, inventory_at) = (position_of(&game, BODY), position_of(&game, INVENTORY));
 
         let focus = move_first_row(&mut game, &mut ctx, 0, BODY, INVENTORY);
-        move_first_row(&mut game, &mut ctx, focus, BODY, INVENTORY);
+        assert_eq!(focus, inventory_at);
+        // The second pick is the body's other row, so a kept-last queue would show it.
+        let to_body = if body_at > inventory_at {
+            Key::ArrowRight
+        } else {
+            Key::ArrowLeft
+        };
+        let back = if body_at > inventory_at {
+            Key::ArrowLeft
+        } else {
+            Key::ArrowRight
+        };
+        tap_keys(
+            &mut game,
+            &mut ctx,
+            &[to_body, Key::ArrowDown, Key::Enter, back, Key::Enter],
+        );
         let first = game.command();
         let second = game.command();
 
@@ -7709,7 +7730,8 @@ mod tests {
             Some(InventoryCommand::Move {
                 from: Source::BodyCarried(0),
                 to: Place::Inventory,
-            })
+            }),
+            "the first pick stays queued"
         );
         assert_eq!(second.inventory, None, "the second pick was dropped");
     }
