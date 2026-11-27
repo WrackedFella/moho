@@ -87,6 +87,20 @@ mod tests {
     }
 
     #[test]
+    fn a_value_spelled_like_the_option_is_taken_verbatim() {
+        let result = split_assets_option(os(&["--assets", "--assets"])).unwrap();
+
+        assert_eq!(result, (Some(PathBuf::from("--assets")), os(&[])));
+    }
+
+    #[test]
+    fn only_the_exact_option_is_read() {
+        let result = split_assets_option(os(&["--assets=dir", "x"])).unwrap();
+
+        assert_eq!(result, (None, os(&["--assets=dir", "x"])));
+    }
+
+    #[test]
     fn option_without_value_is_refused() {
         let alone = split_assets_option(os(&["--assets"]));
         let after_other = split_assets_option(os(&["arena", "--assets"]));

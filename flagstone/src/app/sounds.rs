@@ -246,6 +246,25 @@ mod tests {
     }
 
     #[test]
+    fn folders_named_like_the_optional_files_are_not_files_and_resolve_to_none() {
+        let named = tempfile::tempdir().unwrap();
+        fs::create_dir_all(named.path().join("audio/ui/button_click.mp3")).unwrap();
+        fs::create_dir_all(named.path().join("audio/music/menu.ogg")).unwrap();
+        let roots = placeholders().with_folder(named.path()).unwrap();
+        let mut resolved = None;
+
+        let log = logged(|| resolved = Some(Sounds::resolve(&roots)));
+
+        let sounds = resolved.unwrap().unwrap();
+        assert_eq!(sounds.click, None);
+        assert_eq!(sounds.menu_music, None);
+        for asset in ["button_click.mp3", "menu.ogg"] {
+            let lines = log.lines().filter(|l| l.contains(asset)).count();
+            assert_eq!(lines, 1, "one line for {asset}: {log}");
+        }
+    }
+
+    #[test]
     fn absent_click_and_music_are_none_and_logged() {
         let named = folder_with(&["unrelated.txt"]);
         let roots = placeholders().with_folder(named.path()).unwrap();

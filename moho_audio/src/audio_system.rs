@@ -379,6 +379,29 @@ mod tests {
     }
 
     #[test]
+    fn a_click_missing_from_the_cache_and_disk_is_an_error_and_plays_nothing() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let click = dir.path().join("gone.mp3");
+        let output = RecordingOutput::default();
+        let mut system = AudioSystem::with_output(
+            output.clone(),
+            AudioCache::seeded(&[], &[]),
+            Some(click.clone()),
+        );
+        system.set_settings(full_volume());
+
+        let result = system.handle_event(AudioEvent::ButtonClick);
+
+        match result {
+            Err(AudioError::FileNotFound(message)) => {
+                assert!(message.contains(&click.display().to_string()), "{message}");
+            }
+            other => panic!("expected FileNotFound, got {other:?}"),
+        }
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
     fn without_a_click_ui_events_are_silent() {
         let events = [
             AudioEvent::ButtonClick,
