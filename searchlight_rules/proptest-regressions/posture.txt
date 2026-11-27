@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8722397f92b4c918482405ed26656aad336b47d18db295fb48f002a393621549 # shrinks to tuning = LeanTuning { shift: 0.35, roll: 0.20943952, blend_seconds: 0.05, speed_factor: 0.5 }, dt = 0.001, from_left = false
