@@ -3381,6 +3381,77 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_hip_piece_follows_legs_that_are_rotated() {
+        let mut volumes = player_hit_volumes();
+        for part in [BodyPart::LeftLeg, BodyPart::RightLeg] {
+            let slot = BodyPart::ALL
+                .iter()
+                .position(|&p| p == part)
+                .expect("BodyPart::ALL lists every part");
+            volumes[slot].rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        }
+        let legs = [
+            volume_of(&volumes, BodyPart::LeftLeg),
+            volume_of(&volumes, BodyPart::RightLeg),
+        ];
+        let corners = |leg: HitVolume| {
+            let half = leg.half_extents;
+            [-1.0_f32, 1.0]
+                .into_iter()
+                .flat_map(move |x| {
+                    [-1.0_f32, 1.0].into_iter().flat_map(move |y| {
+                        [-1.0_f32, 1.0].into_iter().map(move |z| {
+                            leg.offset
+                                + leg.rotation * Vec3::new(x * half.x, y * half.y, z * half.z)
+                        })
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let top_of = |leg: HitVolume| corners(leg).iter().map(|c| c.y).fold(f32::MIN, f32::max);
+        let thickness_of = |leg: HitVolume| {
+            corners(leg)
+                .iter()
+                .map(|c| (c.z - leg.offset.z).abs())
+                .fold(f32::MIN, f32::max)
+        };
+        let outer_left = legs
+            .iter()
+            .flat_map(|&leg| corners(leg))
+            .map(|c| c.x)
+            .fold(f32::MAX, f32::min);
+        let outer_right = legs
+            .iter()
+            .flat_map(|&leg| corners(leg))
+            .map(|c| c.x)
+            .fold(f32::MIN, f32::max);
+        let lowest_top = legs.iter().map(|&leg| top_of(leg)).fold(f32::MAX, f32::min);
+        let thinnest = legs
+            .iter()
+            .map(|&leg| thickness_of(leg))
+            .fold(f32::MAX, f32::min);
+        let tolerance = 1e-4;
+
+        let piece = hip_piece(&volumes);
+
+        assert!(
+            piece.offset.y - piece.half_extents.y <= lowest_top + tolerance,
+            "the piece starts at {} but the rotated legs end at {lowest_top}: {piece:?}",
+            piece.offset.y - piece.half_extents.y
+        );
+        assert!(
+            piece.offset.x - piece.half_extents.x <= outer_left + tolerance
+                && piece.offset.x + piece.half_extents.x >= outer_right - tolerance,
+            "the piece does not span the legs' x edges {outer_left}..{outer_right}: {piece:?}"
+        );
+        assert!(
+            piece.half_extents.z <= thinnest + tolerance,
+            "the piece is {} deep but the legs are only {thinnest} thick: {piece:?}",
+            piece.half_extents.z
+        );
+    }
+
     fn first_enemy_claim(sim: &SearchlightSim) -> Option<usize> {
         sim.targets[sim.dummy_count]
             .enemy
