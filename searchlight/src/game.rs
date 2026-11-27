@@ -29,6 +29,7 @@ use moho_ui_shell::{
     apply_engine_settings,
 };
 
+use crate::arena::ArenaControl;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -96,6 +97,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +117,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -510,6 +513,9 @@ impl Stage {
             );
         }
     }
+
+    /// Draws each of `controls` as a post in [`Paint::Control`], under its own mesh id.
+    fn add_controls(&mut self, _controls: &[ArenaControl]) {}
 
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
         if let Some(text) = hud::status_text(feedback) {
@@ -956,6 +962,14 @@ impl SearchlightGame {
         self.stage.body = *self.mode.sim().character_body();
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
+        self
+    }
+
+    /// Draws `controls` as posts and names the action of the one the player looks at in the
+    /// prompt.
+    #[must_use]
+    pub fn with_controls(mut self, controls: &[ArenaControl]) -> Self {
+        self.stage.add_controls(controls);
         self
     }
 
@@ -5340,5 +5354,296 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+
+    fn post_at(at: Vec3) -> ArenaControl {
+        ArenaControl {
+            action: crate::control::ControlAction::NextWave,
+            mesh: crate::test_support::control_post(at),
+        }
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let sim = lone_enemy();
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        stage.add_arena(
+            vec![
+                box_mesh(Vec3::new(0.0, -0.5, 0.0), Vec3::new(30.0, 0.5, 30.0)),
+                box_mesh(Vec3::new(10.0, 1.0, 0.0), Vec3::ONE),
+            ],
+            &[Vec3::new(-8.0, 0.0, 4.0)],
+        );
+        let posts = [Vec3::new(2.0, 0.0, 3.0), Vec3::new(-2.0, 0.0, 3.0)];
+        stage.add_controls(&posts.map(post_at));
+
+        let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(
+            drawn.len(),
+            2 + 6 + 2 + 7,
+            "arena, dummy, post and enemy boxes"
+        );
+        for post in posts {
+            let centre = post + Vec3::new(0.0, 0.6, 0.0);
+            assert!(
+                drawn
+                    .iter()
+                    .any(|(at, half, _)| at.abs_diff_eq(centre, 1e-4)
+                        && half.abs_diff_eq(Vec3::new(0.2, 0.6, 0.2), 1e-4)),
+                "no post drawn at {centre:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_control_draws_in_its_own_paint() {
+        let post = Vec3::new(2.0, 0.0, 3.0);
+        let mut stage = Stage::new();
+        stage.add_arena(
+            vec![box_mesh(
+                Vec3::new(0.0, -0.5, 0.0),
+                Vec3::new(30.0, 0.5, 30.0),
+            )],
+            &[],
+        );
+        stage.add_controls(&[post_at(post)]);
+        let mut renderer = RecordingRenderer::default();
+
+        stage.draw(&mut renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        let drawn = renderer.drawn();
+
+        let post_draw = drawn
+            .iter()
+            .find(|(at, _, _)| at.abs_diff_eq(post + Vec3::new(0.0, 0.6, 0.0), 1e-4))
+            .expect("the post is drawn");
+        assert!(is_paint(post_draw.2, Paint::Control));
+        let (control, arena) = (Paint::Control.to_gpu(), Paint::Arena.to_gpu());
+        assert_ne!(
+            (control.albedo, control.params),
+            (arena.albedo, arena.params)
+        );
+        let floor = drawn
+            .iter()
+            .find(|(at, _, _)| at.abs_diff_eq(Vec3::new(0.0, -0.5, 0.0), 1e-4))
+            .expect("the floor is drawn");
+        assert!(is_paint(floor.2, Paint::Arena));
+    }
+}
+
+#[cfg(test)]
+mod use_prompt_tests {
+    use std::time::Duration;
+
+    use moho_app::GameClock;
+    use moho_input::Action;
+    use moho_input::bindings::{ActionBindings, Binding};
+    use moho_physics::CharacterCommand;
+    use moho_ui_shell::{Anchor, ScreenText};
+
+    use super::*;
+    use crate::arena::Arena;
+    use crate::control::ControlAction;
+    use crate::test_support::{
+        BUTTON_AT, arena_with, lower_eye_to_the_post, mag, rifle_from, test_config, wave_tuning,
+        with_controls,
+    };
+
+    fn arena_of(controls: &[(ControlAction, Vec3)]) -> Arc<Arena> {
+        with_controls(arena_with(&[], Vec3::ZERO, &[], &[]), controls)
+    }
+
+    fn game_over(
+        arena: Arc<Arena>,
+        bindings: ActionBindings<SearchlightAction>,
+    ) -> SearchlightGame {
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        lower_eye_to_the_post(&mut config);
+        let mode = ArenaMode::new(arena.clone(), config, wave_tuning(1));
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0)).with_controls(&arena.controls)
+    }
+
+    fn default_bindings() -> ActionBindings<SearchlightAction> {
+        ActionBindings::load(&BTreeMap::new()).0
+    }
+
+    /// A game whose player at the origin looks at a next-wave button a metre and a half ahead.
+    fn game_with_button() -> SearchlightGame {
+        game_over(
+            arena_of(&[(ControlAction::NextWave, BUTTON_AT)]),
+            default_bindings(),
+        )
+    }
+
+    /// The same game with no control in the arena.
+    fn game_without_button() -> SearchlightGame {
+        game_over(arena_of(&[]), default_bindings())
+    }
+
+    fn tick(game: &mut SearchlightGame, command: &SearchlightCommand) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(1.0 / 60.0),
+            clock: &mut clock,
+        };
+        game.tick(&mut ctx, command);
+    }
+
+    fn frame(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, None, None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    /// The vertices the shell paints for the text the last frame set, `None` when it paints
+    /// no frame at all.
+    fn painted_text(game: &SearchlightGame) -> Option<usize> {
+        let frame = game.stage.shell().ui_frame([1280, 720]);
+        frame.map(|frame| frame.meshes.iter().map(|m| m.vertices.len()).sum())
+    }
+
+    /// One frame, then what the shell paints.
+    fn drawn_text(game: &mut SearchlightGame) -> Option<usize> {
+        frame(game);
+        painted_text(game)
+    }
+
+    /// The vertices a shell paints for `text`: the same glyphs give the same count wherever
+    /// they are placed.
+    fn vertices_of(text: &str) -> Option<usize> {
+        let mut shell = UiShell::<ConsoleCommand, MenuAction>::new(
+            console_commands::console(&BTreeMap::new()).0,
+        );
+        shell
+            .set_texts(vec![ScreenText {
+                text: text.to_owned(),
+                anchor: Anchor::Center,
+                offset: [0.0, 40.0],
+                size: 20.0,
+                color: [255, 255, 255, 255],
+            }])
+            .expect("a valid text");
+        shell
+            .ui_frame([1280, 720])
+            .map(|frame| frame.meshes.iter().map(|m| m.vertices.len()).sum())
+    }
+
+    fn turned_away() -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: std::f32::consts::FRAC_PI_2,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = game_with_button();
+        let key = SearchlightAction::Use.default_bindings()[0].label();
+
+        let shown = drawn_text(&mut game);
+
+        let expected = vertices_of(&hud::use_prompt(&key, "Next wave"));
+        assert!(expected.is_some_and(|count| count > 0), "{expected:?}");
+        assert_eq!(shown, expected);
+        assert_ne!(shown, vertices_of(&hud::use_prompt(&key, "Use")));
+        assert_eq!(drawn_text(&mut game_without_button()), None);
+    }
+
+    #[test]
+    fn the_prompt_names_the_first_use_binding() {
+        let saved = BTreeMap::from([("use".to_owned(), "Backspace".to_owned())]);
+        let (bindings, warnings) = ActionBindings::load(&saved);
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Use),
+            [Binding::key(Key::Backspace)]
+        );
+        let mut rebound = game_over(arena_of(&[(ControlAction::NextWave, BUTTON_AT)]), bindings);
+        let mut default = game_with_button();
+
+        let (rebound_text, default_text) = (drawn_text(&mut rebound), drawn_text(&mut default));
+
+        let label = Binding::key(Key::Backspace).label();
+        assert_eq!(
+            rebound_text,
+            vertices_of(&hud::use_prompt(&label, "Next wave"))
+        );
+        assert_ne!(rebound_text, default_text);
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_with_button();
+        assert!(drawn_text(&mut game).is_some(), "the prompt shows first");
+        frame(&mut game);
+        tick(&mut game, &turned_away());
+
+        let after = drawn_text(&mut game);
+
+        assert_eq!(after, None);
+    }
+
+    #[test]
+    fn a_prompt_set_for_a_frame_the_renderer_skipped_does_not_outlive_the_look() {
+        let mut game = game_with_button();
+        frame(&mut game);
+        tick(&mut game, &turned_away());
+
+        frame(&mut game);
+
+        assert_eq!(painted_text(&game), None);
+    }
+
+    #[test]
+    fn no_prompt_when_out_of_reach() {
+        let mut game = game_with_button();
+        assert!(drawn_text(&mut game).is_some(), "the prompt shows first");
+        let back = SearchlightCommand {
+            movement: CharacterCommand {
+                forward: -1.0,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+
+        for _ in 0..60 {
+            tick(&mut game, &back);
+        }
+
+        assert_eq!(drawn_text(&mut game), None);
+    }
+
+    /// Puts a game with the button in reach and one without into `state`, and checks the
+    /// first shows what the second does.
+    fn assert_no_prompt_in(what: &str, state: impl Fn(&mut SearchlightGame)) {
+        let (mut with, mut without) = (game_with_button(), game_without_button());
+        let prompted = drawn_text(&mut with);
+        let bare = drawn_text(&mut without);
+        state(&mut with);
+        state(&mut without);
+
+        let (with_state, without_state) = (drawn_text(&mut with), drawn_text(&mut without));
+
+        assert_ne!(prompted, bare, "the fixture shows no prompt while playing");
+        assert_eq!(with_state, without_state, "{what}: the prompt shows");
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        assert_no_prompt_in("dead", |game| game.mode.sim_mut().kill_player());
+        assert_no_prompt_in("paused", SearchlightGame::pause);
+    }
+
+    #[test]
+    fn no_prompt_on_the_main_menu() {
+        assert_no_prompt_in("main menu", |game| {
+            game.screen = Screen::MainMenu;
+            game.stage.shell().menu_mut().push(main_screen());
+        });
     }
 }

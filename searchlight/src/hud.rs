@@ -110,6 +110,11 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
 }
 
+/// The prompt for a control in reach: the use `key` in brackets, then what using it does.
+pub fn use_prompt(_key: &str, _action: &str) -> String {
+    String::new()
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -301,6 +306,28 @@ mod feedback_tests {
         assert!(dead.rgba[3] > 0 && dead.rgba[3] < 255, "{dead:?}");
         assert_eq!(death_text(false), None);
         assert_eq!(death_text(true), Some("Dead - press F8 to restart"));
+    }
+}
+
+#[cfg(test)]
+mod use_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let prompt = use_prompt("F", "Next wave");
+
+        assert_eq!(prompt, "[F] Next wave");
+    }
+
+    #[test]
+    fn the_use_prompt_shows_whatever_key_and_action_it_is_given() {
+        assert_eq!(
+            use_prompt("Mouse Left", "Next wave"),
+            "[Mouse Left] Next wave"
+        );
+        assert_eq!(use_prompt("unbound", "Next wave"), "[unbound] Next wave");
+        assert_eq!(use_prompt("F", "Open door"), "[F] Open door");
     }
 }
 

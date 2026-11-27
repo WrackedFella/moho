@@ -16,11 +16,12 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
-use crate::input::SearchlightAction;
+use crate::control::ControlAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{STAND_HEIGHT, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -241,7 +242,50 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls: Vec::new(),
     })
+}
+
+/// Where the tests put a control: a metre and a half ahead of a player at the origin.
+pub(crate) const BUTTON_AT: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+/// The height of the eye `lower_eye_to_the_post` sets, within a control post's 1.2 m.
+const EYE_AT_THE_POST: f32 = 1.0;
+
+/// A control post standing on the floor point `at`: 0.4 m square and 1.2 m tall.
+pub(crate) fn control_post(at: Vec3) -> WorldMesh {
+    box_mesh(
+        at + Vec3::new(-0.2, 0.0, -0.2),
+        at + Vec3::new(0.2, 1.2, 0.2),
+    )
+}
+
+/// `arena` with a post for each of `controls`, in order, each doing the action it is paired
+/// with. The navmesh is left as `arena` had it.
+pub(crate) fn with_controls(arena: Arc<Arena>, controls: &[(ControlAction, Vec3)]) -> Arc<Arena> {
+    let mut arena = Arc::unwrap_or_clone(arena);
+    arena.controls = controls
+        .iter()
+        .map(|&(action, at)| ArenaControl {
+            action,
+            mesh: control_post(at),
+        })
+        .collect();
+    Arc::new(arena)
+}
+
+/// Puts `config`'s eye 1 m above the feet, so a player standing at the origin and looking
+/// along +Z looks into a control post that stands ahead of them.
+pub(crate) fn lower_eye_to_the_post(config: &mut SimConfig) {
+    set_eye_above_centre(config, EYE_AT_THE_POST - STAND_HEIGHT);
+}
+
+/// A command whose only content is that the use input went down.
+pub(crate) fn pressing_use() -> SearchlightCommand {
+    SearchlightCommand {
+        use_pressed: true,
+        ..SearchlightCommand::default()
+    }
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

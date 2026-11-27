@@ -251,6 +251,9 @@ fn next_signed(rng: &mut SimRng) -> f32 {
     rng.next_f32() * 2.0 - 1.0
 }
 
+/// How far from the eye, in metres, the player can use a control.
+pub const USE_REACH: f32 = 2.0;
+
 /// The world, the player, the rifle, the dummies and the enemies.
 #[derive(Debug)]
 pub struct SearchlightSim {
@@ -856,6 +859,12 @@ impl SearchlightSim {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
+    /// The control the player is looking at within [`USE_REACH`], by its index in the arena's
+    /// controls; `None` while dead, or when a wall or body is in front of it.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        None
+    }
+
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
@@ -1071,7 +1080,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -5331,5 +5342,244 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    use moho_physics::CharacterCommand;
+    use searchlight_rules::LeanSide;
+
+    use super::*;
+    use crate::control::ControlAction;
+    use crate::test_support::{
+        BUTTON_AT, DT, arena_with, lower_eye_to_the_post, mag, rifle_from, test_config,
+        with_controls,
+    };
+
+    fn config() -> SimConfig {
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        lower_eye_to_the_post(&mut config);
+        config
+    }
+
+    /// An arena of `boxes` and `dummies` with a control post at each of `posts`.
+    fn arena_of(boxes: &[(Vec3, Vec3)], dummies: &[Vec3], posts: &[Vec3]) -> Arc<Arena> {
+        let controls: Vec<(ControlAction, Vec3)> = posts
+            .iter()
+            .map(|&at| (ControlAction::NextWave, at))
+            .collect();
+        let mut arena = Arc::unwrap_or_clone(with_controls(
+            arena_with(boxes, Vec3::ZERO, &[], &[]),
+            &controls,
+        ));
+        arena.dummy_spawns = dummies.to_vec();
+        Arc::new(arena)
+    }
+
+    /// A player at the origin looking along +Z, eye 1 m up, with a post at each of `posts`.
+    fn sim_with_posts(posts: &[Vec3]) -> SearchlightSim {
+        SearchlightSim::start(arena_of(&[], &[], posts), config())
+    }
+
+    fn turn(sim: &mut SearchlightSim, yaw_delta: f32, pitch_delta: f32) {
+        let command = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta,
+                pitch_delta,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&command, DT);
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let sim = sim_with_posts(&[BUTTON_AT]);
+
+        let found = sim.control_in_reach();
+
+        assert_eq!(found, Some(0));
+    }
+
+    #[test]
+    fn the_control_found_is_named_by_its_index_among_the_arenas_controls() {
+        let sim = sim_with_posts(&[
+            Vec3::new(6.0, 0.0, 6.0),
+            BUTTON_AT,
+            Vec3::new(-6.0, 0.0, 6.0),
+        ]);
+
+        let found = sim.control_in_reach();
+
+        assert_eq!(found, Some(1));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let looks = [
+            ("left", FRAC_PI_2, 0.0),
+            ("right", -FRAC_PI_2, 0.0),
+            ("behind", PI, 0.0),
+            ("up", 0.0, 1.0),
+            ("down", 0.0, -1.0),
+        ];
+
+        for (name, yaw, pitch) in looks {
+            let mut sim = sim_with_posts(&[BUTTON_AT]);
+            assert_eq!(sim.control_in_reach(), Some(0), "{name}: before turning");
+
+            turn(&mut sim, yaw, pitch);
+
+            assert_eq!(sim.control_in_reach(), None, "looking {name}");
+        }
+    }
+
+    #[test]
+    fn turning_back_to_a_control_finds_it_again() {
+        let mut sim = sim_with_posts(&[BUTTON_AT]);
+        assert_eq!(sim.control_in_reach(), Some(0));
+        turn(&mut sim, FRAC_PI_2, 0.0);
+        assert_eq!(sim.control_in_reach(), None);
+
+        turn(&mut sim, -FRAC_PI_2, 0.0);
+
+        assert_eq!(sim.control_in_reach(), Some(0));
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        // The post's near face is 0.2 m short of its centre.
+        let centres = [(2.1, Some(0)), (2.3, None), (4.0, None), (12.0, None)];
+
+        for (z, expected) in centres {
+            let sim = sim_with_posts(&[Vec3::new(0.0, 0.0, z)]);
+
+            let found = sim.control_in_reach();
+
+            assert_eq!(found, expected, "post centre {z} m ahead");
+        }
+        assert_eq!(USE_REACH, 2.0);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let wall = [(Vec3::new(-2.0, 0.0, 0.9), Vec3::new(2.0, 3.0, 1.0))];
+        let open = SearchlightSim::start(arena_of(&[], &[], &[BUTTON_AT]), config());
+        let walled = SearchlightSim::start(arena_of(&wall, &[], &[BUTTON_AT]), config());
+
+        let (without, with) = (open.control_in_reach(), walled.control_in_reach());
+
+        assert_eq!(without, Some(0), "the post is in reach without the wall");
+        assert_eq!(with, None);
+    }
+
+    #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        let post = [Vec3::new(0.0, 0.0, 1.9)];
+        let open = SearchlightSim::start(arena_of(&[], &[], &post), config());
+        let screened =
+            SearchlightSim::start(arena_of(&[], &[Vec3::new(0.0, 0.0, 1.0)], &post), config());
+
+        let (without, with) = (open.control_in_reach(), screened.control_in_reach());
+
+        assert_eq!(without, Some(0), "the post is in reach without the dummy");
+        assert_eq!(with, None);
+    }
+
+    #[test]
+    fn a_control_is_not_found_while_the_player_is_dead() {
+        let mut sim = sim_with_posts(&[BUTTON_AT]);
+        assert_eq!(sim.control_in_reach(), Some(0));
+
+        sim.kill_player();
+
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_control_is_found_again_after_a_restart() {
+        let mut sim = sim_with_posts(&[BUTTON_AT]);
+        assert_eq!(sim.control_in_reach(), Some(0));
+        sim.kill_player();
+        let restart = SearchlightCommand {
+            restart: true,
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&restart, DT);
+
+        assert_eq!(sim.control_in_reach(), Some(0));
+    }
+
+    #[test]
+    fn the_reach_is_measured_from_the_leaned_eye() {
+        // Posts 0.35 m either side of straight ahead: a full lean puts the eye in front of one.
+        let posts = [Vec3::new(0.35, 0.0, 1.5), Vec3::new(-0.35, 0.0, 1.5)];
+        let upright = sim_with_posts(&posts);
+        let lean = |side| {
+            let mut sim = sim_with_posts(&posts);
+            let command = SearchlightCommand {
+                lean: Some(side),
+                ..SearchlightCommand::default()
+            };
+            for _ in 0..40 {
+                sim.tick(&command, DT);
+            }
+            sim.control_in_reach()
+        };
+
+        let (left, right) = (lean(LeanSide::Left), lean(LeanSide::Right));
+
+        assert_eq!(upright.control_in_reach(), None, "straight ahead is a gap");
+        assert!(left.is_some() && right.is_some(), "{left:?} {right:?}");
+        assert_ne!(left, right);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let arena = arena_of(&[], &[Vec3::new(0.0, 0.0, 4.0)], &[BUTTON_AT]);
+        let mut sim = SearchlightSim::start(arena, config());
+        assert_eq!(sim.control_in_reach(), Some(0));
+        let pull = SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&pull, DT);
+
+        assert_eq!(sim.drain_feedback(), [Feedback::Fired]);
+        let dummy = sim.dummy_body(0).expect("the dummy stands behind the post");
+        assert_eq!(dummy.health(), 100, "the post did not stop the shot");
+        assert_eq!(sim.kills(), 0);
+        assert!(!sim.player_body().is_dead());
+    }
+
+    #[test]
+    fn a_post_off_the_line_of_fire_does_not_stop_a_shot() {
+        let arena = arena_of(
+            &[],
+            &[Vec3::new(0.0, 0.0, 4.0)],
+            &[Vec3::new(3.0, 0.0, 1.5)],
+        );
+        let mut sim = SearchlightSim::start(arena, config());
+        let pull = SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&pull, DT);
+
+        let feedback = sim.drain_feedback();
+        assert!(
+            feedback
+                .iter()
+                .any(|f| matches!(f, Feedback::Hit { target: 0, .. })),
+            "{feedback:?}"
+        );
+        assert_eq!(sim.control_in_reach(), None);
     }
 }
