@@ -4,6 +4,7 @@
 pub mod aim;
 pub mod arena;
 pub mod brain;
+pub mod character;
 pub mod console_commands;
 pub mod control;
 pub mod controls;
@@ -21,6 +22,7 @@ pub mod levels;
 pub mod menu;
 pub mod menu_feed;
 pub mod mode;
+pub mod player;
 pub mod round;
 pub mod shot;
 pub mod sim;

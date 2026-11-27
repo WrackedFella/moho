@@ -1,10 +1,10 @@
 //! The inventory screen's data: the lists the shell draws, built from what the sim holds. The
 //! screen only shows and asks; the sim owns the items and applies every move.
 
-use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
-use searchlight_rules::{Item, Loadout, Magazine, Place, Remains, Source};
+use moho_ui_shell::{ItemList, ItemLists, ListId};
+use searchlight_rules::{Item, LoadThresholds, Loadout, Magazine, Place, Remains, Source};
 
-use crate::menu::MenuAction;
+use crate::menu::{MenuAction, item_row};
 
 /// The label of a magazine slot with no magazine in it.
 pub const EMPTY_SLOT: &str = "(empty)";
@@ -69,6 +69,28 @@ pub fn place_of(list: ListId) -> Option<Place> {
         MAGAZINE_SLOTS => Some(Place::MagazineSlots),
         BODY => Some(Place::Body),
         _ => None,
+    }
+}
+
+/// The load line above the inventory: carried kilograms against capacity, and where each
+/// threshold falls on that scale.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoadHeader {
+    /// "20.0 of 30.0 kg".
+    pub text: String,
+    /// The load in kilograms at which the player is slowed, cannot sprint and cannot move.
+    pub marks: [f32; 3],
+}
+
+/// The header for `load_kg` carried against `capacity_kg`, with the marks of `thresholds`.
+pub fn load_header(load_kg: f32, capacity_kg: f32, thresholds: &LoadThresholds) -> LoadHeader {
+    LoadHeader {
+        text: format!("{load_kg:.1} of {capacity_kg:.1} kg"),
+        marks: [
+            thresholds.slowed * capacity_kg,
+            thresholds.no_sprint * capacity_kg,
+            thresholds.cannot_move * capacity_kg,
+        ],
     }
 }
 
@@ -169,13 +191,7 @@ fn list(
     let rows = entries(id, loadout, body)
         .into_iter()
         .enumerate()
-        .map(|(row, entry)| ListRow {
-            label: entry.label,
-            count: entry.count,
-            tooltip: None,
-            item: MenuAction::Item(u32::try_from(row).expect("a list has fewer than 2^32 rows")),
-            actions: Vec::new(),
-        })
+        .map(|(row, entry)| item_row(row, entry.label, entry.count))
         .collect();
     ItemList {
         id,
@@ -540,5 +556,27 @@ mod tests {
 
         assert_eq!(titles(&shown), ["Inventory", "Body"]);
         assert!(labels(&shown, BODY).is_empty());
+    }
+
+    const THRESHOLDS: LoadThresholds = LoadThresholds {
+        slowed: 0.6,
+        no_sprint: 0.8,
+        cannot_move: 1.0,
+    };
+
+    #[test]
+    fn the_header_reads_20_of_30_kg_with_three_marks() {
+        let header = load_header(20.0, 30.0, &THRESHOLDS);
+
+        assert_eq!(header.text, "20.0 of 30.0 kg");
+        assert_eq!(header.marks, [18.0, 24.0, 30.0]);
+    }
+
+    #[test]
+    fn the_marks_move_with_the_capacity_and_the_text_rounds_to_a_tenth() {
+        let header = load_header(19.96, 40.0, &THRESHOLDS);
+
+        assert_eq!(header.text, "20.0 of 40.0 kg");
+        assert_eq!(header.marks, [24.0, 32.0, 40.0]);
     }
 }
