@@ -5233,6 +5233,54 @@ mod tests {
     }
 
     #[test]
+    fn a_red_player_holding_a_lean_covers_no_ground_and_lists_both_scales() {
+        let mut sim = load_sim(30.0);
+        let start = sim.player().position;
+
+        hold(&mut sim, &walking(Some(LeanSide::Left)), 60);
+
+        let end = sim.player().position;
+        let moved = Vec3::new(end.x - start.x, 0.0, end.z - start.z).length();
+        assert!(moved < 0.01, "a red, leaning player moved {moved} m");
+        assert_eq!(
+            movement_speed(&sim, SourceLabel::Load),
+            [Verb::Cap(0.0)],
+            "the load cap is listed"
+        );
+        assert_eq!(
+            movement_speed(&sim, SourceLabel::Stance),
+            [Verb::Scale(0.5)],
+            "the stance scale is listed"
+        );
+        assert_eq!(sim.stat(Stat::MovementSpeed), 0.0);
+    }
+
+    #[test]
+    fn a_player_who_looted_a_heavy_item_restarts_at_the_start_kit_load() {
+        let mut config = loot_config(Remains {
+            carried: vec![Item::Other(ItemId::new("loot"))],
+            ..Remains::default()
+        });
+        config
+            .carry
+            .items
+            .insert(ItemId::new("loot"), weighing(20.0));
+        let mut sim = looting_sim(config);
+        sim.tick(&taking_the_first_item(), DT);
+        sim.tick(&idle(), DT);
+        let slowed = sim.load_state();
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+        sim.tick(&restart_now(), DT);
+
+        assert_eq!(slowed, LoadState::Slowed);
+        assert_eq!(sim.load_kg(), 0.0);
+        assert_eq!(sim.load_state(), LoadState::Fine);
+        assert_eq!(movement_speed(&sim, SourceLabel::Load), []);
+    }
+
+    #[test]
     fn a_dead_enemy_leaves_a_body_at_its_floor_point() {
         let markers = [BODY_AT, Vec3::new(4.0, 0.0, 6.0)];
         let arena = arena_with(&[], Vec3::ZERO, &markers, &[Vec3::new(0.0, 0.0, 10.0)]);

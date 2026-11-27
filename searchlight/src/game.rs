@@ -7689,6 +7689,183 @@ mod tests {
         );
     }
 
+    fn key_press(game: &mut SearchlightGame, key: Key) -> Routing {
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let routing = game.route_input(&mut ctx, Input::Key(key), true, false);
+        game.route_input(&mut ctx, Input::Key(key), false, false);
+        routing
+    }
+
+    fn advance_a_frame(game: &mut SearchlightGame) {
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(game, Duration::ZERO);
+    }
+
+    /// The row labels of the list titled `title` on the top screen.
+    fn rows_of(game: &SearchlightGame, title: &str) -> Vec<String> {
+        let mut shell = game.stage.shell();
+        shell
+            .menu_mut()
+            .top_lists()
+            .and_then(|screen| screen.lists.iter().find(|list| list.title == title))
+            .map(|list| list.rows.iter().map(|row| row.label.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn typing_k_into_the_console_does_not_open_the_character_screen() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+
+        let routing = key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+
+        assert_eq!(routing, Routing::Console);
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(game.stage.shell().menu_mut().top_lists().is_none());
+    }
+
+    #[test]
+    fn the_character_key_does_nothing_while_paused() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+
+        assert_eq!(game.screen, Screen::Paused);
+        assert!(game.stage.shell().menu_mut().top_lists().is_none());
+    }
+
+    #[test]
+    fn the_character_key_does_nothing_while_dead() {
+        let (mut game, mut clock) = game_beside_a_body();
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        assert!(game.sim().player_body().is_dead());
+
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!game.stage.shell().menu_mut().is_open());
+    }
+
+    #[test]
+    fn dying_with_the_character_screen_open_closes_it() {
+        let (mut game, mut clock) = game_beside_a_body();
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+        assert_eq!(game.screen, Screen::Character);
+
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        advance_a_frame(&mut game);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!game.stage.shell().menu_mut().is_open());
+    }
+
+    #[test]
+    fn an_open_character_screen_sends_no_movement_fire_or_look_but_keeps_the_host_levels() {
+        let mut game = game();
+        game.god_mode = true;
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::K), true, false);
+        assert_eq!(game.screen, Screen::Character);
+
+        press(game.input_mut(), SearchlightAction::Fire);
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 0.0);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert!(!command.fire);
+        assert!(command.god_mode);
+    }
+
+    /// Like [`game_beside_a_body`], with the player carrying `kg` of ballast.
+    fn game_beside_a_body_carrying(kg: f32) -> (SearchlightGame, GameClock) {
+        let mut config =
+            crate::test_support::carrying(test_config(rifle_from(mag(30, 30)), vec![]), kg);
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_remains = Remains::default();
+        let body_at = Vec3::new(0.0, 0.0, 1.5);
+        let arena = arena_with(&[], Vec3::ZERO, &[body_at], &[Vec3::new(0.0, 0.0, 10.0)]);
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        game.mode.sim_mut().kill_enemy(0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let pitch = (game.sim().eye_height() - 0.3).atan2(body_at.z);
+        let look = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                pitch_delta: -pitch,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &look);
+        game.mode.drain_feedback();
+        (game, clock)
+    }
+
+    #[test]
+    fn the_character_screen_drops_the_load_row_when_the_sim_lightens_the_player() {
+        let (mut game, mut clock) = game_beside_a_body_carrying(20.0);
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+        let before = rows_of(&game, "Movement speed");
+        let using = SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &using);
+        for _ in 0..30 {
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        }
+        assert_eq!(game.sim().looting(), Some(0), "the search never finished");
+        assert_eq!(game.screen, Screen::Character);
+        let unchanged = rows_of(&game, "Movement speed");
+
+        let unload = SearchlightCommand {
+            inventory: Some(InventoryCommand::Move {
+                from: Source::Inventory(0),
+                to: Place::Body,
+            }),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &unload);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        advance_a_frame(&mut game);
+        let after = rows_of(&game, "Movement speed");
+
+        assert!(
+            before.contains(&"Load: speed ×0.70".to_owned()),
+            "{before:?}"
+        );
+        assert_eq!(unchanged, before);
+        assert!(
+            after.iter().all(|row| !row.starts_with("Load")),
+            "{after:?}"
+        );
+    }
+
     /// The inventory screen open on a body that carried a magazine and then a rag, and the
     /// clock its ticks are run on.
     fn body_screen_carrying_a_magazine_then_a_rag() -> (SearchlightGame, GameClock) {
