@@ -6288,6 +6288,55 @@ mod tests {
     }
 
     #[test]
+    fn a_reload_pressed_on_the_tick_of_a_rig_wear_does_not_happen() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let rifle_before = sim.rifle().clone();
+        let reload_and_wear = SearchlightCommand {
+            reload: true,
+            inventory: Some(InventoryCommand::Wear { from: 0 }),
+            ..SearchlightCommand::default()
+        };
+        let mut script = vec![reload_and_wear];
+        script.extend([idle(); 14]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert!(ticks.iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(sim.rifle(), &rifle_before);
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+        assert_eq!(
+            sim.loadout().inventory(),
+            [rig_item("test_rig"), Item::Magazine(mag(30, 30))]
+        );
+    }
+
+    #[test]
+    fn a_wear_on_the_tick_the_player_dies_is_not_applied() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let loadout = sim.loadout().clone();
+
+        sim.kill_player();
+        sim.tick(&wearing(0), DT);
+        sim.tick(&wearing(0), DT);
+
+        assert!(sim.player_body().is_dead());
+        assert_eq!(sim.loadout(), &loadout);
+        assert_eq!(sim.rig().item(), &ItemId::new("test_rig"));
+    }
+
+    #[test]
+    fn a_rig_wear_does_not_cut_a_shot_cooldown() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+
+        let ticks = run(&mut sim, &[pull(), wearing(0), pull(), pull()]);
+
+        assert_eq!(ticks[0], [Feedback::Fired]);
+        assert_eq!(ticks[2], [], "the 3-tick cooldown is still running");
+        assert_eq!(ticks[3], [Feedback::Fired], "and ends on its own tick");
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+    }
+
+    #[test]
     fn a_refused_wear_mid_reload_changes_nothing_and_the_reload_finishes() {
         let inventory = || vec![Item::Other(ItemId::new("bandage")), rig_item("rig_five")];
         for from in [0, 5] {
