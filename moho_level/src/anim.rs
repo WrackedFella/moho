@@ -197,6 +197,23 @@ pub enum Playback {
     Ticks(NonZeroU32),
 }
 
+/// The nodes an action poses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    /// Every node.
+    Whole,
+    /// This node index and every node below it. An index past the node count layers
+    /// nothing, so the pose is the base's.
+    From(usize),
+}
+
+/// A running action: its player and the nodes it poses.
+#[derive(Clone, Debug, PartialEq)]
+struct Action {
+    player: ClipPlayer,
+    region: Region,
+}
+
 /// Why a clip could not be played.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -327,7 +344,7 @@ impl ClipPlayer {
 }
 
 /// One character's playback: a base clip (locomotion) and an optional action clip (a
-/// reload) that poses the whole body while it plays.
+/// reload) that poses its [`Region`] of the body while it plays; the rest follows the base.
 ///
 /// The base keeps advancing under an action, so cancelling or finishing the action returns
 /// the pose the character would have had with no action.
@@ -339,7 +356,7 @@ impl ClipPlayer {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Animator {
     base: ClipPlayer,
-    action: Option<ClipPlayer>,
+    action: Option<Action>,
 }
 
 impl Animator {
@@ -357,10 +374,10 @@ impl Animator {
     }
 
     pub fn action(&self) -> Option<&ClipPlayer> {
-        self.action.as_ref()
+        self.action.as_ref().map(|action| &action.player)
     }
 
-    /// Replace any running action with `clip`, restarted at time 0.
+    /// Replace any running action with `clip` over `region`, restarted at time 0.
     ///
     /// # Errors
     /// [`ClipError::UnknownClip`] when the model has no such clip; nothing changes.
@@ -369,8 +386,12 @@ impl Animator {
         model: &Model,
         clip: &str,
         playback: Playback,
+        region: Region,
     ) -> Result<(), ClipError> {
-        self.action = Some(ClipPlayer::new(model, clip, playback)?);
+        self.action = Some(Action {
+            player: ClipPlayer::new(model, clip, playback)?,
+            region,
+        });
         Ok(())
     }
 
@@ -390,20 +411,35 @@ impl Animator {
         if self
             .action
             .as_ref()
-            .is_some_and(|action| action.is_finished(model))
+            .is_some_and(|action| action.player.is_finished(model))
         {
             self.action = None;
         } else if let Some(action) = &mut self.action {
-            action.advance(model, dt);
+            action.player.advance(model, dt);
         }
     }
 
-    /// The action's pose if one is running, else the base's.
+    /// The base's pose, with the action's clip posing its region if one is running; see
+    /// [`Model::layered_pose`].
     ///
     /// # Panics
     /// When `model` has fewer clips than a player was made on.
     pub fn pose(&self, model: &Model) -> Pose {
-        self.action.as_ref().unwrap_or(&self.base).pose(model)
+        match &self.action {
+            None => self.base.pose(model),
+            Some(Action {
+                player,
+                region: Region::Whole,
+            }) => player.pose(model),
+            Some(Action {
+                player,
+                region: Region::From(node),
+            }) => model.layered_pose(
+                (self.base.clip(), self.base.time()),
+                (player.clip(), player.time()),
+                *node,
+            ),
+        }
     }
 }
 
@@ -421,7 +457,9 @@ mod tests {
     use glam::{Affine3A, Quat, Vec3};
     use proptest::prelude::*;
 
-    use super::{Animator, Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Track};
+    use super::{
+        Animator, Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Region, Track,
+    };
     use crate::{Model, ModelNode};
 
     fn track_x(times: &[f32], xs: &[f32]) -> Track {
@@ -989,7 +1027,7 @@ mod tests {
         let model = model_with(vec![ramp(), moving("act", 9.0)]);
         let mut animator = animator_on(&model);
         animator
-            .play_action(&model, "act", ticks(1))
+            .play_action(&model, "act", ticks(1), Region::Whole)
             .expect("clip exists");
 
         animator.advance(&model, 0.5);
@@ -1023,7 +1061,7 @@ mod tests {
         let mut animator = animator_on(&model);
 
         animator
-            .play_action(&model, "still", Playback::Once)
+            .play_action(&model, "still", Playback::Once, Region::Whole)
             .expect("clip exists");
 
         assert!(animator.action().expect("playing").is_finished(&model));
@@ -1037,7 +1075,7 @@ mod tests {
         let model = model_with(vec![ramp(), moving("act", 9.0), moving("other", 5.0)]);
         let mut animator = animator_on(&model);
         animator
-            .play_action(&model, "act", ticks(10))
+            .play_action(&model, "act", ticks(10), Region::Whole)
             .expect("clip exists");
         for _ in 0..3 {
             animator.advance(&model, 0.5);
