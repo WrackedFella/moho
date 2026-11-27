@@ -731,10 +731,13 @@ impl Stage {
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
-            let gun_flash = self.enemy_rig(target).gun_flash;
+            let rig = self.enemy_rig(target);
             let Some(state) = sim.enemy_state(index) else {
+                // The slot may be refilled by a new enemy, which must not inherit the flash.
+                rig.gun_flash = 0;
                 continue;
             };
+            let gun_flash = rig.gun_flash;
             let facing = Quat::from_rotation_y(state.yaw);
             let meshes = self.scene.world_meshes_mut();
             for (slot, (offset, half)) in segments.into_iter().enumerate() {
@@ -9920,6 +9923,112 @@ mod enemy_and_hud_tests {
 
         assert_eq!(game.screen, Screen::Paused);
         assert_eq!(renderer.unit_box_instances().len(), 7);
+    }
+
+    fn materials_placed(renderer: &RecordingRenderer) -> Vec<u32> {
+        renderer
+            .unit_box_instances()
+            .iter()
+            .map(|instance| instance.material)
+            .collect()
+    }
+
+    #[test]
+    fn an_enemy_respawned_into_a_dead_enemys_slot_does_not_inherit_its_gun_flash() {
+        let mut game = lone_game();
+        let mut renderer = RecordingRenderer::default();
+        let plain = game.stage.enemy_material;
+        game.stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        play_frame(&mut game, &mut renderer);
+        assert!(
+            game.stage.enemies[0].gun_flash > 0,
+            "the flash must be running when the enemy dies"
+        );
+
+        game.mode.sim_mut().kill_enemy(0);
+        play_tick(&mut game);
+        play_frame(&mut game, &mut renderer);
+        game.mode.sim_mut().kill_player();
+        game.mode.sim_mut().tick(
+            &SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+            1.0 / 60.0,
+        );
+        game.mode
+            .sim_mut()
+            .spawn_enemy(0, Grade::default())
+            .expect("the restart emptied the markers");
+        play_frame(&mut game, &mut renderer);
+
+        assert_eq!(materials_placed(&renderer), [plain; 7]);
+    }
+
+    #[test]
+    fn only_the_firing_enemys_gun_is_struck() {
+        let mut game = game_on(
+            arena_with(
+                &[],
+                Vec3::new(0.0, 0.0, -20.0),
+                &[Vec3::new(-3.0, 0.0, 4.0), Vec3::new(3.0, 0.0, 4.0)],
+                &[Vec3::new(13.0, 0.0, 4.0)],
+            ),
+            2,
+        );
+        let mut renderer = RecordingRenderer::default();
+        let (struck, plain) = (game.stage.struck_material, game.stage.enemy_material);
+        game.stage.react(&Feedback::EnemyFired { target: 1 }, None);
+
+        play_frame(&mut game, &mut renderer);
+        let materials = materials_placed(&renderer);
+
+        assert_eq!(materials.len(), 14);
+        assert_eq!(materials.iter().filter(|&&m| m == struck).count(), 1);
+        assert_eq!(materials.iter().filter(|&&m| m == plain).count(), 13);
+        assert_eq!(
+            materials[13], struck,
+            "the second enemy's gun is the last placed"
+        );
+    }
+
+    #[test]
+    fn a_gun_at_yaw_ninety_degrees_is_offset_in_the_enemys_frame() {
+        let mut game = lone_game();
+        let state = game.sim().enemy_state(0).expect("the enemy spawned");
+        let mut renderer = RecordingRenderer::default();
+        assert!(
+            (state.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+            "yaw {}",
+            state.yaw
+        );
+
+        play_frame(&mut game, &mut renderer);
+        let placed = renderer.unit_box_instances();
+
+        let gun = translation_of(&placed[6]);
+        let facing = Quat::from_rotation_y(state.yaw);
+        assert!(gun.abs_diff_eq(state.position + facing * GUN_OFFSET, 1e-4));
+        assert!(!gun.abs_diff_eq(state.position + GUN_OFFSET, 0.1));
+    }
+
+    #[test]
+    fn an_enemy_whose_state_vanished_places_nothing() {
+        let mut game = lone_game();
+        let mut renderer = RecordingRenderer::default();
+        play_frame(&mut game, &mut renderer);
+        game.mode.sim_mut().kill_enemy(0);
+        play_tick(&mut game);
+        assert_eq!(
+            game.sim().enemy_count(),
+            1,
+            "the dead enemy keeps its index"
+        );
+        assert!(game.sim().enemy_state(0).is_none());
+
+        play_frame(&mut game, &mut renderer);
+
+        assert!(renderer.unit_box_instances().is_empty());
     }
 
     #[test]
