@@ -401,6 +401,46 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_check_gear_line_warns_and_leaves_the_other_bindings_alone() {
+        let saved = BTreeMap::from([
+            ("check_gear".to_owned(), "hold c".to_owned()),
+            ("reload".to_owned(), "T".to_owned()),
+        ]);
+
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+
+        let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["check_gear"]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Reload),
+            [Binding::key(Key::T)]
+        );
+        assert_eq!(
+            bindings.get(SearchlightAction::CheckMagazine),
+            [Binding::key(Key::R).held()]
+        );
+    }
+
+    #[test]
+    fn a_saved_check_magazine_c_still_checks_on_a_tap() {
+        let saved = BTreeMap::from([("check_magazine".to_owned(), "C".to_owned())]);
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+        let mut map = ActionMap::<SearchlightAction>::new(bindings, 1.0);
+        map.key(Key::C, true);
+        let down = SearchlightCommand::from_frame(&map.end_tick());
+
+        map.key(Key::C, false);
+        let up = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(warnings.is_empty());
+        assert!(
+            down.check && !down.reload,
+            "with no hold on C the tap checks on the press"
+        );
+        assert!(!up.check, "and does not check again on release");
+    }
+
+    #[test]
     fn no_default_binds_c() {
         for action in SearchlightAction::ALL {
             let binds_c = action
