@@ -24,6 +24,10 @@ pub const LEVELS: &[NamedLevel] = &[
         name: "proving_ground",
         file: "proving_ground.glb",
     },
+    NamedLevel {
+        name: "parkour",
+        file: "parkour.glb",
+    },
 ];
 
 /// The level a launch argument asks for.
@@ -647,7 +651,11 @@ mod tests {
                     }
                     self.tick(1.0, false);
                 }
-                panic!("never reached the marker, stopped at {}", self.along());
+                panic!(
+                    "never reached the marker at {}, stopped at {}",
+                    self.origin,
+                    self.along(),
+                );
             }
         }
 
@@ -683,8 +691,14 @@ mod tests {
                 let jump = jumping && !jumped && trial.along() >= -1.0;
                 jumped |= jump;
                 trial.tick(1.0, jump);
+                if trial.sim.player().grounded
+                    && trial.along() >= 1.0
+                    && trial.feet_above_floor() >= 0.25
+                {
+                    return true;
+                }
             }
-            trial.sim.player().grounded && trial.along() >= 1.0 && trial.feet_above_floor() >= 0.25
+            false
         }
 
         #[test]

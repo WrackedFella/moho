@@ -4,6 +4,7 @@
 |---|---|
 | `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`, `control_NN`, and three optional `menu_camera_NN` views the main menu cuts between). |
 | `proving_ground.glb` | Test range, +Z downrange from a firing line at z = 0 (the player spawn): dummies at 25, 50, 100 and 200 m, each distance marked on the floor by a strip and its number in block digits (1 cm high, material `mark`); 0.6, 1.0 and 1.4 m cover blocks beside the firing line; a 3 m platform behind it, reached by stairs (0.2 m rise, 0.3 m run) or a 30 degree slope, whose front edge is a ledge over a marked drop area. No enemy spawns, waypoints or covers. |
+| `parkour.glb` | Movement test level, +Z the direction of travel; one `player_spawn`, no enemy spawns, so no waves. A gap ladder of ten 2 m lanes (0.5 to 5.0 m gaps over a 2 m pit, each lane's width in decimetres in block digits on its run-up, coloured `mark_run` when a running jump clears it and `mark` otherwise) and a course of three steps, three ledges and three ramps, each labelled (steps and ledges in centimetres, ramps in degrees). Each take-off edge has a `gap_NN` marker (extras `width` in metres and `clears`: `stand`, `run` or `none`, the smallest movement that clears it); each course piece has a `course_NN` marker at its foot (extras `kind` `step`/`ledge`/`slope`, `value`, `passable` `walk`/`jump`/`none`). Markers face +Z. The game ignores both marker kinds; the labels are set from what the headless tests in `searchlight/src/levels.rs` measure with the shipped movement tuning. |
 | `rifle_shot.wav` | A short synthesized gunshot (22.05 kHz, mono, 16-bit). |
 
 ## Waves and local maps
@@ -15,7 +16,7 @@ with an error naming it. `dummy_NN` is optional, and without an enemy spawn a na
 is a console notice. A node named `searchlight_level`
 is ignored.
 
-Launch a level by name (`arena`, the default, or `proving_ground`) or by the path of a `.glb`
+Launch a level by name (`arena`, the default, `proving_ground` or `parkour`) or by the path of a `.glb`
 or `.gltf` file: `cargo run -p searchlight -- proving_ground`. Put borrowed maps in
 `searchlight/assets/local/`, which git ignores; never commit them. CC0 maps
 are fine to keep locally; game maps (for example Counter-Strike) are all rights reserved,
