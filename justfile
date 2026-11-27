@@ -208,19 +208,33 @@ package-test:
     #!/usr/bin/env bash
     set -euo pipefail
     work="$(mktemp -d)"
-    trap 'rm -rf "$work"' EXIT
+    local_dir=searchlight/assets/local
+    probe="$local_dir/probe.glb"
+    made_local=0
+    [[ -d "$local_dir" ]] || made_local=1
+    cleanup() {
+        rm -rf "$work"
+        rm -f "$probe"
+        [[ $made_local == 0 ]] || rmdir "$local_dir" 2>/dev/null || true
+    }
+    trap cleanup EXIT
     exe="$work/searchlight"
     out="$work/out"
     printf '#!/bin/sh\n' > "$exe"
     chmod +x "$exe"
     fail() { echo "package-test: $1" >&2; exit 1; }
+    # A git-ignored local map must stay out of the package.
+    mkdir -p "$local_dir"
+    echo probe > "$probe"
     mkdir -p "$out"
     echo stale > "$out/stale.txt"
     scripts/package.sh searchlight "$exe" "$out"
     [[ -f "$out/searchlight" && -x "$out/searchlight" ]] || fail "executable missing or not executable"
-    for f in assets/arena.glb assets/proving_ground.glb assets/rifle_shot.wav content/items.toml content/kits.toml; do
-        [[ -f "$out/$f" ]] || fail "$f missing"
-    done
+    expected="$(git ls-files searchlight/assets searchlight/content | grep -v '/tools/' | grep -v '\.md$' | sed 's#^searchlight/##' | LC_ALL=C sort)"
+    packaged="$(find "$out/assets" "$out/content" -type f | sed "s#^$out/##" | LC_ALL=C sort)"
+    [[ -n "$expected" ]] || fail "no committed assets or content found"
+    [[ "$packaged" == "$expected" ]] || fail "package files differ from the committed files (expected, then packaged): $expected -- $packaged"
+    [[ ! -e "$out/assets/local" ]] || fail "the git-ignored local map shipped"
     [[ ! -e "$out/assets/tools" ]] || fail "assets/tools shipped"
     [[ -z "$(find "$out" -name '*.md')" ]] || fail "a markdown file shipped"
     [[ ! -e "$out/stale.txt" ]] || fail "stale file survived the first run"

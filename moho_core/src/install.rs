@@ -177,33 +177,26 @@ mod tests {
     #[test]
     fn neither_place_is_an_error_naming_every_folder_searched() {
         let exe = with_folders(&[]);
-        let checkout = with_folders(&[]);
+        let empty_checkout = with_folders(&[]);
+        let partial_checkout = with_folders(&["assets"]);
 
-        let error = Install::locate(exe.path(), checkout.path(), FOLDERS).unwrap_err();
+        for checkout in [&empty_checkout, &partial_checkout] {
+            let error = Install::locate(exe.path(), checkout.path(), FOLDERS).unwrap_err();
 
-        let InstallError::NotFound { searched } = &error else {
-            panic!("expected NotFound, got {error:?}");
-        };
-        let expected: Vec<PathBuf> = [exe.path(), checkout.path()]
-            .iter()
-            .flat_map(|place| FOLDERS.iter().map(|folder| place.join(folder)))
-            .collect();
-        assert_eq!(searched.len(), expected.len(), "{searched:?}");
-        let text = error.to_string();
-        for path in &expected {
-            assert!(searched.contains(path), "{path:?} not in {searched:?}");
-            assert!(text.contains(&path.display().to_string()), "{text}");
+            let InstallError::NotFound { searched } = &error else {
+                panic!("expected NotFound, got {error:?}");
+            };
+            let expected: Vec<PathBuf> = [exe.path(), checkout.path()]
+                .iter()
+                .flat_map(|place| FOLDERS.iter().map(|folder| place.join(folder)))
+                .collect();
+            assert_eq!(searched.len(), expected.len(), "{searched:?}");
+            let text = error.to_string();
+            for path in &expected {
+                assert!(searched.contains(path), "{path:?} not in {searched:?}");
+                assert!(text.contains(&path.display().to_string()), "{text}");
+            }
         }
-    }
-
-    #[test]
-    fn a_checkout_missing_a_folder_is_not_found() {
-        let exe = with_folders(&[]);
-        let checkout = with_folders(&["assets"]);
-
-        let error = Install::locate(exe.path(), checkout.path(), FOLDERS).unwrap_err();
-
-        assert!(matches!(&error, InstallError::NotFound { .. }), "{error:?}");
     }
 
     #[test]

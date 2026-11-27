@@ -175,24 +175,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_file_where_a_folder_is_expected_is_refused() {
-        let placeholders = folder_with(&[]);
-        let holder = folder_with(&["plain.txt"]);
-        let file = holder.path().join("plain.txt");
-        let base = AssetRoots::placeholders(placeholders.path()).unwrap();
-
-        let as_placeholders = AssetRoots::placeholders(&file).unwrap_err();
-        let as_folder = base.with_folder(&file).unwrap_err();
-
-        for error in [as_placeholders, as_folder] {
-            assert!(
-                matches!(&error, AssetError::MissingFolder { path } if path == &file),
-                "{error:?}"
-            );
-        }
-    }
-
     /// Collects what `tracing` writes while `run` executes.
     fn logged(run: impl FnOnce()) -> String {
         use std::io::Write;

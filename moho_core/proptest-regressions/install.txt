@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 75fabbf1d0f8fcfda355104105ec5f77a679d2cd142d4a8d8b69a46f8c5ff157 # shrinks to exe_has = [false, false], checkout_has = [false, false]
+cc c7d7867232675d8e72613b832d4fe7513b082f269af11d712e81eb5f57e1a763 # shrinks to exe_has = [false, false], checkout_has = [false, false]

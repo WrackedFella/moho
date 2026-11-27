@@ -113,6 +113,7 @@ mod tests {
     use crate::levels::{self, LevelChoice};
     use crate::test_support::{logged, placeholder_assets};
     use crate::{arena, assets_root, content_root};
+    use moho_core::install::Origin;
 
     fn os(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -297,34 +298,62 @@ mod tests {
         assert_eq!(roots, placeholder_assets());
     }
 
+    /// Copies the files under `from` into `to`, keeping the layout and skipping `tools`
+    /// folders, which a packaged build does not ship.
+    fn copy_shipped(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap();
+            if path.is_dir() {
+                if name != "tools" {
+                    copy_shipped(&path, &to.join(name));
+                }
+            } else {
+                fs::copy(&path, to.join(name)).unwrap();
+            }
+        }
+    }
+
     /// A folder holding copies of the checkout's `assets` and `content` files, as a packaged
     /// build lays them out.
     fn copied_install() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        for (name, source) in [("assets", assets_root()), ("content", content_root())] {
-            let target = dir.path().join(name);
-            fs::create_dir(&target).unwrap();
-            for entry in fs::read_dir(source).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_file() {
-                    fs::copy(&path, target.join(path.file_name().unwrap())).unwrap();
-                }
-            }
-        }
+        copy_shipped(&assets_root(), &dir.path().join("assets"));
+        copy_shipped(&content_root(), &dir.path().join("content"));
         dir
     }
+
+    const THREE_MAGAZINES: &str = "magazines = [
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+]";
+
+    const TWO_MAGAZINES: &str = "magazines = [
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+]";
 
     #[test]
     fn a_copy_outside_the_checkout_starts_from_its_own_folders() {
         let copy = copied_install();
+        let kits = copy.path().join("content").join("kits.toml");
+        let original = fs::read_to_string(&kits).unwrap();
+        let edited = original.replacen(THREE_MAGAZINES, TWO_MAGAZINES, 1);
+        assert_ne!(
+            edited, original,
+            "the start kit's three magazines were not found"
+        );
+        fs::write(&kits, edited).unwrap();
         let no_checkout = copy.path().join("no-checkout");
 
         let install = Install::locate(copy.path(), &no_checkout, SHIPPED_FOLDERS).unwrap();
         let assets = asset_roots(&Launch::default(), &install.root().join("assets")).unwrap();
-        let kit = load_start_kit(&install.root().join("content"), &[]);
+        let config = load_start_kit(&install.root().join("content"), &[]).unwrap();
 
         assert_eq!(install.root(), copy.path());
-        assert!(kit.is_ok(), "{:?}", kit.err());
+        assert_eq!(config.loadout.rig().magazines().count(), 2);
         for name in ["arena", "proving_ground"] {
             let choice = levels::choose(Some(OsString::from(name).as_os_str())).unwrap();
 
@@ -354,6 +383,33 @@ mod tests {
 
         assert_eq!(level, folder.path().join("arena.glb"));
         assert_eq!(shot, copy.path().join("assets").join("rifle_shot.wav"));
+    }
+
+    #[test]
+    fn a_build_missing_its_content_folder_is_refused_not_borrowed_from_the_checkout() {
+        let copy = copied_install();
+        fs::remove_dir_all(copy.path().join("content")).unwrap();
+
+        let error = locate(copy.path()).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                InstallError::Incomplete { root, missing }
+                    if root == copy.path() && missing == &["content"]
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_executable_folder_with_nothing_in_it_starts_from_the_checkout() {
+        let empty = tempfile::tempdir().unwrap();
+
+        let install = locate(empty.path()).unwrap();
+
+        assert_eq!(install.root(), checkout_root());
+        assert_eq!(install.origin(), Origin::SourceCheckout);
     }
 
     #[test]
