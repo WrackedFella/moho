@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
-    AccuracyTuning, BodyPart, BodyProfile, Carried, ItemDef, ItemId, Kit, LeanTuning,
-    LoadThresholds, PlayerDef, Remains, RoundStats, loadout_items, remains_items,
+    AccuracyTuning, BodyPart, BodyProfile, Carried, ItemId, Kit, LeanTuning, LoadThresholds,
+    PlayerDef, Remains, RoundStats, loadout_items, remains_items,
 };
 
 use moho_core::content::ContentRoots;
@@ -71,8 +71,9 @@ pub const BODY_RADIUS: f32 = 0.8;
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 ///
 /// The carry config's item definitions are weightless placeholders, one per item the loadout
-/// holds, for configs built without content, so load is 0 here. The shipped game uses
+/// holds, so load is 0 here. Only tests build a config without content; the shipped game uses
 /// [`shipped`], whose definitions come from the item catalogue.
+#[cfg(test)]
 pub fn tuning(kit: Kit) -> SimConfig {
     let weapon = rifle_item();
     let items = weightless(&distinct(loadout_items(&kit.loadout, &weapon)));
@@ -143,6 +144,7 @@ fn build(kit: Kit, carry: CarryConfig) -> SimConfig {
 }
 
 /// The item id of the rifle the player holds, in [`tuning`]'s carry config.
+#[cfg(test)]
 fn rifle_item() -> ItemId {
     ItemId::new("rifle")
 }
@@ -154,9 +156,10 @@ fn distinct(carried: Vec<Carried>) -> Vec<ItemId> {
 }
 
 /// A weightless plain definition for each of `ids`.
-fn weightless(ids: &[ItemId]) -> BTreeMap<ItemId, ItemDef> {
+#[cfg(test)]
+fn weightless(ids: &[ItemId]) -> BTreeMap<ItemId, searchlight_rules::ItemDef> {
     ids.iter()
-        .map(|id| (id.clone(), ItemDef::plain(0.0)))
+        .map(|id| (id.clone(), crate::test_support::weighing(0.0)))
         .collect()
 }
 
@@ -208,15 +211,14 @@ fn assemble(
         },
     );
     Ok(match enemy {
-        Some((remains, rounds)) => with_enemy_kit(config, remains, rounds),
+        Some((remains, rounds)) => with_enemy(config, remains, rounds),
         None => config,
     })
 }
 
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
 /// the round stats the sim flies and scores rounds with, so a looted round still fires.
-/// Items of `remains` the carry config does not define get weightless placeholders.
-pub fn with_enemy_kit(
+fn with_enemy(
     mut config: SimConfig,
     remains: Remains,
     rounds: BTreeMap<ItemId, RoundStats>,
@@ -224,12 +226,23 @@ pub fn with_enemy_kit(
     for (round, stats) in rounds {
         config.rounds.entry(round).or_insert(stats);
     }
+    config.enemy_remains = remains;
+    config
+}
+
+/// [`with_enemy`] for a config built by [`tuning`], where items of `remains` the carry config
+/// does not define get weightless placeholders.
+#[cfg(test)]
+pub fn with_enemy_kit(
+    mut config: SimConfig,
+    remains: Remains,
+    rounds: BTreeMap<ItemId, RoundStats>,
+) -> SimConfig {
     let weapon = config.carry.weapon.clone();
     for (id, def) in weightless(&distinct(remains_items(&remains, &weapon))) {
         config.carry.items.entry(id).or_insert(def);
     }
-    config.enemy_remains = remains;
-    config
+    with_enemy(config, remains, rounds)
 }
 
 #[cfg(test)]

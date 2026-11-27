@@ -1570,11 +1570,6 @@ impl SearchlightSim {
         self.carry_sheet().contributions
     }
 
-    /// Where load, as a fraction of carry capacity, changes the player's state.
-    pub fn load_thresholds(&self) -> &LoadThresholds {
-        &self.config().carry.player.thresholds
-    }
-
     /// The half-angle in radians of the cone the player's next shot leaves in.
     pub fn player_spread(&self) -> f32 {
         self.accuracy.spread(&self.accuracy_tuning)

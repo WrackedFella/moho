@@ -299,24 +299,6 @@ pub struct ItemDef {
     pub stats: Vec<ItemStat>,
 }
 
-impl ItemDef {
-    /// A 1 by 1 tool of `weight` kilograms with no wear, section or stats.
-    #[must_use]
-    pub fn plain(weight: f32) -> Self {
-        Self {
-            class: ItemClass::Tool,
-            size: Size {
-                width: 1,
-                height: 1,
-            },
-            lifecycle: Lifecycle::Unchanging,
-            weight,
-            kind: ItemKind::Plain,
-            stats: Vec::new(),
-        }
-    }
-}
-
 /// Whether `value` is a number that is 0 or more: not negative, `NaN` or infinite.
 pub(crate) fn finite_non_negative(value: f32) -> bool {
     value.is_finite() && value >= 0.0

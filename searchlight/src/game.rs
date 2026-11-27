@@ -1719,8 +1719,7 @@ impl SearchlightGame {
             .into_iter()
             .collect();
         let sheet = (live || self.screen == Screen::Inventory).then(|| sim.carry_sheet());
-        // Nothing carried, nothing to weigh: the icon appears with the first kilogram.
-        if let Some(sheet) = sheet.as_ref().filter(|sheet| live && sheet.load_kg > 0.0) {
+        if let Some(sheet) = sheet.as_ref().filter(|_| live) {
             texts.push(ScreenText {
                 text: "LOAD".to_owned(),
                 anchor: Anchor::BottomLeft,
@@ -3651,9 +3650,45 @@ mod tests {
         frame.map(|frame| frame.meshes)
     }
 
-    /// Whether one more frame of `game` paints a prompt.
+    /// The load icon's screen text in the colour of `icon`.
+    fn load_text(icon: hud::LoadIcon) -> ScreenText {
+        ScreenText {
+            text: "LOAD".to_owned(),
+            anchor: Anchor::BottomLeft,
+            offset: LOAD_ICON_OFFSET,
+            size: STRIP_SIZE,
+            color: load_icon_color(icon),
+        }
+    }
+
+    /// What a fresh shell paints for `texts`, drawn on a twin game's shell so the glyph atlas
+    /// history matches a game that painted nothing before.
+    fn painted_texts(texts: Vec<ScreenText>) -> Option<Vec<UiMesh>> {
+        let twin = game_with_controls(&[]);
+        twin.stage
+            .shell()
+            .set_texts(texts)
+            .expect("valid screen texts");
+        let frame = twin.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    /// Whether one more frame of `game` paints anything beyond the load icon a living player
+    /// in play always has.
     fn prompt_shows(game: &mut SearchlightGame) -> bool {
-        painted(game).is_some_and(|meshes| !meshes.is_empty())
+        let live = game.screen == Screen::Playing && !game.sim().player_body().is_dead();
+        let icon = game.load_icon();
+        let paint = painted(game);
+        if live {
+            game.stage
+                .shell()
+                .set_texts(vec![load_text(icon)])
+                .expect("a valid load icon");
+            let load_only = game.stage.shell().ui_frame([800, 600]);
+            paint != load_only.map(|frame| frame.meshes)
+        } else {
+            paint.is_some_and(|meshes| !meshes.is_empty())
+        }
     }
 
     fn turn_around() -> SearchlightCommand {
@@ -3743,19 +3778,16 @@ mod tests {
     /// What a fresh shell paints for the use prompt reading `text`, drawn on a twin game's
     /// shell so the glyph atlas history matches a game that painted nothing before.
     fn painted_prompt_reading(text: &str) -> Option<Vec<UiMesh>> {
-        let twin = game_with_controls(&[]);
-        twin.stage
-            .shell()
-            .set_texts(vec![ScreenText {
+        painted_texts(vec![
+            ScreenText {
                 text: text.to_owned(),
                 anchor: Anchor::Center,
                 offset: [0.0, PROMPT_OFFSET_Y],
                 size: PROMPT_SIZE,
                 color: PROMPT_COLOR,
-            }])
-            .expect("a valid prompt");
-        let frame = twin.stage.shell().ui_frame([800, 600]);
-        frame.map(|frame| frame.meshes)
+            },
+            load_text(hud::LoadIcon::White),
+        ])
     }
 
     #[test]
@@ -3880,19 +3912,16 @@ mod tests {
 
     /// What a fresh shell paints for the rig strip reading `text`, on a twin game's shell.
     fn painted_strip_reading(text: &str) -> Option<Vec<UiMesh>> {
-        let twin = game_with_controls(&[]);
-        twin.stage
-            .shell()
-            .set_texts(vec![ScreenText {
+        painted_texts(vec![
+            load_text(hud::LoadIcon::White),
+            ScreenText {
                 text: text.to_owned(),
                 anchor: Anchor::Bottom,
                 offset: [0.0, STRIP_OFFSET_Y],
                 size: STRIP_SIZE,
                 color: STRIP_COLOR,
-            }])
-            .expect("a valid strip");
-        let frame = twin.stage.shell().ui_frame([800, 600]);
-        frame.map(|frame| frame.meshes)
+            },
+        ])
     }
 
     #[test]
@@ -7652,6 +7681,73 @@ mod tests {
 
             assert_eq!(game.load_icon(), icon, "{kg} of 30 kg");
         }
+    }
+
+    #[test]
+    fn the_hud_paints_the_load_icon_in_the_colour_of_the_load_state() {
+        let expected = [
+            (15.0, hud::LoadIcon::White),
+            (20.0, hud::LoadIcon::Yellow),
+            (30.0, hud::LoadIcon::Red),
+        ];
+        let mut paints = Vec::new();
+
+        for (kg, icon) in expected {
+            let mut game = game_carrying(kg);
+
+            let paint = painted(&mut game);
+
+            assert!(paint.is_some(), "{kg} kg: nothing painted");
+            assert_eq!(paint, painted_texts(vec![load_text(icon)]), "{kg} kg");
+            paints.push(paint);
+        }
+        assert_ne!(paints[0], paints[1], "white and yellow paint alike");
+        assert_ne!(paints[1], paints[2], "yellow and red paint alike");
+        assert_ne!(paints[0], paints[2], "white and red paint alike");
+    }
+
+    #[test]
+    fn the_hud_paints_the_load_icon_white_for_a_player_carrying_nothing() {
+        let mut game = game_carrying(0.0);
+
+        let paint = painted(&mut game);
+
+        assert_eq!(game.sim().load_kg(), 0.0);
+        assert_eq!(paint, painted_texts(vec![load_text(hud::LoadIcon::White)]));
+    }
+
+    #[test]
+    fn the_open_inventory_paints_the_load_header_with_the_threshold_marks() {
+        let mut game = game_carrying(20.0);
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        let header = |text: &str| ScreenText {
+            text: text.to_owned(),
+            anchor: Anchor::Top,
+            offset: [0.0, LOAD_HEADER_OFFSET_Y],
+            size: PROMPT_SIZE,
+            color: PROMPT_COLOR,
+        };
+        let paint_with = |game: &mut SearchlightGame, text: &str| {
+            game.stage
+                .shell()
+                .set_texts(vec![header(text)])
+                .expect("valid screen texts");
+            let frame = game.stage.shell().ui_frame([800, 600]);
+            frame.map(|frame| frame.meshes)
+        };
+
+        let paint = painted(&mut game);
+
+        let expected = paint_with(
+            &mut game,
+            "20.0 of 30.0 kg  (slowed 18.0, no sprint 24.0, cannot move 30.0)",
+        );
+        let without_marks = paint_with(&mut game, "20.0 of 30.0 kg");
+        assert_eq!(game.screen, Screen::Inventory);
+        assert_eq!(paint, expected);
+        assert_ne!(paint, without_marks);
     }
 
     #[test]
