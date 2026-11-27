@@ -2,6 +2,48 @@
 
 use crate::item::MagazineWell;
 use serde::Deserialize;
+use thiserror::Error;
+
+/// Why a muzzle velocity factor was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[non_exhaustive]
+pub enum VelocityFactorError {
+    /// Not a number, infinite, zero or negative.
+    #[error("muzzle_velocity_factor must be finite and above 0, got {0}")]
+    NotPositive(f32),
+}
+
+/// How much a barrel scales the speed its rounds leave at; finite and above 0.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(try_from = "f32")]
+pub struct VelocityFactor(f32);
+
+impl Default for VelocityFactor {
+    /// A barrel that leaves the round's own velocity.
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
+
+impl VelocityFactor {
+    /// The factor, always finite and above 0.
+    #[must_use]
+    pub fn get(self) -> f32 {
+        self.0
+    }
+}
+
+impl TryFrom<f32> for VelocityFactor {
+    type Error = VelocityFactorError;
+
+    fn try_from(factor: f32) -> Result<Self, Self::Error> {
+        if factor.is_finite() && factor > 0.0 {
+            Ok(Self(factor))
+        } else {
+            Err(VelocityFactorError::NotPositive(factor))
+        }
+    }
+}
 
 /// How a trigger pull becomes shots, named by id in definition files.
 ///
@@ -28,6 +70,9 @@ pub struct RifleDef {
     pub reload_ticks: u32,
     /// Ticks added to `reload_ticks` when the chamber is empty, to charge the rifle.
     pub charge_ticks: u32,
+    /// How much the barrel scales the speed rounds leave at; 1.0 when absent.
+    #[serde(default)]
+    pub muzzle_velocity_factor: VelocityFactor,
 }
 
 #[cfg(test)]
@@ -58,8 +103,74 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             }
         );
+    }
+
+    fn with_factor(factor: serde_json::Value) -> serde_json::Value {
+        let mut value = valid();
+        value["muzzle_velocity_factor"] = factor;
+        value
+    }
+
+    #[test]
+    fn a_rifle_with_no_muzzle_velocity_factor_has_a_factor_of_1() {
+        let rifle: RifleDef = serde_json::from_value(valid()).unwrap();
+
+        assert_eq!(rifle.muzzle_velocity_factor.get(), 1.0);
+    }
+
+    #[test]
+    fn a_rifle_with_a_muzzle_velocity_factor_keeps_it() {
+        let short: RifleDef = serde_json::from_value(with_factor(json!(0.8))).unwrap();
+        let long: RifleDef = serde_json::from_value(with_factor(json!(1.1))).unwrap();
+
+        assert_eq!(short.muzzle_velocity_factor.get(), 0.8);
+        assert_eq!(long.muzzle_velocity_factor.get(), 1.1);
+    }
+
+    #[test]
+    fn a_rifle_with_a_zero_or_negative_muzzle_velocity_factor_is_refused_naming_the_field() {
+        for factor in [json!(0), json!(0.0), json!(-0.8), json!(-1)] {
+            let error = serde_json::from_value::<RifleDef>(with_factor(factor.clone()))
+                .expect_err("a factor of zero or less is refused");
+
+            assert!(
+                error.to_string().contains("muzzle_velocity_factor"),
+                "{factor}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_velocity_factor_that_is_not_finite_and_above_zero_is_refused_naming_the_field() {
+        let refused = [
+            0.0,
+            -0.0,
+            -f32::MIN_POSITIVE,
+            -1.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for factor in refused {
+            let error = VelocityFactor::try_from(factor).expect_err("not a valid factor");
+
+            assert!(
+                error.to_string().contains("muzzle_velocity_factor"),
+                "{factor}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_velocity_factor_accepts_any_finite_positive_value() {
+        for factor in [f32::MIN_POSITIVE, 0.8, 1.0, 1.1, 250.0] {
+            let accepted = VelocityFactor::try_from(factor).expect("a positive finite factor");
+
+            assert_eq!(accepted.get(), factor);
+        }
     }
 
     #[test]

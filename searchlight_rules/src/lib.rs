@@ -34,6 +34,7 @@ pub use item::{
     BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, ItemStat, Lifecycle,
     MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size, SlotKind,
 };
+pub use kit::check_launch;
 pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};
 pub use load::{
     LoadState, LoadThresholds, LoadThresholdsError, load, load_contributions, load_state,
@@ -48,4 +49,4 @@ pub use stats::{
     Contribution, PlayerDef, PlayerDefError, SourceLabel, Stat, UnknownItem, Verb,
     equipment_contributions, explain, resolve,
 };
-pub use weapon::{FireBehaviour, RifleDef};
+pub use weapon::{FireBehaviour, RifleDef, VelocityFactor, VelocityFactorError};

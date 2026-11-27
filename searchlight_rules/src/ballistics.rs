@@ -1,5 +1,6 @@
 //! A round in flight: one integration step under gravity and drag, and the bounds it flies in.
 
+use crate::weapon::VelocityFactor;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -20,6 +21,18 @@ pub struct Ballistics {
     pub muzzle_velocity: f32,
     /// Fraction of its velocity a round sheds per second, in 1/s.
     pub drag: f32,
+}
+
+impl Ballistics {
+    /// These ballistics fired through a barrel: the muzzle velocity scaled by `factor`, the
+    /// drag unchanged.
+    #[must_use]
+    pub fn through_barrel(self, factor: VelocityFactor) -> Self {
+        Self {
+            muzzle_velocity: self.muzzle_velocity * factor.get(),
+            ..self
+        }
+    }
 }
 
 /// What a round is: how it flies and the damage it does at the muzzle.
@@ -405,6 +418,22 @@ mod tests {
 
             prop_assert!(at_slower <= at_faster, "{at_slower} at {slower}, {at_faster} at {faster}");
         });
+    }
+
+    #[test]
+    fn a_barrel_scales_the_muzzle_velocity_and_keeps_the_drag() {
+        for (factor, expected) in [(0.8, 720.0), (1.0, 900.0), (1.1, 990.0)] {
+            let round = ball(900.0, 1.5);
+            let barrel = VelocityFactor::try_from(factor).unwrap();
+
+            let leaving = round.through_barrel(barrel);
+
+            assert!(
+                (leaving.muzzle_velocity - expected).abs() < 1e-2,
+                "{factor}: {leaving:?}"
+            );
+            assert_eq!(leaving.drag, 1.5, "{factor}");
+        }
     }
 
     #[test]
