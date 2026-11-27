@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -108,6 +109,11 @@ pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
+}
+
+/// The prompt for a control in reach, such as `[F] Next wave`: `key` is the use key's label.
+pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
+    String::new()
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -286,6 +292,17 @@ mod feedback_tests {
         assert_eq!(arena_text(3, 200), "Wave 3  Score 200");
         assert_eq!(arena_text(1, 0), "Wave 1  Score 0");
         assert_eq!(arena_text(12, 4_000), "Wave 12  Score 4000");
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let with_f = use_prompt("F", ControlAction::NextWave);
+        let with_other = use_prompt("Mouse4", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(with_f, "[F] Next wave");
+        assert_eq!(with_other, "[Mouse4] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 
     #[test]

@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -241,7 +242,31 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls: Vec::new(),
     })
+}
+
+/// [`arena_with`] plus one `next_wave` control standing on each of `controls`' floor points.
+/// The posts are 3 m tall so a player looking level at one is looking at it.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
+    let mut arena = (*arena_with(boxes, player, enemies, route)).clone();
+    arena.controls = controls
+        .iter()
+        .map(|&at| ArenaControl {
+            action: ControlAction::NextWave,
+            mesh: box_mesh(
+                at + Vec3::new(-0.2, 0.0, -0.2),
+                at + Vec3::new(0.2, 3.0, 0.2),
+            ),
+        })
+        .collect();
+    Arc::new(arena)
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

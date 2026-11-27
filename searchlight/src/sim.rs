@@ -28,6 +28,9 @@ use crate::tuning::SHIPPED_BODY;
 /// off a wall.
 const LEAN_CLEARANCE: f32 = 0.15;
 
+/// How far from the eye the player can use a control, in metres.
+pub const USE_REACH: f32 = 2.0;
+
 /// Height of the shipped body's capsule centre above its feet, in metres: half its hull. For
 /// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
 pub const STAND_HEIGHT: f32 = SHIPPED_BODY.standing.hull.length / 2.0;
@@ -852,6 +855,13 @@ impl SearchlightSim {
         self.leaned_eye(&self.player())
     }
 
+    /// The control the player is looking at within [`USE_REACH`], by its index: one ray from
+    /// the leaned eye along the view, ignoring the player. `None` while the player is dead, and
+    /// when a wall or a body is the first surface the ray meets.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        None
+    }
+
     fn leaned_eye(&self, state: &CharacterState) -> Vec3 {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
@@ -1071,7 +1081,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -5331,5 +5343,199 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    use moho_render_api::WorldMeshId;
+
+    use super::*;
+    use crate::test_support::{DT, box_mesh, mag, rifle_from, test_config};
+
+    /// Ticks for a lean to blend all the way in.
+    const SETTLE_TICKS: usize = 30;
+
+    /// A 3 m tall post 0.4 m wide, centred on `x`, whose near face is `near` m ahead of the
+    /// player at the origin, so a level eye is always looking at it.
+    fn post(x: f32, near: f32) -> (Vec3, Vec3) {
+        (
+            Vec3::new(x - 0.2, 0.0, near),
+            Vec3::new(x + 0.2, 3.0, near + 0.4),
+        )
+    }
+
+    /// A sim with the player at the origin facing +Z on a floor, with `walls` as world boxes,
+    /// `posts` as controls numbered in order and a dummy on each of `dummies`.
+    fn sim_with(
+        walls: &[(Vec3, Vec3)],
+        posts: &[(Vec3, Vec3)],
+        dummies: &[Vec3],
+    ) -> SearchlightSim {
+        let mut world = PhysicsWorld::new();
+        let floor = box_mesh(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        world.set_world_mesh(WorldMeshId(0), &floor, SurfaceTag::World.into());
+        for (index, &(min, max)) in walls.iter().enumerate() {
+            world.set_world_mesh(
+                WorldMeshId(1 + index as u64),
+                &box_mesh(min, max),
+                SurfaceTag::World.into(),
+            );
+        }
+        for (index, &(min, max)) in posts.iter().enumerate() {
+            world.set_world_mesh(
+                WorldMeshId((3 << 32) + index as u64),
+                &box_mesh(min, max),
+                SurfaceTag::Control(index as u16).into(),
+            );
+        }
+        world.step(DT);
+        SearchlightSim::new(
+            world,
+            Vec3::ZERO,
+            dummies,
+            test_config(rifle_from(mag(30, 30)), vec![]),
+        )
+    }
+
+    fn turning(yaw_delta: f32) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn leaning(side: Option<LeanSide>) -> SearchlightCommand {
+        SearchlightCommand {
+            lean: side,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn hold(sim: &mut SearchlightSim, command: &SearchlightCommand) {
+        for _ in 0..SETTLE_TICKS {
+            sim.tick(command, DT);
+        }
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let mut sim = sim_with(&[], &[post(3.0, 1.3), post(0.0, 1.3)], &[]);
+
+        let fresh = sim.control_in_reach();
+        sim.tick(&SearchlightCommand::default(), DT);
+        let after_a_tick = sim.control_in_reach();
+
+        assert_eq!(fresh, Some(1));
+        assert_eq!(after_a_tick, Some(1));
+        assert_eq!(USE_REACH, 2.0);
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let mut sim = sim_with(&[], &[post(0.0, 1.3)], &[]);
+        let looking = sim.control_in_reach();
+
+        sim.tick(&turning(FRAC_PI_2), DT);
+        let sideways = sim.control_in_reach();
+        sim.tick(&turning(FRAC_PI_2), DT);
+        let behind = sim.control_in_reach();
+        sim.tick(&turning(PI), DT);
+        let back_again = sim.control_in_reach();
+
+        assert_eq!(looking, Some(0));
+        assert_eq!(sideways, None);
+        assert_eq!(behind, None);
+        assert_eq!(back_again, Some(0));
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        let within = sim_with(&[], &[post(0.0, 1.9)], &[]);
+        let beyond = sim_with(&[], &[post(0.0, 2.1)], &[]);
+        let far = sim_with(&[], &[post(0.0, 6.0)], &[]);
+
+        assert_eq!(within.control_in_reach(), Some(0));
+        assert_eq!(beyond.control_in_reach(), None);
+        assert_eq!(far.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let wall = (Vec3::new(-2.0, 0.0, 0.8), Vec3::new(2.0, 3.0, 1.0));
+        let open = sim_with(&[], &[post(0.0, 1.3)], &[]);
+        let walled = sim_with(&[wall], &[post(0.0, 1.3)], &[]);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(walled.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        let open = sim_with(&[], &[post(0.0, 1.6)], &[]);
+        let blocked = sim_with(&[], &[post(0.0, 1.6)], &[Vec3::new(0.0, 0.0, 1.0)]);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(blocked.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_dead_player_finds_no_control() {
+        let mut sim = sim_with(&[], &[post(0.0, 1.3)], &[]);
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+        let dead = sim.control_in_reach();
+        sim.tick(&SearchlightCommand::default(), DT);
+        let dead_after_a_tick = sim.control_in_reach();
+
+        assert_eq!(alive, Some(0));
+        assert_eq!(dead, None);
+        assert_eq!(dead_after_a_tick, None);
+    }
+
+    #[test]
+    fn a_control_is_looked_at_from_the_leaned_eye() {
+        // A post the standing eye's ray passes beside, and only a left lean lines up with.
+        let posts = [post(0.35, 1.5)];
+        let mut standing = sim_with(&[], &posts, &[]);
+        let mut left = sim_with(&[], &posts, &[]);
+        let mut right = sim_with(&[], &posts, &[]);
+
+        hold(&mut standing, &leaning(None));
+        hold(&mut left, &leaning(Some(LeanSide::Left)));
+        hold(&mut right, &leaning(Some(LeanSide::Right)));
+
+        assert_eq!(standing.control_in_reach(), None);
+        assert_eq!(left.control_in_reach(), Some(0));
+        assert_eq!(right.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let behind = [Vec3::new(0.0, 0.0, 2.5)];
+        let mut shielded = sim_with(&[], &[post(0.0, 1.3)], &behind);
+        let mut exposed = sim_with(&[], &[], &behind);
+        let fire = SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        };
+
+        shielded.tick(&fire, DT);
+        exposed.tick(&fire, DT);
+
+        assert_eq!(shielded.pending_feedback(), [Feedback::Fired]);
+        let health = |sim: &SearchlightSim| sim.dummy_body(0).expect("a dummy").health();
+        assert_eq!(health(&shielded), 100);
+        assert!(
+            health(&exposed) < 100,
+            "the dummy must be in the line of fire"
+        );
+        assert_eq!(shielded.kills(), 0);
     }
 }

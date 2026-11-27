@@ -12,6 +12,8 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The arena control with this index: stops a ray, damages nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -52,6 +54,7 @@ impl From<SurfaceTag> for HitTag {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
+            SurfaceTag::Control(_) => HitTag(WORLD),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -108,6 +111,7 @@ mod tests {
         prop_oneof![
             surface_tags(),
             proptest::sample::select(PARTS.to_vec()).prop_map(SurfaceTag::Player),
+            any::<u16>().prop_map(SurfaceTag::Control),
         ]
     }
 
@@ -122,7 +126,10 @@ mod tests {
         }
 
         #[test]
-        fn distinct_surface_tags_get_distinct_engine_tags(a in surface_tags(), b in surface_tags()) {
+        fn distinct_surface_tags_get_distinct_engine_tags(
+            a in surface_tags_with_player(),
+            b in surface_tags_with_player(),
+        ) {
             prop_assume!(a != b);
 
             prop_assert_ne!(HitTag::from(a), HitTag::from(b));
@@ -195,5 +202,16 @@ mod player_encoding_tests {
         assert_eq!(head, HitTag(524_289));
         assert_eq!(right_leg, HitTag(524_294));
         assert!(last_target_part.0 < head.0);
+    }
+
+    #[test]
+    fn control_tags_sit_above_every_player_tag() {
+        let last_player = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+
+        let first = HitTag::from(SurfaceTag::Control(0));
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        assert!(first.0 > last_player.0);
+        assert!(last.0 > first.0);
     }
 }

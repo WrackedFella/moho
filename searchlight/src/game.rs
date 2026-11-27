@@ -29,6 +29,7 @@ use moho_ui_shell::{
     apply_engine_settings,
 };
 
+use crate::arena::ArenaControl;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -96,6 +97,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +117,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -401,6 +404,8 @@ struct Stage {
     window: Option<Arc<Window>>,
     status: String,
     title: String,
+    /// The use prompt the last frame showed, if any.
+    prompt: Option<String>,
     shell: Arc<Mutex<UiShell<ConsoleCommand, MenuAction>>>,
     /// Whether the cursor is captured for mouse look.
     cursor_captured: bool,
@@ -435,6 +440,7 @@ impl Stage {
             window: None,
             status: String::new(),
             title: String::new(),
+            prompt: None,
             shell: Arc::new(Mutex::new(UiShell::new(
                 console_commands::console(&BTreeMap::new()).0,
             ))),
@@ -510,6 +516,9 @@ impl Stage {
             );
         }
     }
+
+    /// Draws each of `controls` as its post in [`Paint::Control`], under its own mesh id.
+    fn add_controls(&mut self, _controls: &[ArenaControl]) {}
 
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
         if let Some(text) = hud::status_text(feedback) {
@@ -959,6 +968,13 @@ impl SearchlightGame {
         self
     }
 
+    /// Draws the arena's `controls` as posts.
+    #[must_use]
+    pub fn with_controls(mut self, controls: &[ArenaControl]) -> Self {
+        self.stage.add_controls(controls);
+        self
+    }
+
     /// Plays the sound file at `path` for every shot fired.
     #[must_use]
     pub fn with_shot_sound(mut self, path: &Path) -> Self {
@@ -1206,7 +1222,8 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+        WaveScore, arena_with, arena_with_controls, mag, press, rifle_from, test_config,
+        wave_tuning,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -3349,6 +3366,124 @@ mod tests {
         assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
     }
+
+    /// A game with the next-wave button 1.5 m in front of the player, who faces it.
+    fn game_with_a_button() -> SearchlightGame {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 6.0)],
+            &[Vec3::new(0.0, 0.0, 1.5)],
+        );
+        let mode = ArenaMode::new(arena, arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// Runs one frame without a renderer and returns the prompt it showed.
+    fn prompt_after_a_frame(game: &mut SearchlightGame) -> Option<String> {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        game.frame(&mut ctx, 0.0);
+        game.stage.prompt.clone()
+    }
+
+    fn turn_around(game: &mut SearchlightGame, clock: &mut GameClock) {
+        let turn = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(game, clock, &turn);
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = game_with_a_button();
+
+        let prompt = prompt_after_a_frame(&mut game);
+
+        assert_eq!(prompt.as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn the_prompt_names_the_rebound_use_key() {
+        let mut game = game_with_a_button();
+        let rebound = BTreeMap::from([("use".to_owned(), "G".to_owned())]);
+        let (bindings, warnings) = ActionBindings::load(&rebound);
+        assert_eq!(warnings, vec![]);
+        game.input = ActionMap::new(bindings, 1.0);
+
+        let prompt = prompt_after_a_frame(&mut game);
+
+        assert_eq!(prompt.as_deref(), Some("[G] Next wave"));
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_with_a_button();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let looking = prompt_after_a_frame(&mut game);
+
+        turn_around(&mut game, &mut clock);
+        let away = prompt_after_a_frame(&mut game);
+        turn_around(&mut game, &mut clock);
+        let back = prompt_after_a_frame(&mut game);
+
+        assert_eq!(looking.as_deref(), Some("[F] Next wave"));
+        assert_eq!(away, None);
+        assert_eq!(back.as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = game_with_a_button();
+        let mut paused = game_with_a_button();
+        let mut on_the_menu = game_with_a_button();
+        let shown = [
+            prompt_after_a_frame(&mut dead),
+            prompt_after_a_frame(&mut paused),
+            prompt_after_a_frame(&mut on_the_menu),
+        ];
+
+        dead.mode.sim_mut().kill_player();
+        paused.screen = Screen::Paused;
+        on_the_menu.screen = Screen::MainMenu;
+
+        let prompt = Some("[F] Next wave".to_owned());
+        assert_eq!(shown, [prompt.clone(), prompt.clone(), prompt]);
+        assert_eq!(prompt_after_a_frame(&mut dead), None);
+        assert_eq!(prompt_after_a_frame(&mut paused), None);
+        assert_eq!(prompt_after_a_frame(&mut on_the_menu), None);
+    }
+
+    #[test]
+    fn no_prompt_without_a_control_to_look_at() {
+        let mut game = game();
+
+        let prompt = prompt_after_a_frame(&mut game);
+
+        assert_eq!(prompt, None);
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let first = 3u64 << 32;
+        let ids: Vec<u64> = [0usize, 1, 7, 65_535]
+            .into_iter()
+            .map(|index| crate::arena::control_mesh_id(index).0)
+            .collect();
+        let last_enemy_id = ENEMY_MESH_BASE + (u64::from(u16::MAX) + 1) * ENEMY_MESH_SLOTS;
+
+        assert_eq!(ids, [first, first + 1, first + 7, first + 65_535]);
+        for id in ids {
+            assert!(id > last_enemy_id, "{id} is in the enemy range");
+            assert!(id > DUMMY_MESH_BASE + u64::from(u16::MAX) * 6, "{id}");
+        }
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
@@ -5051,6 +5186,43 @@ mod enemy_and_hud_tests {
         assert_eq!(floor.albedo[..3], flat.albedo[..3], "floor top colour");
         assert_eq!(floor.params, flat.params, "floor side colour");
         assert!(is_paint(wall, Paint::Arena));
+    }
+
+    #[test]
+    fn each_control_draws_as_its_post_in_a_paint_no_other_surface_has() {
+        use crate::control::ControlAction;
+
+        let centres = [Vec3::new(2.0, 0.6, 3.0), Vec3::new(-4.0, 0.6, 1.0)];
+        let controls: Vec<ArenaControl> = centres
+            .iter()
+            .map(|&centre| ArenaControl {
+                action: ControlAction::NextWave,
+                mesh: box_mesh(centre, Vec3::new(0.2, 0.6, 0.2)),
+            })
+            .collect();
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+
+        stage.add_controls(&controls);
+        stage.draw(&mut renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        let drawn = renderer.drawn();
+
+        assert_eq!(drawn.len(), 2, "one draw per post");
+        for (centre, (drawn_at, half, material)) in centres.iter().zip(&drawn) {
+            assert!(drawn_at.abs_diff_eq(*centre, 1e-4), "{drawn_at:?}");
+            assert!(half.abs_diff_eq(Vec3::new(0.2, 0.6, 0.2), 1e-4), "{half:?}");
+            assert!(is_paint(*material, Paint::Control));
+            for other in [
+                Paint::Arena,
+                Paint::ArenaFloor,
+                Paint::ArenaMark,
+                Paint::Dummy,
+                Paint::Enemy,
+                Paint::Struck,
+            ] {
+                assert!(!is_paint(*material, other), "{other:?}");
+            }
+        }
     }
 
     #[test]
