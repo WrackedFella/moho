@@ -87,7 +87,7 @@ The tick drains one channel per event family, in this order:
 | 1 | `process_ui_events` | load/new world, exit and main-menu requests (their auto-save runs in `frame`), resume, menus |
 | 2 | `process_graphics_events` | time of day, debug view |
 | 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider); `BlockPlaced`, `BlockRemoved` and `BlocksBatchModified` mark the autosave schedule edited |
-| 4 | `process_input_events` | wheel zoom, mine action (a mined resource is deposited in the pawn, which lists it in its `PickupFeed`; the handler then publishes `AudioEvent::PlaySound` for `flagstone/assets/pickup.wav`) |
+| 4 | `process_input_events` | wheel zoom, mine action (a mined resource is deposited in the pawn, which lists it in its `PickupFeed`; the handler then publishes `AudioEvent::PlaySound` for the resolved `pickup.wav`) |
 | 5 | `process_debug_events` | spawn, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
 Audio events are drained in `Game::frame` and forwarded to `AudioSystem`, since the runner
@@ -97,6 +97,8 @@ inverse distance beyond, not played past 100 m; `moho_audio/src/spatial.rs`). Th
 constant-power panned by direction relative to the listener's facing (centred sounds play
 3 dB quieter per ear; stereo files are folded to mono). A rear cue scales volume by 1.0 at
 or in front of the listener's side, falling linearly to half straight behind. Why channels instead of handling inside bus handlers: [events](events.md#the-channel-hand-off).
+
+Flagstone's sound files are resolved once at start into `Sounds` (`flagstone/src/app/sounds.rs`), held on `App` and passed to the handlers that publish cues. Each file is looked up through `moho_core::assets::AssetRoots`: the folder named by `--assets <folder>` (parsed by `moho_app::launch::split_assets_option`), then the `assets` folder of the install (`moho_core::install::Install::locate`: beside the executable, else the source checkout) ([ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md)). The four cues (`pickup`, `dig`, `mark`, `unmark`) are required: a start without one exits with an error naming the file and the folders searched. `audio/ui/button_click.mp3` and `audio/music/menu.ogg` are optional; absent, the UI click (`AudioSystem::new(ui_click)`) or the menu music (`EguiAdapter::with_menu_music`) is silent and the start logs the folders searched. `just package flagstone` lays out a copyable build. Details: [`assets/README.md`](../../flagstone/assets/README.md).
 
 ## 4 Frame
 

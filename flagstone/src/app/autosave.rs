@@ -239,6 +239,7 @@ mod tests {
             crate::app::config::AppConfig::builder()
                 .prefs(prefs)
                 .build(),
+            crate::app::sounds::Sounds::in_checkout(),
         );
         app.prefs_path = None;
         app.saves_dir = saves_dir(temp);

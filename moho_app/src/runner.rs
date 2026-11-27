@@ -233,7 +233,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
 
         // The audio system is optional: without a device the game runs silent.
         if self.config.init_audio {
-            match AudioSystem::new() {
+            match AudioSystem::new(self.config.ui_click.clone()) {
                 Ok(audio) => {
                     tracing::info!("Audio system initialized successfully");
                     self.audio = Some(audio);
@@ -396,6 +396,7 @@ mod tests {
             window_title: "Title".to_owned(),
             loop_config: crate::LoopConfig::new(60),
             init_audio: false,
+            ui_click: None,
             toggle_keys: None,
             window_mode,
         }

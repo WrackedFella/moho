@@ -21,36 +21,25 @@ pub struct AudioCache {
 }
 
 impl AudioCache {
-    /// Create a new audio cache and pre-load common UI sounds
-    pub fn new() -> AudioResult<Self> {
+    /// Create a new audio cache and pre-load the UI click, when one is given.
+    ///
+    /// # Errors
+    ///
+    /// [`AudioError::FileNotFound`] naming the click when it cannot be read.
+    pub fn new(ui_click: Option<&std::path::Path>) -> AudioResult<Self> {
         let mut cache = Self {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         };
 
-        cache.preload_ui_sounds()?;
-        Ok(cache)
-    }
-
-    /// Pre-load common UI sounds to eliminate loading delays
-    fn preload_ui_sounds(&mut self) -> AudioResult<()> {
-        let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
-
-        for sound_path in ui_sounds {
-            if let Ok(audio_data) = std::fs::read(sound_path) {
-                self.ui_sound_cache
-                    .insert(sound_path.to_string(), audio_data);
-                debug!(path = sound_path, "Pre-loaded UI sound");
-            } else {
-                // Don't fail initialization if UI sounds are missing
-                debug!(
-                    path = sound_path,
-                    "UI sound file not found (will load on-demand)"
-                );
-            }
+        if let Some(click) = ui_click {
+            let key = click.to_string_lossy().into_owned();
+            let bytes = std::fs::read(click)
+                .map_err(|e| AudioError::FileNotFound(format!("{key}: {e}")))?;
+            cache.ui_sound_cache.insert(key, bytes);
+            debug!(path = %click.display(), "Pre-loaded UI click");
         }
-
-        Ok(())
+        Ok(cache)
     }
 
     /// Get UI sound data with low-latency access.
@@ -176,5 +165,41 @@ mod tests {
             "{audio:?}"
         );
         assert!(matches!(ui, Err(AudioError::FileNotFound(_))), "{ui:?}");
+    }
+
+    #[test]
+    fn preloads_only_the_given_click() {
+        let click = temp_file(b"click-bytes");
+        let given = AudioCache::new(Some(click.path())).expect("a readable click preloads");
+        let none = AudioCache::new(None).expect("no click is allowed");
+        let mut given = given;
+        let mut none = none;
+
+        let preloaded: Vec<&String> = given.ui_sound_cache.keys().collect();
+        let click_path = click.path().to_str().expect("utf-8 path").to_owned();
+        assert_eq!(preloaded, vec![&click_path]);
+        assert!(none.ui_sound_cache.is_empty(), "{:?}", none.ui_sound_cache);
+        assert!(none.audio_cache.is_empty());
+        click.close().expect("delete temp file");
+        assert_eq!(given.get_ui_sound(&click_path).unwrap(), b"click-bytes");
+        assert!(none.get_ui_sound(&click_path).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_given_click_is_an_error_naming_it() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("absent.mp3");
+
+        let cache = AudioCache::new(Some(&missing));
+
+        match cache {
+            Err(AudioError::FileNotFound(message)) => {
+                assert!(
+                    message.contains(&missing.display().to_string()),
+                    "{message}"
+                );
+            }
+            other => panic!("expected FileNotFound, got {other:?}"),
+        }
     }
 }

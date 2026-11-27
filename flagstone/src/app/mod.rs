@@ -21,6 +21,7 @@ pub mod input_state;
 pub mod physics_controller;
 pub mod renderer_setup;
 pub mod scene_loader;
+pub mod sounds;
 pub mod view_level;
 pub mod world_generator;
 pub mod world_geometry;

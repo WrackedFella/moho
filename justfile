@@ -215,7 +215,8 @@ package game:
 
 # Self-test of scripts/package.sh with a stub executable: the package holds the executable and
 # the committed assets and content, no generator tool or README, and a second run drops
-# whatever the first left in the output folder. It never builds.
+# whatever the first left in the output folder. The flagstone layout is checked the same way
+# (assets only). It never builds.
 package-test:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -277,6 +278,22 @@ package-test:
     refuses "$guard/sub" "$guard/sub/../.."
     refuses "$root" "$work"
     refuses "$guard" /
+    # Flagstone ships its four cues under assets/ and no content folder.
+    flagstone_exe="$work/flagstone"
+    flagstone_out="$work/flagstone-out"
+    printf '#!/bin/sh\n' > "$flagstone_exe"
+    chmod +x "$flagstone_exe"
+    scripts/package.sh flagstone "$flagstone_exe" "$flagstone_out"
+    [[ -f "$flagstone_out/flagstone" && -x "$flagstone_out/flagstone" ]] || fail "flagstone executable missing or not executable"
+    flagstone_expected="$(git ls-files flagstone/assets | grep -v '/tools/' | grep -v '\.md$' | sed 's#^flagstone/##' | LC_ALL=C sort)"
+    flagstone_packaged="$(find "$flagstone_out/assets" -type f | sed "s#^$flagstone_out/##" | LC_ALL=C sort)"
+    for must in assets/pickup.wav assets/dig.wav assets/mark.wav assets/unmark.wav; do
+        [[ -f "$flagstone_out/$must" ]] || fail "$must missing from the flagstone package"
+    done
+    [[ "$flagstone_packaged" == "$flagstone_expected" ]] || fail "flagstone package files differ from the committed files (expected, then packaged): $flagstone_expected -- $flagstone_packaged"
+    [[ ! -e "$flagstone_out/assets/tools" ]] || fail "flagstone assets/tools shipped"
+    [[ ! -e "$flagstone_out/content" ]] || fail "flagstone shipped a content folder"
+    [[ -z "$(find "$flagstone_out" -name '*.md')" ]] || fail "a markdown file shipped with flagstone"
     echo "package-test: OK"
 
 run-record-test:

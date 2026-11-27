@@ -17,8 +17,9 @@ The audio system is built around five core components:
 ```rust
 use moho_audio::{AudioSystem, AudioEvent};
 
-// Initialize the audio system (opens default audio device)
-let mut audio_system = AudioSystem::new()?;
+// Initialize the audio system (opens default audio device). UI events play the click the
+// game names, or nothing when it passes `None`.
+let mut audio_system = AudioSystem::new(Some("assets/audio/ui/button_click.mp3".into()))?;
 
 // Play a sound effect at full volume
 audio_system.play_sound("assets/sfx/explosion.wav", 1.0)?;

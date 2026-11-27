@@ -4,18 +4,16 @@ use std::error::Error as StdError;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use moho_app::launch::{LaunchError, split_assets_option};
 use moho_core::assets::{AssetError, AssetRoots};
 use moho_core::content::ContentRoots;
 use moho_core::install::{Install, InstallError};
-use thiserror::Error;
 
 use crate::kit::{ENEMY_KIT_ID, START_KIT_ID};
 use crate::levels::LevelChoice;
 use crate::sim::SimConfig;
 use crate::tuning::shipped_with_enemy;
 use crate::{SHIPPED_FOLDERS, checkout_root, mods_dir};
-
-const ASSETS_OPTION: &str = "--assets";
 
 /// The launch arguments after the program name.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -26,18 +24,6 @@ pub struct Launch {
     pub assets: Option<PathBuf>,
 }
 
-/// A launch argument that cannot be used.
-#[derive(Debug, Error, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum LaunchError {
-    /// `--assets` was the last argument.
-    #[error("`--assets` needs a folder after it")]
-    MissingValue,
-    /// `--assets` was given more than once.
-    #[error("`--assets` was given more than once")]
-    Repeated,
-}
-
 /// Reads `--assets <folder>` and the first other argument as the level; later arguments are
 /// ignored.
 ///
@@ -45,20 +31,11 @@ pub enum LaunchError {
 /// [`LaunchError::MissingValue`] for `--assets` with nothing after it;
 /// [`LaunchError::Repeated`] for a second `--assets`.
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, LaunchError> {
-    let mut launch = Launch::default();
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        if arg == ASSETS_OPTION {
-            if launch.assets.is_some() {
-                return Err(LaunchError::Repeated);
-            }
-            let folder = args.next().ok_or(LaunchError::MissingValue)?;
-            launch.assets = Some(PathBuf::from(folder));
-        } else if launch.level.is_none() {
-            launch.level = Some(arg);
-        }
-    }
-    Ok(launch)
+    let (assets, rest) = split_assets_option(args)?;
+    Ok(Launch {
+        level: rest.into_iter().next(),
+        assets,
+    })
 }
 
 /// The install holding the shipped folders: beside the executable at `exe_dir`, else the
@@ -223,12 +200,6 @@ mod tests {
                 assets: Some(PathBuf::from("d"))
             }
         );
-    }
-
-    #[test]
-    fn launch_errors_name_the_option() {
-        assert!(LaunchError::MissingValue.to_string().contains("--assets"));
-        assert!(LaunchError::Repeated.to_string().contains("--assets"));
     }
 
     #[test]
