@@ -9,18 +9,23 @@ pub enum ControlAction {
 
 impl ControlAction {
     /// The action a marker's `action` extra names, or `None` when it is not on the list.
-    pub fn parse(_name: &str) -> Option<Self> {
-        None
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether only the host may trigger this action.
     pub fn is_host_action(self) -> bool {
-        false
+        match self {
+            Self::NextWave => true,
+        }
     }
 
     /// Whether a use from player `slot` triggers this action; host actions only from slot 0.
-    pub fn honored_from(self, _slot: u8) -> bool {
-        false
+    pub fn honored_from(self, slot: u8) -> bool {
+        !self.is_host_action() || slot == 0
     }
 }
 

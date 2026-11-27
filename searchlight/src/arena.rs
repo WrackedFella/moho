@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
@@ -22,6 +22,9 @@ const DUMMY_PREFIX: &str = "dummy_";
 const ENEMY_SPAWN_PREFIX: &str = "enemy_spawn_";
 const WAYPOINT_PREFIX: &str = "waypoint_";
 const COVER_PREFIX: &str = "cover_";
+const CONTROL_PREFIX: &str = "control_";
+/// Half extents of a control post: 0.4 x 1.2 x 0.4 m.
+const CONTROL_HALF: Vec3 = Vec3::new(0.2, 0.6, 0.2);
 
 /// Why an arena level cannot be used.
 #[derive(Debug, thiserror::Error)]
@@ -265,7 +268,13 @@ impl Arena {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
         let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
         let material_names = level.meshes.iter().map(|m| m.material.clone()).collect();
-        let (nav, nav_fallback) = match NavMesh::build(&meshes, nav_profile()) {
+        let controls = controls_of(level)?;
+        let nav_meshes: Vec<WorldMesh> = meshes
+            .iter()
+            .chain(controls.iter().map(|control| &control.mesh))
+            .cloned()
+            .collect();
+        let (nav, nav_fallback) = match NavMesh::build(&nav_meshes, nav_profile()) {
             Ok(nav) => (nav, false),
             Err(error) if markers.mode == LevelMode::Sandbox => {
                 tracing::warn!(%error, "no walkable area; the sandbox runs without a navmesh");
@@ -306,20 +315,101 @@ impl Arena {
             enemy_spawns,
             route,
             covers: positions(&markers.covers),
-            controls: Vec::new(),
+            controls,
         })
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
-    /// [`SurfaceTag::World`], stepped once so they are queryable.
+    /// [`SurfaceTag::World`], and its control posts, tagged [`SurfaceTag::Control`] with their
+    /// index; stepped once so they are queryable.
     pub fn physics_world(&self) -> PhysicsWorld {
         let mut world = PhysicsWorld::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             world.set_world_mesh(arena_mesh_id(index), mesh, SurfaceTag::World.into());
         }
+        for (index, control) in self.controls.iter().enumerate() {
+            let tag = SurfaceTag::Control(
+                u16::try_from(index).expect("from_level refuses more controls than a u16 names"),
+            );
+            world.set_world_mesh(control_mesh_id(index), &control.mesh, tag.into());
+        }
         world.step(SETTLE_DT);
         world
     }
+}
+
+/// The posts of `level`'s `control_NN` markers, in file order.
+///
+/// # Errors
+/// [`ArenaError::BadControl`] naming a marker whose `action` extra is missing or unknown, or
+/// the first one past the `u16` range of control ids.
+fn controls_of(level: &Level) -> Result<Vec<ArenaControl>, ArenaError> {
+    let mut controls = Vec::new();
+    for marker in level
+        .markers
+        .iter()
+        .filter(|marker| marker.name.starts_with(CONTROL_PREFIX))
+    {
+        let bad = || ArenaError::BadControl {
+            marker: marker.name.clone(),
+        };
+        let action = marker
+            .properties
+            .get("action")
+            .and_then(|name| ControlAction::parse(name))
+            .ok_or_else(bad)?;
+        if controls.len() > usize::from(u16::MAX) {
+            return Err(bad());
+        }
+        controls.push(ArenaControl {
+            action,
+            mesh: box_mesh(marker.position + Vec3::Y * CONTROL_HALF.y, CONTROL_HALF),
+        });
+    }
+    Ok(controls)
+}
+
+/// A closed box with outward-facing triangles and a normal per face.
+pub(crate) fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
+    oriented_box_mesh(centre, half, Quat::IDENTITY)
+}
+
+/// [`box_mesh`] with its axes turned by `rotation` about its centre.
+pub(crate) fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
+    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
+    // seen from outside.
+    const FACES: [(Vec3, Vec3, Vec3); 6] = [
+        (Vec3::X, Vec3::Y, Vec3::Z),
+        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+        (Vec3::Y, Vec3::Z, Vec3::X),
+        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+        (Vec3::Z, Vec3::X, Vec3::Y),
+        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
+    ];
+    let mut positions = Vec::with_capacity(24);
+    let mut normals = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    for (normal, u, v) in FACES {
+        let first = positions.len() as u32;
+        let (du, dv) = (u * half, v * half);
+        let face_centre = centre + rotation * (normal * half);
+        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
+            positions.push((face_centre + rotation * corner).to_array());
+            normals.push((rotation * normal).to_array());
+        }
+        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+    }
+    let count = positions.len();
+    WorldMesh::new(
+        positions,
+        normals,
+        vec![1.0; count],
+        vec![[0.0; 3]; count],
+        vec![1.0; count],
+        vec![0; count],
+        indices,
+    )
+    .expect("a box has matching channels and whole triangles")
 }
 
 /// Reads the level at `path` and its markers.
@@ -356,8 +446,8 @@ pub fn arena_mesh_id(index: usize) -> WorldMeshId {
 
 /// The id under which the physics world and the renderer both know the post of
 /// `Arena::controls[index]`, on a range clear of the arena, dummy and enemy meshes.
-pub fn control_mesh_id(_index: usize) -> WorldMeshId {
-    WorldMeshId(0)
+pub fn control_mesh_id(index: usize) -> WorldMeshId {
+    WorldMeshId((3 << 32) + index as u64)
 }
 
 #[cfg(test)]
