@@ -65,7 +65,9 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, LaunchE
 /// source checkout.
 ///
 /// # Errors
-/// [`InstallError`] when neither place holds every shipped folder.
+/// [`InstallError::Incomplete`] when `exe_dir` holds some but not all shipped folders (no
+/// fallback to the checkout); [`InstallError::NotFound`] when it holds none and the checkout
+/// lacks one.
 pub fn locate(exe_dir: &Path) -> Result<Install, InstallError> {
     Install::locate(exe_dir, &checkout_root(), SHIPPED_FOLDERS)
 }
@@ -74,7 +76,8 @@ pub fn locate(exe_dir: &Path) -> Result<Install, InstallError> {
 /// built.
 ///
 /// # Errors
-/// [`AssetError::MissingFolder`] naming the folder that does not exist.
+/// [`AssetError::MissingFolder`] naming a folder that does not exist;
+/// [`AssetError::NotAFolder`] naming a path that is a file.
 pub fn asset_roots(launch: &Launch, placeholders: &Path) -> Result<AssetRoots, AssetError> {
     let roots = AssetRoots::placeholders(placeholders)?;
     match &launch.assets {
