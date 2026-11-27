@@ -81,7 +81,7 @@ Item sections (`ItemKind`), each valid only on its class:
 
 | Section | Class | Fields |
 |---|---|---|
-| `weapon` | `weapon` | `well`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty); `searchlight_rules::RifleDef`. A weapon that still names a `range` or a `damage` is refused: a round's reach comes from its flight and its damage from the round |
+| `weapon` | `weapon` | `well`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty), optional `muzzle_velocity_factor` (the barrel's scale on the speed its rounds leave at; finite and above 0, 1.0 when absent; a bad value is refused as `VelocityFactorError`); `searchlight_rules::RifleDef`. A weapon that still names a `range` or a `damage` is refused: a round's reach comes from its flight and its damage from the round |
 | `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity` |
 | `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, above `MIN_SPEED` = 100), `drag` (1/s, 0 or more), `damage` (at least 1: the hit's damage at muzzle velocity, scaled down in proportion to the speed the round arrives at, never below 1); all required, a bad value fails the load naming the round and the field; `searchlight_rules::RoundSpec` |
 | `rig` | `gear` | `magazine_slots` |
@@ -90,7 +90,9 @@ Item sections (`ItemKind`), each valid only on its class:
 A `carried` entry is `{ item }`, plus `round` and `rounds` when the item is a magazine, or `count` when it is a round. The `start` kit resolves into the player's `Loadout`; the `enemy` kit resolves into the `Remains` every dead enemy leaves (`searchlight::kit::load_enemy`). A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
 full magazine. `Kit` resolution fails (`KitError`) on an unknown item, an item of the wrong kind,
 a round of another caliber than its magazine, more rounds than the magazine holds, a `loaded`
-magazine whose `well` differs from the weapon's, or more magazines than the rig has slots. Rig
+magazine whose `well` differs from the weapon's, a round of the weapon's `well` that the barrel launches
+at a speed that is not finite or not above `MIN_SPEED` (`TooSlowFromWeapon`, `NotFiniteFromWeapon`),
+or more magazines than the rig has slots. Rig
 magazines of another `well` are allowed; reload skips them.
 
 `weapons.toml` is no longer read: a mod that still ships one is ignored without an error.

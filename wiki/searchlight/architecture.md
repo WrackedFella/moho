@@ -67,7 +67,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (cooldown, reload, charge, magazine size) and its rounds' muzzle velocity, drag and damage load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (cooldown, reload, charge, magazine size) and its rounds' muzzle velocity, drag and damage, and the barrel's muzzle velocity factor (scaling the rounds' speed at launch), load from
 `content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
