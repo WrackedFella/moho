@@ -1,12 +1,12 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `searchlight_rules/src/accuracy.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `searchlight_rules/src/accuracy.rs`, `searchlight_rules/src/stats.rs`, `searchlight_rules/src/load.rs`, `searchlight_rules/src/carried.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Item`, `Remains`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `PartOffset`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Item`, `Remains`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `PartOffset`, `Accuracy`, `AccuracyTuning`, `Stat`, `PlayerDef`, `LoadState`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -46,6 +46,8 @@ flowchart LR
 | `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon, the rounds' ballistics and damage from the kit, and the player's `Loadout` from the kit; `with_enemy_kit` adds the enemy kit's `Remains` and joins its rounds' ballistics to the sim's, so a looted round still flies. The search numbers (`SEARCH_TICKS`, `SEARCH_REACH`, `BODY_RADIUS`) are set here ([looting](#10-looting)) |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `CheckGear` (hold C) sets `SearchlightCommand::check_gear` while held past the hold threshold, and a tap of C still checks the magazine; `Use` (default F) sets `SearchlightCommand::use_pressed` on the tick it goes down; `Inventory` (default Tab or I) opens and closes the inventory screen, and `SearchlightCommand::inventory` carries the screen's one `InventoryCommand` (`Move { from, to }` or `Close`) per tick; `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide`; `Aim` (right mouse by default) is held for the zoomed view, and `scale_look` divides a look by the zoom factor so the turn matches the drawn view |
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure maths the game and sim share, with `lean_offset` taking its trig from `moho_core::sim_math` ([posture](#8-posture)) |
+| `player` | `player::load(roots)`: the `player` table of `content/player.toml` as a `searchlight_rules::PlayerDef` |
+| `character` | `character_lists(sim)`: the character screen as `moho_ui_shell::ItemLists`, one list per `Stat` led by its resolved value, then one row per contribution in resolution order; it shows what the stat layer resolved and never recomputes a stat |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `round` | `RoundInFlight` and `step_round`: one step of a player's round, cast as a segment through `resolve_shot` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
@@ -316,4 +318,16 @@ A dead enemy leaves a body in `SearchlightSim` (one per target number, at the fl
 4. While the screen is open the sim keeps running. The screen's moves reach it as `SearchlightCommand::inventory`; `Loadout::move_item(body, from, to)` applies one between the player's inventory, the rig's magazine slots and the body, refusing with `MoveRefused` (nothing there, no body, a non-magazine bound for a slot, no free slot) and changing nothing then. A rig holds magazines only while worn: taking a body's rig moves the rig's id to the destination as a plain `Item::Rig(id)` and leaves its magazines on the body as carried items, listed as separate rows. Nothing limits a move by weight or room. A move touching the body is dropped once it is out of reach.
 5. `InventoryCommand::Close` (Escape or the inventory key) ends the looting.
 
-An item's `weight` (kg, required) is data only; no rule reads it yet ([content format](../reference/content-format.md)).
+## 11 Load and stats
+
+`searchlight_rules` resolves the player's capability through one stat layer (`stats.rs`); `searchlight` only supplies the data and shows the result.
+
+1. A `Stat` (`CarryCapacity`, `MovementSpeed`, `Stamina`) starts from `PlayerDef::baseline` (`content/player.toml`: capacity is `strength` times `carry_capacity_per_strength`).
+2. Sources declare `Contribution`s (`SourceLabel` and `Verb`: `Add`, `Scale` or `Cap`): `equipment_contributions` from the `stats` of the worn rig and backpack, `load_contributions` from the `LoadState`, and a `Stance` scale while a lean is held (`SearchlightSim::carry_sheet`).
+3. `resolve` applies every add, then every scale, then the lowest cap, then the floor; input order never changes the result. `explain` lists one stat's contributions in that order; the character screen shows them.
+4. `load` sums the `weight` of everything carried (rifle, chambered round, magazines and their rounds, rig, backpack, inventory), walked once by `loadout_items` and `remains_items` (`carried.rs`). `load_state` compares it with the resolved capacity against `LoadThresholds` (fractions of capacity, reached at exactly that load): `Slowed` scales movement speed by `slowed_scale`, `NoSprint` also caps stamina at 0, `CannotMove` also caps movement speed at 0.
+5. `SearchlightSim::carry_sheet` returns a `CarrySheet` (load, capacity, state, contributions) from the loadout and `SimConfig::carry` (`CarryConfig`: the `PlayerDef`, the item definitions by id, the rifle's item id). The sim scales its walking speed by the resolved `MovementSpeed` each tick.
+6. `tuning::shipped` and `shipped_with_enemy` build the `SimConfig` from the content roots with the catalogue's real definitions; `tuning::tuning` builds a config with weightless placeholder definitions (load 0) and `SHIPPED_PLAYER` for tests.
+7. The game shows the state as the HUD load icon (`hud::load_icon`, colour per `LoadState`, drawn while carrying anything), a load header on the inventory screen and the character screen (`Screen::Character`, `SearchlightAction::Character`, `K` by default). Like the inventory, the character screen takes input and leaves the world running.
+
+Item and player files: [content format](../reference/content-format.md).
