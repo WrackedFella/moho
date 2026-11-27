@@ -8612,14 +8612,14 @@ mod tests {
     #[test]
     fn picking_wear_on_a_gear_screen_rig_row_queues_a_wear() {
         use crate::inventory::INVENTORY;
-        use searchlight_rules::{ItemClass, ItemDef, ItemId, ItemKind, RigSpec};
+        use searchlight_rules::{ItemClass, ItemDef, ItemId, ItemKind};
 
         let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.carry.items.insert(
             ItemId::new("rig_five"),
             ItemDef {
                 class: ItemClass::Gear,
-                kind: ItemKind::Rig(RigSpec { magazine_slots: 5 }),
+                kind: ItemKind::Rig(crate::test_support::rig_spec(5)),
                 ..crate::test_support::weighing(0.0)
             },
         );

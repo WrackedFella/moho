@@ -152,7 +152,7 @@ pub fn load_contributions(state: LoadState, slowed_scale: f32) -> Vec<Contributi
 mod tests {
     use super::*;
     use crate::inventory::{Item, RoundStack};
-    use crate::item::{ItemDef, RigSpec};
+    use crate::item::ItemDef;
     use crate::rifle::Rifle;
     use crate::rig::Rig;
     use crate::stats::{PlayerDef, SourceLabel, Stat, Verb, equipment_contributions, resolve};
@@ -204,7 +204,7 @@ mod tests {
     fn loadout(held_rounds: u32, inventory: Vec<Item>) -> Loadout {
         let rifle = Rifle::loaded(rifle_well(), mag_of("mag", "rifle", 30, held_rounds))
             .expect("the magazine fits the rifle");
-        let rig = Rig::new(id("rig"), &RigSpec { magazine_slots: 3 });
+        let rig = Rig::new(id("rig"), &crate::test_support::rig_spec(&[("rifle", 3)]));
         Loadout::new(rifle, rig).with_inventory(inventory)
     }
 
@@ -402,7 +402,7 @@ mod tests {
         ]);
         let rifle = Rifle::loaded(rifle_well(), mag_of("mag", "rifle", 30, 10))
             .expect("the magazine fits the rifle");
-        let mut rig = Rig::new(id("rig"), &RigSpec { magazine_slots: 3 });
+        let mut rig = Rig::new(id("rig"), &crate::test_support::rig_spec(&[("rifle", 3)]));
         rig.stow(mag_of("mag3", "rifle", 30, 30))
             .expect("a slot is free");
         let loadout = Loadout::new(rifle, rig)
@@ -489,7 +489,7 @@ mod tests {
     fn a_worn_rigs_stats_count_like_a_backpacks() {
         let player = player();
         let rig = def(json!({
-            "class": "gear", "size": [3, 2], "weight": 0.0, "rig": {"magazine_slots": 3},
+            "class": "gear", "size": [3, 2], "weight": 0.0, "rig": {"magazine_slots": {"rifle": 3}},
             "stats": [{"stat": "carry_capacity", "add": 4.0}]
         }));
         let items = items(&[("rig", rig)]);

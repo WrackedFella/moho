@@ -30,7 +30,7 @@ charge_ticks = 30
 [mag_rifle]
 class = "gear"
 size = [1, 2]
-magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 30, slot = "rifle" }
 
 [round_rifle_ball]
 class = "consumable"
@@ -84,15 +84,15 @@ Item sections (`ItemKind`), each valid only on its class:
 | Section | Class | Fields |
 |---|---|---|
 | `weapon` | `weapon` | `well`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty); `searchlight_rules::RifleDef`. A weapon that still names a `range` or a `damage` is refused: a round's reach comes from its flight and its damage from the round |
-| `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity` |
+| `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity`, `slot` (the `SlotKind` of rig slot it takes, such as `rifle` or `pistol`; a kind no rig defines is allowed and fits no slot) |
 | `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, above `MIN_SPEED` = 100), `drag` (1/s, 0 or more), `damage` (at least 1: the hit's damage at muzzle velocity, scaled down in proportion to the speed the round arrives at, never below 1); all required, a bad value fails the load naming the round and the field; `searchlight_rules::RoundSpec` |
-| `rig` | `gear` | `magazine_slots` |
+| `rig` | `gear` | `magazine_slots`: slot count by `SlotKind`, such as `{ rifle = 3 }`; a kind left out has no slots, and slots run in sorted kind order |
 | `backpack` | `gear` | none; the section is `{}` and marks an item for the backpack slot |
 
 A `carried` entry is `{ item }`, plus `round` and `rounds` when the item is a magazine, or `count` when it is a round. The `start` kit resolves into the player's `Loadout`; the `enemy` kit resolves into the `Remains` a dead enemy leaves (`searchlight::kit::load_enemy`), and a grade with an `enemy_<grade>` kit leaves that kit's remains instead (`load_enemy_for_grade`); a grade without one leaves the `enemy` kit's. A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
 full magazine. `Kit` resolution fails (`KitError`) on an unknown item, an item of the wrong kind,
 a round of another caliber than its magazine, more rounds than the magazine holds, a `loaded`
-magazine whose `well` differs from the weapon's, or more magazines than the rig has slots. Rig
+magazine whose `well` differs from the weapon's, or more magazines of a kind than the rig has slots of that kind. Rig
 magazines of another `well` are allowed; reload skips them.
 
 `weapons.toml` is no longer read: a mod that still ships one is ignored without an error.

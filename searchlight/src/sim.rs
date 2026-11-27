@@ -1839,7 +1839,7 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
+    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig};
 
     use super::*;
     use crate::tag::SurfaceTag;
@@ -1920,9 +1920,7 @@ mod tests {
     fn empty_rig(slots: u32) -> Rig {
         Rig::new(
             ItemId::new("test_rig"),
-            &RigSpec {
-                magazine_slots: slots,
-            },
+            &crate::test_support::rig_spec(slots),
         )
     }
 
@@ -6127,9 +6125,7 @@ mod tests {
 
     fn rig_def(slots: u32, capacity: Option<Verb>) -> searchlight_rules::ItemDef {
         gear_def(
-            searchlight_rules::ItemKind::Rig(RigSpec {
-                magazine_slots: slots,
-            }),
+            searchlight_rules::ItemKind::Rig(crate::test_support::rig_spec(slots)),
             capacity.map(capacity_stat).unwrap_or_default(),
         )
     }
@@ -6178,14 +6174,14 @@ mod tests {
         let veteran_remains = Remains {
             rig: Some(Rig::new(
                 ItemId::new("rig_five"),
-                &RigSpec { magazine_slots: 5 },
+                &crate::test_support::rig_spec(5),
             )),
             ..Remains::default()
         };
         let default_remains = Remains {
             rig: Some(Rig::new(
                 ItemId::new("test_rig"),
-                &RigSpec { magazine_slots: 3 },
+                &crate::test_support::rig_spec(3),
             )),
             ..Remains::default()
         };

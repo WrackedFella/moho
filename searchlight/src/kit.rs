@@ -218,7 +218,7 @@ charge_ticks = 30
 [mag_rifle]
 class = "gear"
 size = [1, 2]
-magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 30, slot = "rifle" }
 weight = 0.25
 
 [round_ball]
@@ -230,7 +230,7 @@ weight = 0.01
 [rig_chest]
 class = "gear"
 size = [3, 2]
-rig = { magazine_slots = 3 }
+rig = { magazine_slots = { rifle = 3 } }
 weight = 1.0
 
 [crowbar]
@@ -517,7 +517,7 @@ weight = 2.0
 [mag_rifle_20]
 class = "gear"
 size = [1, 2]
-magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 20, slot = "rifle" }
 weight = 0.2
 "#;
 
@@ -615,7 +615,7 @@ carried = [{ item = "bandage" }]
 [rig_assault]
 class = "gear"
 size = [3, 3]
-rig = { magazine_slots = 5 }
+rig = { magazine_slots = { rifle = 5 } }
 weight = 2.0
 "#;
 
@@ -716,7 +716,7 @@ weight = 2.0
                 .map(|entry| entry.verb)
         };
         let slots = |id: &str| match &items.require(id).expect("the rig is defined").kind {
-            ItemKind::Rig(spec) => spec.magazine_slots,
+            ItemKind::Rig(spec) => spec.magazine_slots.values().sum::<u32>(),
             other => panic!("{id} is not a rig: {other:?}"),
         };
         let weight = |id: &str| items.require(id).expect("the item is defined").weight;
