@@ -8,12 +8,14 @@ mod grade;
 mod inventory;
 mod item;
 mod kit;
+mod load;
 mod loadout;
 mod magazine;
 mod mix;
 mod posture;
 mod rifle;
 mod rig;
+mod stats;
 #[cfg(test)]
 mod test_support;
 mod weapon;
@@ -27,14 +29,19 @@ pub use body::{Body, BodyPart, BodyProfile, HitReport};
 pub use grade::{Grade, GradeDials, UnknownGrade};
 pub use inventory::{Item, MoveRefused, Place, Remains, RoundStack, Source};
 pub use item::{
-    BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle,
+    BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, ItemStat, Lifecycle,
     MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size,
 };
 pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};
+pub use load::{LoadState, LoadThresholds, load, load_contributions, load_state};
 pub use loadout::Loadout;
 pub use magazine::{Magazine, MagazineError, MagazineLevel};
 pub use mix::{GradeMix, GradeMixError, WaveGrades};
 pub use posture::{BODY_RIGHT, Lean, LeanReach, LeanSide, LeanTuning, PartOffset, leaned_parts};
 pub use rifle::{Rifle, RifleError, Shot};
 pub use rig::Rig;
+pub use stats::{
+    Contribution, PlayerDef, SourceLabel, Stat, UnknownItem, Verb, equipment_contributions,
+    explain, resolve,
+};
 pub use weapon::{FireBehaviour, RifleDef};

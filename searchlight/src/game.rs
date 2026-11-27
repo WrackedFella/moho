@@ -7477,6 +7477,79 @@ mod tests {
         );
     }
 
+    /// A game whose player carries `kg` of ballast against 30 kg of capacity, ticked once.
+    fn game_carrying(kg: f32) -> SearchlightGame {
+        let config = crate::test_support::carrying(test_config(rifle_from(mag(30, 5)), vec![]), kg);
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        game
+    }
+
+    /// The titles of the lists on the top screen and the row labels of each.
+    fn character_screen(game: &mut SearchlightGame) -> Vec<(String, Vec<String>)> {
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::K), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::K), false, false);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(game, Duration::ZERO);
+        let mut shell = game.stage.shell();
+        shell
+            .menu_mut()
+            .top_lists()
+            .map(|screen| {
+                screen
+                    .lists
+                    .iter()
+                    .map(|list| {
+                        let rows = list.rows.iter().map(|row| row.label.clone()).collect();
+                        (list.title.clone(), rows)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn character_screen_lists_load_under_movement_speed() {
+        let mut game = game_carrying(20.0);
+
+        let screen = character_screen(&mut game);
+
+        let titles: Vec<&str> = screen.iter().map(|(title, _)| title.as_str()).collect();
+        assert_eq!(titles, ["Carry capacity", "Movement speed", "Stamina"]);
+        let speed = &screen[1].1;
+        assert!(
+            speed.contains(&"Load: speed ×0.70".to_owned()),
+            "movement speed lists {speed:?}"
+        );
+    }
+
+    #[test]
+    fn character_screen_lists_no_load_under_movement_speed_for_a_fine_player() {
+        let mut game = game_carrying(15.0);
+
+        let screen = character_screen(&mut game);
+
+        let speed: Vec<&String> = screen
+            .iter()
+            .filter(|(title, _)| title == "Movement speed")
+            .flat_map(|(_, rows)| rows)
+            .collect();
+        assert!(!screen.is_empty(), "the character screen did not open");
+        assert!(
+            speed.iter().all(|row| !row.starts_with("Load")),
+            "{speed:?}"
+        );
+    }
+
     /// The inventory screen open on a body that carried a magazine and then a rag, and the
     /// clock its ticks are run on.
     fn body_screen_carrying_a_magazine_then_a_rag() -> (SearchlightGame, GameClock) {

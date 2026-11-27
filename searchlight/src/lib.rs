@@ -21,6 +21,7 @@ pub mod levels;
 pub mod menu;
 pub mod menu_feed;
 pub mod mode;
+pub mod player;
 pub mod round;
 pub mod shot;
 pub mod sim;

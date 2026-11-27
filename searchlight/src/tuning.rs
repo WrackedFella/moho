@@ -4,11 +4,12 @@ use std::collections::BTreeMap;
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
-    AccuracyTuning, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains, RoundStats,
+    AccuracyTuning, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, LoadThresholds, PlayerDef,
+    Remains, RoundStats,
 };
 
 use crate::brain::EnemyTuning;
-use crate::sim::SimConfig;
+use crate::sim::{CarryConfig, SimConfig};
 
 /// The player's and every target's body: Source's 0.81 m wide, 1.83 m tall capsule, eye at
 /// 1.63 m.
@@ -33,6 +34,21 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
             roll: 0.0,
         },
         head_radius: 0.0,
+    },
+};
+
+/// The player's attribute sheet as `content/player.toml` ships it, for a config built with no
+/// content roots at hand.
+pub const SHIPPED_PLAYER: PlayerDef = PlayerDef {
+    strength: 10.0,
+    carry_capacity_per_strength: 3.0,
+    movement_speed: 1.0,
+    stamina_pool: 5.0,
+    slowed_scale: 0.7,
+    thresholds: LoadThresholds {
+        slowed: 0.6,
+        no_sprint: 0.8,
+        cannot_move: 1.0,
     },
 };
 
@@ -101,6 +117,11 @@ pub fn tuning(kit: Kit) -> SimConfig {
         search_reach: SEARCH_REACH,
         body_radius: BODY_RADIUS,
         enemy_remains: Remains::default(),
+        carry: CarryConfig {
+            player: SHIPPED_PLAYER,
+            items: BTreeMap::new(),
+            weapon: ItemId::new("rifle"),
+        },
     }
 }
 
