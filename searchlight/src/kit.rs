@@ -59,7 +59,7 @@ impl EnemyKits {
     ///
     /// # Errors
     ///
-    /// As [`load`].
+    /// As [`Self::load`].
     pub fn resolve(&self, kit: &str) -> Result<ResolvedEnemy, KitLoadError> {
         self.kits
             .require(kit)?
