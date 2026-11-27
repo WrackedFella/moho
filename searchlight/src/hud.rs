@@ -110,6 +110,12 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
 }
 
+/// The prompt for a usable object: the `key` that uses it and the `action` it takes, such as
+/// `[F] Next wave`.
+pub fn use_prompt(_key: &str, _action: &str) -> String {
+    todo!("word the use prompt")
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -148,6 +154,26 @@ mod tests {
 
         let expected: Vec<&str> = levels.iter().map(|&(_, w)| w).collect();
         assert_eq!(words, expected);
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        use moho_input::Action;
+
+        let default_key = crate::input::SearchlightAction::Use.default_bindings()[0].label();
+
+        let prompt = use_prompt(&default_key, "Next wave");
+
+        assert_eq!(prompt, "[F] Next wave");
+    }
+
+    #[test]
+    fn the_use_prompt_shows_whatever_key_it_is_given() {
+        let rebound = use_prompt("Mouse Right", "Next wave");
+        let unbound = use_prompt("unbound", "Next wave");
+
+        assert_eq!(rebound, "[Mouse Right] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 }
 

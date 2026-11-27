@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -241,7 +242,40 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls: Vec::new(),
     })
+}
+
+/// A control post 0.4 x 1.2 x 0.4 m standing on `floor_point`, calling the next wave.
+pub(crate) fn control_post(floor_point: Vec3) -> ArenaControl {
+    ArenaControl {
+        action: ControlAction::NextWave,
+        mesh: box_mesh(
+            floor_point + Vec3::new(-0.2, 0.0, -0.2),
+            floor_point + Vec3::new(0.2, 1.2, 0.2),
+        ),
+    }
+}
+
+/// [`arena_with`] plus a [`control_post`] on each of `controls`, the navmesh built round them.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
+    let mut arena = Arc::unwrap_or_clone(arena_with(boxes, player, enemies, route));
+    arena.controls = controls.iter().map(|&point| control_post(point)).collect();
+    let solids: Vec<WorldMesh> = arena
+        .meshes
+        .iter()
+        .chain(arena.controls.iter().map(|control| &control.mesh))
+        .cloned()
+        .collect();
+    arena.nav =
+        Arc::new(NavMesh::build(&solids, nav_profile()).expect("box worlds build a navmesh"));
+    Arc::new(arena)
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

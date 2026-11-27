@@ -22,6 +22,7 @@ pub enum SearchlightAction {
     Restart,
     LeanLeft,
     LeanRight,
+    Use,
 }
 
 impl Action for SearchlightAction {
@@ -37,6 +38,7 @@ impl Action for SearchlightAction {
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
+        SearchlightAction::Use,
     ];
 
     fn name(self) -> &'static str {
@@ -52,6 +54,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
+            SearchlightAction::Use => "use",
         }
     }
 
@@ -70,6 +73,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
+            SearchlightAction::Use => const { &[Binding::key(Key::U)] },
         }
     }
 }
@@ -135,6 +139,8 @@ pub struct SearchlightCommand {
     pub forced_grade: Option<Grade>,
     /// The side the player holds a lean toward, after key resolution.
     pub lean: Option<LeanSide>,
+    /// The use input went down this tick.
+    pub use_pressed: bool,
 }
 
 /// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
@@ -192,6 +198,7 @@ impl SearchlightCommand {
             god_mode: false,
             forced_grade: None,
             lean: None,
+            use_pressed: false,
         }
     }
 }
@@ -565,6 +572,71 @@ mod tests {
         let held = lean_after(&mut map, None);
 
         assert_eq!(held, Some(LeanSide::Right));
+    }
+
+    #[test]
+    fn use_defaults_to_f_and_sets_use_pressed_on_its_press() {
+        let mut map = fresh_map();
+        map.key(Key::F, true);
+
+        let pressed = SearchlightCommand::from_frame(&map.end_tick());
+        let held = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, true);
+        let again = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert_eq!(
+            SearchlightAction::Use.default_bindings(),
+            [Binding::key(Key::F)]
+        );
+        assert_eq!(SearchlightAction::Use.name(), "use");
+        assert!(SearchlightAction::ALL.contains(&SearchlightAction::Use));
+        assert_eq!(
+            [
+                pressed.use_pressed,
+                held.use_pressed,
+                released.use_pressed,
+                again.use_pressed
+            ],
+            [true, false, false, true]
+        );
+        assert!(!pressed.fire && !pressed.reload && !pressed.check && !pressed.restart);
+        assert_eq!(pressed.movement, CharacterCommand::default());
+    }
+
+    #[test]
+    fn no_other_key_sets_use_pressed_and_no_other_action_takes_f() {
+        let mut map = fresh_map();
+        for key in [Key::Q, Key::E, Key::R, Key::C, Key::Space, Key::F8] {
+            map.key(key, true);
+        }
+
+        let others = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(!others.use_pressed);
+        for &action in SearchlightAction::ALL {
+            if action != SearchlightAction::Use {
+                assert!(
+                    !action.default_bindings().contains(&Binding::key(Key::F)),
+                    "{action:?} is also on F"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_saved_bindings_file_without_use_keeps_its_default() {
+        let saved = BTreeMap::from([("jump".to_owned(), "G".to_owned())]);
+
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(bindings.get(SearchlightAction::Use), [Binding::key(Key::F)]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Jump),
+            [Binding::key(Key::G)]
+        );
     }
 }
 

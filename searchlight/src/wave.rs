@@ -158,6 +158,12 @@ impl WaveState {
         spawn
     }
 
+    /// Starts the next wave when the running one is cleared (nothing left to spawn and none of
+    /// its enemies among the `alive`), and says whether it did. Otherwise does nothing.
+    pub fn call_next(&mut self, _tuning: &WaveTuning, _alive: usize) -> bool {
+        todo!("start the next wave on request")
+    }
+
     /// Gives back `count` enemies that [`step`](Self::step) asked for but that could not be
     /// spawned, so they stay to come.
     pub fn unspawned(&mut self, count: u32) {
@@ -210,14 +216,104 @@ mod tests {
         let tuning = tuning(2, 3, 10);
         let mut state = WaveState::begin(&tuning);
         let first = state.step(&tuning, 0, 0, 2);
+        state.step(&tuning, 2, 0, 10);
 
-        let second = state.step(&tuning, 2, 0, 10);
+        let called = state.call_next(&tuning, 0);
+        let second = state.step(&tuning, 0, 0, 10);
 
+        assert!(called);
         assert_eq!(first, 2);
         assert_eq!(state.wave(), 2);
         assert_eq!(state.score(), 20);
         assert_eq!(second, 5);
         assert_eq!(state.to_spawn(), 0);
+    }
+
+    #[test]
+    fn a_cleared_wave_does_not_advance_on_its_own() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+
+        let handed_out: Vec<u32> = (0..1000)
+            .map(|index| state.step(&tuning, if index == 0 { 2 } else { 0 }, 0, 10))
+            .collect();
+
+        assert!(handed_out.iter().all(|&spawn| spawn == 0), "{handed_out:?}");
+        assert_eq!(state.wave(), 1);
+        assert_eq!(state.to_spawn(), 0);
+        assert_eq!(state.score(), 20);
+    }
+
+    #[test]
+    fn calling_a_cleared_wave_starts_the_next() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+        state.step(&tuning, 2, 0, 10);
+
+        let called = state.call_next(&tuning, 0);
+
+        assert!(called);
+        assert_eq!(state.wave(), 2);
+        assert_eq!(state.to_spawn(), 5);
+        assert_eq!(state.grades().size(), 5);
+        assert_eq!(state.score(), 20, "a new wave keeps the score");
+        assert_eq!(state.step(&tuning, 0, 0, 10), 5);
+    }
+
+    #[test]
+    fn calling_twice_starts_one_wave_not_two() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+        state.step(&tuning, 2, 0, 10);
+
+        let first = state.call_next(&tuning, 0);
+        let second = state.call_next(&tuning, 0);
+
+        assert!(first);
+        assert!(!second, "wave 2 has enemies to come");
+        assert_eq!(state.wave(), 2);
+        assert_eq!(state.to_spawn(), 5);
+    }
+
+    #[test]
+    fn calling_with_enemies_alive_or_to_come_does_nothing() {
+        let tuning = tuning(3, 2, 10);
+        let mut still_to_come = WaveState::begin(&tuning);
+        still_to_come.step(&tuning, 0, 0, 1);
+        let mut alive_with_none_to_come = WaveState::begin(&tuning);
+        alive_with_none_to_come.step(&tuning, 0, 0, 3);
+        let mut both = WaveState::begin(&tuning);
+        both.step(&tuning, 0, 0, 1);
+        let (before_to_come, before_alive, before_both) =
+            (still_to_come, alive_with_none_to_come, both);
+
+        let to_come_called = still_to_come.call_next(&tuning, 0);
+        let alive_called = alive_with_none_to_come.call_next(&tuning, 2);
+        let both_called = both.call_next(&tuning, 1);
+
+        assert!(!to_come_called);
+        assert!(!alive_called);
+        assert!(!both_called);
+        assert_eq!(still_to_come, before_to_come);
+        assert_eq!(alive_with_none_to_come, before_alive);
+        assert_eq!(both, before_both);
+    }
+
+    #[test]
+    fn a_wave_before_its_first_spawn_cannot_be_called_past() {
+        let tuning = tuning(2, 2, 10);
+        let mut state = WaveState::begin(&tuning);
+        let before = state;
+
+        let called = state.call_next(&tuning, 0);
+
+        assert!(!called);
+        assert_eq!(state, before);
+        assert_eq!(state.wave(), 1);
+        assert_eq!(state.to_spawn(), 2);
     }
 
     #[test]
@@ -415,6 +511,7 @@ mod tests {
         state.step(&tuning, 0, 0, 100);
         while state.wave() < 8 {
             high.push(state.grades().experienced_and_above());
+            state.call_next(&tuning, 0);
             state.step(&tuning, 0, 0, 100);
         }
 
@@ -439,6 +536,7 @@ mod tests {
         let after_a_give_back = state.spawned();
         state.step(&tuning, 0, 2, 10);
         let all = state.spawned();
+        state.call_next(&tuning, 0);
         state.step(&tuning, 0, 0, 1);
 
         assert_eq!(

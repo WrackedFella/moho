@@ -3349,6 +3349,142 @@ mod tests {
         assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
     }
+
+    /// A game over an arena with no enemies and one control post 1.5 m ahead of the player.
+    fn control_game() -> SearchlightGame {
+        let arena = crate::test_support::arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[Vec3::new(0.0, 0.0, 1.5)],
+        );
+        let mode = ArenaMode::new(
+            arena,
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// Ticks once, turning the view to `pitch`; the post's near face is at `pitch_of_the_post`.
+    fn pitch_to(game: &mut SearchlightGame, pitch: f32) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let command = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                pitch_delta: pitch - game.sim().player().pitch,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(game, &mut clock, &command);
+    }
+
+    /// The pitch that puts the middle of the post's near face on the view's centre line.
+    fn pitch_of_the_post() -> f32 {
+        (0.9_f32 - 1.63).atan2(1.3)
+    }
+
+    fn run_one_frame(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    /// Vertices the shell would paint for what the game gave it, `None` when it paints nothing.
+    /// Painting clears what was given, so call it once per frame.
+    fn shell_vertices(game: &SearchlightGame) -> Option<usize> {
+        game.stage
+            .shell()
+            .ui_frame([1280, 720])
+            .map(|frame| frame.meshes.iter().map(|mesh| mesh.vertices.len()).sum())
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = control_game();
+        run_one_frame(&mut game);
+        let before_looking = shell_vertices(&game);
+
+        pitch_to(&mut game, pitch_of_the_post());
+        run_one_frame(&mut game);
+        let looking = shell_vertices(&game);
+
+        assert_eq!(before_looking, None, "nothing to say about the empty view");
+        assert!(looking.is_some_and(|vertices| vertices > 0), "{looking:?}");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut shown = control_game();
+        pitch_to(&mut shown, pitch_of_the_post());
+        run_one_frame(&mut shown);
+        let while_looking = shell_vertices(&shown);
+        let mut turned = control_game();
+        pitch_to(&mut turned, pitch_of_the_post());
+        run_one_frame(&mut turned);
+
+        pitch_to(&mut turned, 0.0);
+        run_one_frame(&mut turned);
+        let after_turning_away = shell_vertices(&turned);
+
+        assert!(while_looking.is_some(), "the prompt must be showing first");
+        assert_eq!(after_turning_away, None, "the prompt outlived the look");
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = control_game();
+        pitch_to(&mut dead, pitch_of_the_post());
+        run_one_frame(&mut dead);
+        let alive = shell_vertices(&dead);
+        dead.mode.sim_mut().kill_player();
+        run_one_frame(&mut dead);
+        let while_dead = shell_vertices(&dead);
+        let paused_vertices = |look_at_the_post: bool| {
+            let mut game = control_game();
+            if look_at_the_post {
+                pitch_to(&mut game, pitch_of_the_post());
+            }
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+            assert_eq!(game.screen, Screen::Paused);
+            run_one_frame(&mut game);
+            shell_vertices(&game)
+        };
+
+        let paused_on_the_post = paused_vertices(true);
+        let paused_elsewhere = paused_vertices(false);
+
+        assert!(alive.is_some(), "the prompt must be showing while alive");
+        assert_eq!(while_dead, None);
+        assert!(paused_elsewhere.is_some(), "the pause menu paints");
+        assert_eq!(
+            paused_on_the_post, paused_elsewhere,
+            "the pause menu is all the shell paints"
+        );
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+
+        let controls: Vec<u64> = (0..=usize::from(u16::MAX))
+            .map(|index| control_mesh_id(index).0)
+            .collect();
+        let last_enemy_id =
+            ENEMY_MESH_BASE + (u64::from(u16::MAX) + 1) * ENEMY_MESH_SLOTS + ENEMY_MESH_SLOTS;
+        let last_dummy_id = DUMMY_MESH_BASE + 1_000_000;
+
+        assert_eq!(control_mesh_id(0), WorldMeshId(3 << 32));
+        assert_eq!(control_mesh_id(7), WorldMeshId((3 << 32) + 7));
+        assert!(controls.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(*controls.first().expect("some controls") > last_enemy_id);
+        assert!(*controls.first().expect("some controls") > last_dummy_id);
+        assert!(*controls.first().expect("some controls") > arena_mesh_id(1 << 20).0);
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
