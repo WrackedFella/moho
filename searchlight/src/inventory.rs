@@ -97,7 +97,7 @@ impl Entry {
             Item::Weapon(_) => Self::new("Rifle", None, Some(source)),
             Item::Magazine(magazine) => Self::of_magazine(magazine, source),
             Item::Rounds(stack) => Self::new(&stack.round, Some(stack.count), Some(source)),
-            Item::Rig(rig) => Self::new(rig.item(), None, Some(source)),
+            Item::Rig(rig) => Self::new(rig, None, Some(source)),
             Item::Other(id) => Self::new(id, None, Some(source)),
         }
     }

@@ -129,6 +129,7 @@ impl Loadout {
 
     /// Removes and returns what `from` holds. Call it only for a source
     /// [`Self::holds_magazine`] found an item in: an index past the end of a list panics.
+    /// Taking a body's rig yields the rig alone; its magazines join the body's carried items.
     fn take(&mut self, body: Option<&mut Remains>, from: Source) -> Option<Item> {
         match from {
             Source::Inventory(index) => Some(self.inventory.remove(index)),
@@ -137,7 +138,16 @@ impl Loadout {
             Source::BodyMagazineSlot(index) => {
                 body?.rig.as_mut()?.take_slot(index).map(Item::Magazine)
             }
-            Source::BodyRig => body?.rig.take().map(Item::Rig),
+            Source::BodyRig => {
+                let body = body?;
+                let mut rig = body.rig.take()?;
+                for slot in 0..rig.slots().len() {
+                    if let Some(magazine) = rig.take_slot(slot) {
+                        body.carried.push(Item::Magazine(magazine));
+                    }
+                }
+                Some(Item::Rig(rig.item().clone()))
+            }
             Source::BodyBackpack => body?.backpack.take().map(Item::Other),
         }
     }
@@ -489,7 +499,7 @@ mod tests {
                 30,
                 partial,
             ))),
-            _ => Item::Rig(rig_holding(&item, &[Some(&format!("{item}_m"))])),
+            _ => Item::Rig(id(&item)),
         }
     }
 
@@ -581,7 +591,7 @@ mod tests {
                 round: id("ball"),
                 count: 30,
             }),
-            Item::Rig(rig_holding("spare_rig", &[Some("m")])),
+            Item::Rig(id("spare_rig")),
         ];
         for item in others {
             let mut loadout = player(&[None, Some("a")], vec![item.clone()]);
@@ -750,19 +760,32 @@ mod tests {
     }
 
     #[test]
-    fn taking_a_bodys_rig_brings_its_magazines_with_it() {
+    fn taking_a_bodys_rig_leaves_its_magazines_on_the_body() {
         let rig = rig_holding("body_rig", &[Some("x"), None, Some("y")]);
         let mut loadout = player(&[None], vec![]);
-        let mut remains = body(Some(rig.clone()), vec![]);
+        let mut remains = body(Some(rig), vec![bandage()]);
 
         let taken = loadout.move_item(Some(&mut remains), Source::BodyRig, Place::Inventory);
 
         assert_eq!(taken, Ok(()));
-        assert_eq!(loadout.inventory(), [Item::Rig(rig.clone())]);
+        assert_eq!(loadout.inventory(), [Item::Rig(id("body_rig"))]);
         assert_eq!(remains.rig, None);
+        assert_eq!(
+            remains.carried,
+            [bandage(), mag_item("x"), mag_item("y")],
+            "the magazines stay on the body, after what it carried"
+        );
         let carried = loadout.move_item(Some(&mut remains), Source::Inventory(0), Place::Body);
         assert_eq!(carried, Ok(()));
-        assert_eq!(remains.carried, [Item::Rig(rig)]);
+        assert_eq!(
+            remains.carried,
+            [
+                bandage(),
+                mag_item("x"),
+                mag_item("y"),
+                Item::Rig(id("body_rig"))
+            ]
+        );
         assert_eq!(loadout.inventory(), []);
     }
 
@@ -777,7 +800,7 @@ mod tests {
                 )),
                 Item::Magazine(m) => out.push(format!("mag {} {}", m.item(), m.rounds())),
                 Item::Rounds(stack) => out.push(format!("rounds {} {}", stack.round, stack.count)),
-                Item::Rig(rig) => rig_leaves(out, rig),
+                Item::Rig(rig) => out.push(format!("rig {rig}")),
                 Item::Other(id) => out.push(format!("other {id}")),
             }
         }

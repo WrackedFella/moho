@@ -1,6 +1,7 @@
 //! The FPS prototype: arena, shot resolution and the fixed-tick simulation, adapted from
 //! the engine crates and the platform-free rules in `searchlight_rules`.
 
+pub mod aim;
 pub mod arena;
 pub mod brain;
 pub mod console_commands;

@@ -24,8 +24,9 @@ pub enum Item {
     Magazine(Magazine),
     /// Loose rounds.
     Rounds(RoundStack),
-    /// A rig with the magazines in its slots; it keeps them wherever it is.
-    Rig(Rig),
+    /// A rig by item id. Carried, it is a plain item holding no magazines; only a worn rig
+    /// has slots.
+    Rig(ItemId),
     /// Anything else by item id: backpacks, tools, bandages.
     Other(ItemId),
 }

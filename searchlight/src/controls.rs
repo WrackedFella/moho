@@ -217,6 +217,7 @@ pub fn label(action: SearchlightAction) -> &'static str {
         SearchlightAction::LeanRight => "Lean right",
         SearchlightAction::Use => "Use",
         SearchlightAction::Inventory => "Inventory",
+        SearchlightAction::Aim => "Aim",
     }
 }
 
@@ -267,7 +268,7 @@ mod tests {
         let button = draft.capture(
             SearchlightAction::Fire,
             Slot::Primary,
-            Input::Mouse(MouseButton::Right),
+            Input::Mouse(MouseButton::Middle),
         );
 
         let bindings = draft.bindings();
@@ -278,7 +279,7 @@ mod tests {
         );
         assert_eq!(
             bindings.get(SearchlightAction::Fire),
-            [Binding::mouse(MouseButton::Right)]
+            [Binding::mouse(MouseButton::Middle)]
         );
         assert_eq!(
             bindings.get(SearchlightAction::Jump),

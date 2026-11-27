@@ -25,6 +25,7 @@ pub enum SearchlightAction {
     LeanRight,
     Use,
     Inventory,
+    Aim,
 }
 
 impl Action for SearchlightAction {
@@ -43,6 +44,7 @@ impl Action for SearchlightAction {
         SearchlightAction::LeanRight,
         SearchlightAction::Use,
         SearchlightAction::Inventory,
+        SearchlightAction::Aim,
     ];
 
     fn name(self) -> &'static str {
@@ -61,6 +63,7 @@ impl Action for SearchlightAction {
             SearchlightAction::LeanRight => "lean_right",
             SearchlightAction::Use => "use",
             SearchlightAction::Inventory => "inventory",
+            SearchlightAction::Aim => "aim",
         }
     }
 
@@ -84,6 +87,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Inventory => {
                 const { &[Binding::key(Key::Tab), Binding::key(Key::I)] }
             }
+            SearchlightAction::Aim => const { &[Binding::mouse(MouseButton::Right)] },
         }
     }
 }
@@ -192,6 +196,12 @@ pub fn resolve_lean(
         .find(pressed)
         .or(previous.filter(held))
         .or_else(|| sides.into_iter().find(held))
+}
+
+/// `look` scaled by `scale`, the one place aim's look scale is applied so the command and the
+/// camera cannot drift apart.
+pub fn scale_look((look_x, look_y): (f32, f32), scale: f32) -> (f32, f32) {
+    (look_x * scale, look_y * scale)
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
@@ -493,6 +503,39 @@ mod tests {
         );
         assert!(!lean_keys.use_pressed, "Q and E are lean, not use");
         assert!(!pressed.fire && !pressed.reload && !pressed.check && !pressed.restart);
+    }
+
+    #[test]
+    fn aim_is_named_aim_and_defaults_to_right_mouse() {
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&BTreeMap::new());
+        let mut map = fresh_map();
+        map.mouse_button(MouseButton::Right, true);
+
+        let down = map.end_tick();
+        let held = map.end_tick();
+        map.mouse_button(MouseButton::Right, false);
+        let up = map.end_tick();
+
+        assert_eq!(SearchlightAction::Aim.name(), "aim");
+        assert_eq!(
+            SearchlightAction::Aim.default_bindings(),
+            [Binding::mouse(MouseButton::Right)]
+        );
+        assert_eq!(SearchlightAction::ALL.last(), Some(&SearchlightAction::Aim));
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Aim),
+            [Binding::mouse(MouseButton::Right)]
+        );
+        assert_eq!(
+            [
+                down.held(SearchlightAction::Aim),
+                held.held(SearchlightAction::Aim),
+                up.held(SearchlightAction::Aim)
+            ],
+            [true, true, false]
+        );
+        assert!(!SearchlightCommand::from_frame(&down).fire);
     }
 
     #[test]
