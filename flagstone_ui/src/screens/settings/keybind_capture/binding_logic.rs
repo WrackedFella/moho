@@ -115,32 +115,28 @@ impl KeybindCaptureHandler {
     }
 
     /// Bind `key` to `target`, or queue the conflict modal when another row holds it.
-    /// Returns true if the binding was applied.
     fn place_key<F>(
         &mut self,
         target: StrategyAction,
         key: Key,
         bindings: &BindingRegistry,
         mut on_binding_changed: F,
-    ) -> bool
-    where
+    ) where
         F: FnMut(StrategyAction, Vec<Binding>),
     {
-        if let Some(conflicting) = bindings.find_conflict(key, target) {
-            let pending = PendingBinding {
-                target,
-                key,
-                conflicting: Some(conflicting),
-            };
-            let conflict_key_name = Self::get_key_name(conflicting).to_string();
-            let conflict_binding_desc = binding_label(&[Binding::key(key)]);
-            self.conflict_modal
-                .show(pending, conflict_key_name, conflict_binding_desc);
-            false
-        } else {
+        let Some(conflicting) = bindings.find_conflict(key, target) else {
             on_binding_changed(target, rebind_key(bindings.get_binding(target), key));
-            true
-        }
+            return;
+        };
+        let pending = PendingBinding {
+            target,
+            key,
+            conflicting: Some(conflicting),
+        };
+        let conflict_key_name = Self::get_key_name(conflicting).to_string();
+        let conflict_binding_desc = binding_label(&[Binding::key(key)]);
+        self.conflict_modal
+            .show(pending, conflict_key_name, conflict_binding_desc);
     }
 
     /// Process all key events from egui input.
