@@ -1516,6 +1516,37 @@ fn release_under_an_unevenly_scaled_turned_root_is_rigid() {
             "{column} is not a unit axis"
         );
     }
+    let axes = [columns.x_axis, columns.y_axis, columns.z_axis];
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(
+            axes[a].dot(axes[b]).abs() < 1e-5,
+            "axes {a} and {b} are not orthogonal: {columns:?}"
+        );
+    }
     let rotation = Quat::from_mat3a(&columns);
     assert!(rotation.is_normalized(), "{rotation} is not normalised");
+    let hand = node_index(&models, RELOAD_CHARACTER, "hand_l");
+    let expected = root * now_pose.nodes()[hand] * grip();
+    vec_near(
+        Vec3::from(released.transform.translation),
+        Vec3::from(expected.translation),
+        1e-5,
+    );
+    let expected_rotation = Quat::from_mat3a(&expected.matrix3).normalize();
+    assert!(
+        rotation.angle_between(expected_rotation) < 1e-2,
+        "{rotation:?} is not the hand's turn {expected_rotation:?}"
+    );
+    let spawn = LooseSpawn {
+        position: Vec3::from(released.transform.translation),
+        rotation,
+        ..LooseSpawn::new(
+            LooseShape::Box {
+                half_extents: Vec3::splat(0.05),
+            },
+            0.2,
+        )
+    };
+    let mut world = PhysicsWorld::new();
+    world.spawn_loose(&spawn);
 }
