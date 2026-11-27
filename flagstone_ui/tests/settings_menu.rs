@@ -586,6 +586,113 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
+/// One egui frame in which the held modifiers change to `mods`.
+fn modifiers_frame(menu: &mut SettingsMenu, mods: egui::Modifiers) {
+    render_frame(menu, vec![egui::Event::ModifiersChanged(mods)]);
+}
+
+fn all_bindings(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    (0..7)
+        .map(|i| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+/// Text of the conflict modal the settings screen queued, if any.
+fn pending_modal_text(menu: &mut SettingsMenu) -> Option<String> {
+    use flagstone_ui::screens::Screen;
+
+    let mut modal = Screen::take_pending_modal(menu)?;
+    let ctx = egui::Context::default();
+    let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        modal.render(ui);
+    });
+    Some(rendered_text(&output))
+}
+
+/// Opens the conflict prompt on Move Forward by pressing Shift (held by Sprint).
+fn open_prompt_with_shift(menu: &mut SettingsMenu) {
+    menu.start_listening(0);
+    modifiers_frame(menu, egui::Modifiers::SHIFT);
+}
+
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    open_prompt_with_shift(&mut menu);
+    let text = pending_modal_text(&mut menu).expect("Shift conflict should queue a prompt");
+    assert!(text.contains("'Shift'"), "key missing in:\n{text}");
+    assert!(text.contains("Sprint"), "holder missing in:\n{text}");
+    assert!(!menu.is_listening(), "Shift conflict must end listening");
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    menu.apply_key_while_listening(Key::S);
+    let text = pending_modal_text(&mut menu).expect("S conflict should queue a prompt");
+    assert!(text.contains("'S'"), "key missing in:\n{text}");
+    assert!(text.contains("Move Back"), "holder missing in:\n{text}");
+    assert!(!menu.is_listening(), "S conflict must end listening");
+}
+
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_bindings(&menu);
+    open_prompt_with_shift(&mut menu);
+
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(all_bindings(&menu), before);
+    assert!(!menu.is_listening());
+}
+
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    open_prompt_with_shift(&mut menu);
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::pad(PadInput::Button(PadButton::LeftThumb))]
+    );
+    for id in 0..7 {
+        assert!(
+            !menu
+                .get_staged_binding(id)
+                .contains(&Binding::key(Key::Alt)),
+            "row {id} bound to Alt"
+        );
+    }
+}
+
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_bindings(&menu);
+    open_prompt_with_shift(&mut menu);
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(all_bindings(&menu), before);
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
