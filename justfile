@@ -213,6 +213,18 @@ run-record-test:
     done
     diff "$f/table.md" <(scripts/run-record.sh table < "$f/records.jsonl")
     diff "$f/digest.md" <(scripts/run-record.sh digest < "$f/records.jsonl")
+    # The meter: cache write by TTL, a cache miss (a rewrite after a step's first call), tool-result
+    # bytes by tool including MCP tools, and the report a subagent handed back.
+    diff "$f/record-meter.jsonl" <(
+        ISSUE=8 GATE_CLASS=glue HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
+            scripts/run-record.sh record "$f/execution-meter.json" | jq -c 'del(.at)')
+    diff "$f/table-meter.md" <(scripts/run-record.sh table < "$f/record-meter.jsonl")
+    diff "$f/digest-meter.md" <(cat "$f/records.jsonl" "$f/record-meter.jsonl" | scripts/run-record.sh digest)
+    # A record from before the meter has no meter: the table skips it and the digest shows `-`.
+    jq -c 'del(.steps[].meter)' "$f/records.jsonl" | scripts/run-record.sh table | grep -q 'Context and cache' \
+        && { echo "run-record: a record without a meter must print no meter table"; exit 1; }
+    jq -c 'del(.steps[].meter)' "$f/records.jsonl" | scripts/run-record.sh digest | grep -q '| orchestrator | 1 | - | 3 | - | - |' \
+        || { echo "run-record: a record without a meter must show - in the digest"; exit 1; }
     # Entries of a split message carry a partial output count: step outputs must still add up to the
     # result's per-model output exactly, and input and cache counts to within 20% (a real run
     # showed 2-16% unattributed, from calls the log does not hold).

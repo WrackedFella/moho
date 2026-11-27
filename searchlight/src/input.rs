@@ -19,7 +19,6 @@ pub enum SearchlightAction {
     Fire,
     Reload,
     CheckMagazine,
-    CheckGear,
     Restart,
     LeanLeft,
     LeanRight,
@@ -39,7 +38,6 @@ impl Action for SearchlightAction {
         SearchlightAction::Fire,
         SearchlightAction::Reload,
         SearchlightAction::CheckMagazine,
-        SearchlightAction::CheckGear,
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
@@ -59,7 +57,6 @@ impl Action for SearchlightAction {
             SearchlightAction::Fire => "fire",
             SearchlightAction::Reload => "reload",
             SearchlightAction::CheckMagazine => "check_magazine",
-            SearchlightAction::CheckGear => "check_gear",
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
@@ -79,10 +76,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Jump => const { &[Binding::key(Key::Space)] },
             SearchlightAction::Fire => const { &[Binding::mouse(MouseButton::Left)] },
             SearchlightAction::Reload => const { &[Binding::key(Key::R)] },
-            SearchlightAction::CheckMagazine => {
-                const { &[Binding::key(Key::C), Binding::key(Key::R).held()] }
-            }
-            SearchlightAction::CheckGear => const { &[Binding::key(Key::C).held()] },
+            SearchlightAction::CheckMagazine => const { &[Binding::key(Key::R).held()] },
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
@@ -175,8 +169,6 @@ pub struct SearchlightCommand {
     pub lean: Option<LeanSide>,
     /// The use input went down this tick.
     pub use_pressed: bool,
-    /// The check-gear key has been held past the hold threshold and is still down this tick.
-    pub check_gear: bool,
     /// What the inventory screen asks of the sim this tick, at most one.
     pub inventory: Option<InventoryCommand>,
 }
@@ -245,7 +237,6 @@ impl SearchlightCommand {
             round_gravity: GravityScale::default(),
             lean: None,
             use_pressed: frame.pressed(SearchlightAction::Use),
-            check_gear: frame.held(SearchlightAction::CheckGear),
             inventory: None,
         }
     }
@@ -384,44 +375,83 @@ mod tests {
     }
 
     #[test]
-    fn a_c_tap_checks_the_magazine_on_release() {
+    fn c_does_not_check_the_magazine() {
         let mut map = fresh_map();
         map.key(Key::C, true);
-        let down = SearchlightCommand::from_frame(&map.end_tick());
-
+        let tap_down = SearchlightCommand::from_frame(&map.end_tick());
         map.key(Key::C, false);
-        let up = SearchlightCommand::from_frame(&map.end_tick());
-        let after = SearchlightCommand::from_frame(&map.end_tick());
-
-        assert!(
-            !down.check && !down.check_gear,
-            "a press alone fires nothing"
-        );
-        assert!(
-            up.check && !up.reload && !up.check_gear,
-            "the tap checks on release"
-        );
-        assert!(!after.check);
-    }
-
-    #[test]
-    fn hold_c_checks_gear_until_release_and_never_checks_the_magazine() {
-        let mut map = fresh_map();
+        let tap_up = SearchlightCommand::from_frame(&map.end_tick());
         map.key(Key::C, true);
-
         let frames: Vec<_> = (0..20)
             .map(|_| SearchlightCommand::from_frame(&map.end_tick()))
             .collect();
         map.key(Key::C, false);
         let released = SearchlightCommand::from_frame(&map.end_tick());
 
-        assert!(frames[..17].iter().all(|f| !f.check_gear));
         assert!(
-            frames[17..].iter().all(|f| f.check_gear),
-            "held from tick 18"
+            !tap_down.check && !tap_up.check && !tap_up.reload,
+            "tapping C does nothing"
         );
-        assert!(frames.iter().all(|f| !f.check));
-        assert!(!released.check && !released.check_gear);
+        assert!(
+            frames.iter().all(|f| !f.check && !f.reload),
+            "holding C does nothing"
+        );
+        assert!(
+            !released.check && !released.reload,
+            "releasing a held C does nothing"
+        );
+    }
+
+    #[test]
+    fn a_saved_check_gear_line_warns_and_leaves_the_other_bindings_alone() {
+        let saved = BTreeMap::from([
+            ("check_gear".to_owned(), "hold c".to_owned()),
+            ("reload".to_owned(), "T".to_owned()),
+        ]);
+
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+
+        let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, ["check_gear"]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Reload),
+            [Binding::key(Key::T)]
+        );
+        assert_eq!(
+            bindings.get(SearchlightAction::CheckMagazine),
+            [Binding::key(Key::R).held()]
+        );
+    }
+
+    #[test]
+    fn a_saved_check_magazine_c_still_checks_on_a_tap() {
+        let saved = BTreeMap::from([("check_magazine".to_owned(), "C".to_owned())]);
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+        let mut map = ActionMap::<SearchlightAction>::new(bindings, 1.0);
+        map.key(Key::C, true);
+        let down = SearchlightCommand::from_frame(&map.end_tick());
+
+        map.key(Key::C, false);
+        let up = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(warnings.is_empty());
+        assert!(
+            down.check && !down.reload,
+            "with no hold on C the tap checks on the press"
+        );
+        assert!(!up.check, "and does not check again on release");
+    }
+
+    #[test]
+    fn no_default_binds_c() {
+        for action in SearchlightAction::ALL {
+            let binds_c = action
+                .default_bindings()
+                .iter()
+                .any(|b| b.input == Input::Key(Key::C));
+
+            assert!(!binds_c, "{action:?} binds C by default");
+        }
     }
 
     #[test]

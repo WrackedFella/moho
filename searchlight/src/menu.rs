@@ -650,8 +650,7 @@ mod tests {
             "Spacebar",
             "Mouse Left",
             "R",
-            "C",
-            "Hold C",
+            "Hold R",
             "F8",
             "Q",
             "E",
@@ -707,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn check_magazine_shows_hold_r_as_its_secondary() {
+    fn check_magazine_shows_hold_r_and_no_c() {
         let draft = ControlsDraft::new(&default_bindings());
 
         let rows = control_rows(&controls_screen(&draft));
@@ -716,12 +715,11 @@ mod tests {
             .iter()
             .position(|&a| a == SearchlightAction::CheckMagazine)
             .expect("the action is listed");
-        assert_eq!(
-            rows[at].1,
-            [
-                Some(Binding::key(Key::C)),
-                Some(Binding::key(Key::R).held())
-            ]
+        assert_eq!(rows[at].1, [Some(Binding::key(Key::R).held()), None]);
+        assert!(
+            rows.iter()
+                .all(|(_, slots)| !slots.contains(&Some(Binding::key(Key::C)))),
+            "no row shows C"
         );
     }
 
@@ -751,10 +749,7 @@ mod tests {
         );
         assert_eq!(
             slots(SearchlightAction::CheckMagazine),
-            [
-                Some(Binding::key(Key::C)),
-                Some(Binding::key(Key::R).held())
-            ]
+            [Some(Binding::key(Key::R).held()), None]
         );
     }
 }

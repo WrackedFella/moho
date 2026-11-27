@@ -12,8 +12,13 @@
 # are exact per message; per-step output is the result's per-model output shared across that
 # model's steps by the size of what each step wrote, since the log's own per-message output
 # counts are partial. Yield is what a step left
-# behind that the log shows: files it edited (and how many were test files), and the
-# mutation counts the main loop read. Inline unit tests in a source file count as source.
+# behind that the log shows: files it edited (and how many were test files), the size of the
+# report it handed back (`report_bytes`), and the mutation counts the main loop read. The meter
+# (`meter` per step, claude-skills D0040) says where context and cache writes come from: peak
+# context per call, cache write by TTL when the log splits it, cache misses (a call after the
+# step's first that wrote over 20k tokens), and tool-result bytes by tool name, MCP tools
+# included. It reads only the log; no hook and no model call. Inline unit tests in a source
+# file count as source.
 #
 #   run-record.sh record <execution-file>   one JSON record on stdout. Context from the
 #                                           environment: ISSUE, GATE_CLASS, HEAD_SHA,
@@ -84,12 +89,12 @@ steps_of() {
               | [range(0; length) | . as $i | $f[$i] + (if $up | index($i) then 1 else 0 end)] end;
         ([ $all[] | select(.type == "result") ] | last // {} | .modelUsage // {}
          | with_entries(.value |= (.outputTokens // .output_tokens))) as $truth
-        | [ $all[] | select(.type == "assistant" and .message.usage != null)
+        | ([ $all[] | select(.type == "assistant" and .message.usage != null)
           | {id: (.message.id // ""), step: root(.parent_tool_use_id), model: (.message.model // "unknown"),
              u: .message.usage, w: (.message.content | size)}
-        ] as $turns
+        ] | to_entries | map(.value + {i: .key})) as $turns
         | ($turns | map(select(.id != "")) | group_by(.id)
-           | map(.[0] + {u: (max_by(.u.output_tokens // 0) | .u), w: (map(.w) | add)})) as $counted
+           | map(.[0] + {u: (max_by(.u.output_tokens // 0) | .u), w: (map(.w) | add), i: (map(.i) | min)})) as $counted
         | def edits($step): [ $all[] | select(.type == "assistant")
               | select(root(.parent_tool_use_id) == $step)
               | .message.content[]? | select(.type == "tool_use" and (.name | IN("Edit", "Write", "MultiEdit", "NotebookEdit")))
@@ -111,6 +116,30 @@ steps_of() {
               | (if $truth[$m] == null then null else (map(.w) | alloc($truth[$m])) end) as $out
               | to_entries | map(.value + (if $out == null then {} else {output: $out[.key]} end)))
               | add // []) as $shared
+        # The meter (claude-skills D0040): where context and cache writes come from, per step. A
+        # cache miss is a call after the first of its step whose cache write exceeds `$miss` tokens: the
+        # context was rewritten instead of read, as when the 5-minute cache of a resumed subagent expired.
+        # Tool bytes are the size of each result as it entered context, by tool name.
+        | 20000 as $miss
+        | def ttl($f): if all(.[]; .u.cache_creation == null) then null else map(.u.cache_creation[$f] // 0) | add end;
+          def wr: .u.cache_creation_input_tokens // 0;
+          ($counted | group_by(.step) | map(sort_by(.i) as $c | {key: $c[0].step, value: {
+              context_peak: ($c | map((.u.input_tokens // 0) + (.u.cache_read_input_tokens // 0) + wr) | max),
+              cache_write_5m: ($c | ttl("ephemeral_5m_input_tokens")),
+              cache_write_1h: ($c | ttl("ephemeral_1h_input_tokens")),
+              cache_misses: ($c[1:] | map(select(wr > $miss)) | length),
+              cache_miss_tokens: ($c[1:] | map(select(wr > $miss) | wr) | add // 0)}}) | from_entries) as $cache
+        | def rbytes: (.content | if type == "string" then . elif type == "array" then map(if type == "object" then .text // "" else tostring end) | join("") else "" end | utf8bytelength);
+          ([ $all[] | select(.type == "user") | .message.content[]? | select(type == "object" and .type == "tool_result")
+             | ($calls[.tool_use_id] // null) as $c | select($c != null)
+             | {step: root($c.parent), tool: $c.name, bytes: rbytes}]
+           | group_by(.step) | map({key: .[0].step, value: (group_by(.tool)
+               | map({key: .[0].tool, value: {calls: length, bytes: (map(.bytes) | add)}}) | from_entries)}) | from_entries) as $tools
+        # What a subagent or skill handed back to the main loop: the size of its report.
+        | ([ $all[] | select(.type == "user") | .message.content[]? | select(type == "object" and .type == "tool_result")
+             | ($calls[.tool_use_id] // null) as $c | select($c != null and ($c.name | IN("Agent", "Task", "Skill")))
+             | {step: lbl($c), bytes: rbytes}]
+           | group_by(.step) | map({key: .[0].step, value: (map(.bytes) | add)}) | from_entries) as $reports
         | ($shared | group_by(.step) | map({
               step: .[0].step,
               calls: (map(.calls) | add),
@@ -126,7 +155,8 @@ steps_of() {
              | (.content | if type == "string" then . else (map(.text // "") | join("\n")) end) ]
            | map(select(test("[0-9]+ (caught|missed)"))) | last // null) as $mut
         | {
-            steps: ($steps | map(. + {edits: (edits(.step) as $e | {files: ($e | length), tests: ($e | map(select(is_test)) | length)})})
+            steps: ($steps | map(. + {edits: (edits(.step) as $e | {files: ($e | length), tests: ($e | map(select(is_test)) | length)}),
+                                      meter: (($cache[.step] // {}) + {tools: ($tools[.step] // {}), report_bytes: ($reports[.step] // null)})})
                     | sort_by(.step)),
             mutants: (if $mut == null then null else
                 {caught: (($mut | capture("(?<n>[0-9]+) caught").n // "0") | tonumber),
@@ -189,6 +219,14 @@ table() {
            | $m | to_entries[] | .key as $i | .value as $e
            | "| \(if $i == 0 then $s.step else "" end) | \(if $i == 0 then $s.calls else "" end) | \($e.key) | \($e.value.input) | \($e.value.output_est) | \($e.value.cache_read) | \($e.value.cache_write) | \(if $i == 0 then $s.edits.files else "" end) | \(if $i == 0 then $s.edits.tests else "" end) |"),
           "",
+          (if ([$r.steps[] | select(.meter != null)] | length) == 0 then empty else
+          "Context and cache per step (tokens), and tool results as they entered context (calls, bytes). A miss is a call after the first of its step that wrote more than 20k tokens to the cache:", "",
+          "| Step | Context peak | Cache write 5m | Cache write 1h | Misses | Miss write | Tool results |",
+          "|---|--:|--:|--:|--:|--:|---|",
+          ($r.steps[] | select(.meter != null)
+           | "| \(.step) | \(.meter.context_peak | fmt) | \(.meter.cache_write_5m | fmt) | \(.meter.cache_write_1h | fmt) | \(.meter.cache_misses | fmt) | \(.meter.cache_miss_tokens | fmt) | \(.meter.tools | to_entries | map("\(.key) \(.value.calls)x \(.value.bytes)B") | join(", ")) |")
+          end),
+          "",
           (if $r.mutants then "Mutants: \($r.mutants.caught) caught, \($r.mutants.missed) missed, \($r.mutants.unviable) unviable, \($r.mutants.timeout) timeout." else "Mutants: no mutation run read." end)'
 }
 
@@ -207,9 +245,10 @@ digest() {
           ([$g[] | .models | to_entries[]] | group_by(.key)[]
            | "| \(.[0].key) | \(map(.value.input) | median | k) | \(map(.value.output) | median | k) | \(map(.value.cache_read) | median | k) | \(map(.value.cache_write) | median | k) |"),
           "", "Steps: runs that called the step, and of those the runs where it edited no file.", "",
-          "| Step | Runs | Left nothing | Median calls |", "|---|--:|--:|--:|",
+          "A cache miss is a call after the first of its step that wrote over 20k tokens to the cache; records from before the meter show `-`.", "",
+          "| Step | Runs | Left nothing | Median calls | Median context peak | Runs with a cache miss |", "|---|--:|--:|--:|--:|--:|",
           ([$g[] | .steps[]] | group_by(.step)[]
-           | "| \(.[0].step) | \(length) | \(if .[0].step == "orchestrator" then "-" else map(select(.edits.files == 0)) | length end) | \(map(.calls) | median) |"),
+           | "| \(.[0].step) | \(length) | \(if .[0].step == "orchestrator" then "-" else map(select(.edits.files == 0)) | length end) | \(map(.calls) | median) | \(map(.meter.context_peak // empty) | median | k) | \(if any(.[]; .meter != null) then map(select((.meter.cache_misses // 0) > 0)) | length else "-" end) |"),
           "", "Mutation: \([$g[] | select(.mutants != null)] | length) of \($g | length) runs read a result; survivors in \([$g[] | select(.mutants != null and .mutants.missed > 0)] | length).", ""
         end'
 }

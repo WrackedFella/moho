@@ -128,12 +128,38 @@ jobs:
         with:
           shared-key: gate-ubuntu-latest
           save-if: false
+      # Telemetry pilot (claude-skills D0033, D0034): exports only when the OTLP secrets are
+      # set. The run's identity is workflow attributes, not the session or the account.
+      - name: Telemetry context
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -n "$OTEL_EXPORTER_OTLP_ENDPOINT" ] || exit 0
+          # Never fail the run over its own bookkeeping.
+          gate=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" --jq '.body // ""' |
+            scripts/run-record.sh gate-class || true)
+          echo "OTEL_RESOURCE_ATTRIBUTES=gh.repo=$GITHUB_REPOSITORY,gh.run_id=$GITHUB_RUN_ID,issue=$ISSUE,gate_class=${gate:-unknown},lane=orchestrate" >> "$GITHUB_ENV"
       - uses: anthropics/claude-code-action@v1
         id: claude
         env:
           # The run ends when the main agent stops, so a background subagent is killed
           # mid-task. Subagents must run in the foreground.
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+          # Telemetry pilot. Metrics and API events only; the content gates
+          # (OTEL_LOG_USER_PROMPTS, OTEL_LOG_TOOL_DETAILS, ...) stay unset because the repository
+          # is public. Short runs flush on a short interval; cumulative suits Prometheus backends.
+          CLAUDE_CODE_ENABLE_TELEMETRY: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT != '' && '1' || '' }}
+          OTEL_METRICS_EXPORTER: otlp
+          OTEL_LOGS_EXPORTER: otlp
+          OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ secrets.OTEL_EXPORTER_OTLP_ENDPOINT }}
+          OTEL_EXPORTER_OTLP_HEADERS: ${{ secrets.OTEL_EXPORTER_OTLP_HEADERS }}
+          OTEL_METRIC_EXPORT_INTERVAL: "5000"
+          OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+          OTEL_METRICS_INCLUDE_SESSION_ID: "false"
+          OTEL_METRICS_INCLUDE_ACCOUNT_UUID: "false"
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
