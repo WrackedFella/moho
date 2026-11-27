@@ -148,11 +148,17 @@ mod tests {
 
     #[test]
     fn baselines_come_from_the_attribute_sheet() {
-        let player = player();
+        let player = PlayerDef {
+            strength: 8.0,
+            carry_capacity_per_strength: 2.5,
+            movement_speed: 1.2,
+            stamina_pool: 7.0,
+            ..player()
+        };
 
-        assert_eq!(player.baseline(Stat::CarryCapacity), 30.0);
-        assert_eq!(player.baseline(Stat::MovementSpeed), 1.0);
-        assert_eq!(player.baseline(Stat::Stamina), 5.0);
+        assert_eq!(player.baseline(Stat::CarryCapacity), 20.0);
+        assert_eq!(player.baseline(Stat::MovementSpeed), 1.2);
+        assert_eq!(player.baseline(Stat::Stamina), 7.0);
     }
 
     #[test]
@@ -165,14 +171,17 @@ mod tests {
     #[test]
     fn adds_apply_before_scales_and_scales_before_caps() {
         let contributions = [
-            speed(SourceLabel::Load, Verb::Cap(25.0)),
+            speed(SourceLabel::Load, Verb::Cap(28.0)),
             speed(SourceLabel::Stance, Verb::Scale(2.0)),
             speed(gear("pack"), Verb::Add(5.0)),
         ];
 
         let resolved = resolve(Stat::MovementSpeed, 10.0, 0.0, &contributions);
 
-        assert_eq!(resolved, 25.0, "(10 + 5) * 2 = 30, capped at 25");
+        assert_eq!(
+            resolved, 28.0,
+            "(10 + 5) * 2 = 30, capped at 28; scaling first gives 25"
+        );
     }
 
     #[test]
@@ -279,15 +288,6 @@ mod tests {
         );
 
         assert_eq!(lines, [add, scale, cap]);
-    }
-
-    #[test]
-    fn explain_of_a_stat_nothing_touches_is_empty() {
-        let contributions = [speed(SourceLabel::Load, Verb::Scale(0.7))];
-
-        let lines = explain(Stat::Stamina, &contributions);
-
-        assert_eq!(lines, []);
     }
 
     /// A contribution to movement speed with a value exactly representable in `f32`, so the

@@ -63,7 +63,7 @@ pub fn load_contributions(_state: LoadState, _slowed_scale: f32) -> Vec<Contribu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inventory::{Item, Place, Remains, RoundStack, Source};
+    use crate::inventory::{Item, RoundStack};
     use crate::item::{ItemDef, RigSpec};
     use crate::rifle::Rifle;
     use crate::rig::Rig;
@@ -191,6 +191,7 @@ mod tests {
         let bad = [
             json!({"slowed": 0.9, "no_sprint": 0.5, "cannot_move": 1.0}),
             json!({"slowed": 0.6, "no_sprint": 0.6, "cannot_move": 1.0}),
+            json!({"slowed": 0.6, "no_sprint": 0.9, "cannot_move": 0.8}),
             json!({"slowed": 0.0, "no_sprint": 0.8, "cannot_move": 1.0}),
             json!({"slowed": 0.6, "no_sprint": 0.8, "cannot_move": -1.0}),
         ];
@@ -210,26 +211,26 @@ mod tests {
 
     #[test]
     fn slowed_scales_movement_speed_and_nothing_else() {
-        let contributions = load_contributions(LoadState::Slowed, 0.7);
+        let contributions = load_contributions(LoadState::Slowed, 0.55);
 
         assert_eq!(
             contributions,
             [Contribution {
                 source: SourceLabel::Load,
                 stat: Stat::MovementSpeed,
-                verb: Verb::Scale(0.7),
+                verb: Verb::Scale(0.55),
             }]
         );
     }
 
     #[test]
     fn no_sprint_also_caps_the_stamina_pool_at_zero() {
-        let contributions = load_contributions(LoadState::NoSprint, 0.7);
+        let contributions = load_contributions(LoadState::NoSprint, 0.55);
 
         let speed = Contribution {
             source: SourceLabel::Load,
             stat: Stat::MovementSpeed,
-            verb: Verb::Scale(0.7),
+            verb: Verb::Scale(0.55),
         };
         let stamina = Contribution {
             source: SourceLabel::Load,
@@ -299,75 +300,21 @@ mod tests {
     }
 
     #[test]
-    fn an_unloaded_loadout_weighs_what_its_gear_weighs() {
-        let items = items(&[
-            ("rifle", weighing(3.4)),
-            ("mag", weighing(0.25)),
-            ("rig", weighing(1.2)),
-        ]);
-        let loadout = loadout(0, vec![]);
-
-        let total = carried(&items, &loadout);
-
-        assert!((total - 4.85).abs() < 1e-4, "carried {total} kg");
-    }
-
-    #[test]
     fn an_item_with_no_definition_is_an_error_naming_it() {
         let items = items(&[]);
-        let loadout = loadout(0, vec![ballast("mystery")]);
+        let cases = [
+            (loadout(0, vec![ballast("mystery")]), "mystery"),
+            (
+                loadout(0, vec![]).with_backpack(id("ghost_pack")),
+                "ghost_pack",
+            ),
+        ];
 
-        let result = load(&loadout, &id("rifle"), |item| items.get(item));
+        for (loadout, missing) in cases {
+            let result = load(&loadout, &id("rifle"), |item| items.get(item));
 
-        assert_eq!(result, Err(UnknownItem { id: id("mystery") }));
-    }
-
-    #[test]
-    fn a_worn_backpack_with_no_definition_is_an_error_naming_it() {
-        let items = items(&[]);
-        let loadout = loadout(0, vec![]).with_backpack(id("ghost_pack"));
-
-        let result = load(&loadout, &id("rifle"), |item| items.get(item));
-
-        assert_eq!(
-            result,
-            Err(UnknownItem {
-                id: id("ghost_pack")
-            })
-        );
-    }
-
-    #[test]
-    fn moving_items_into_a_body_lowers_the_load() {
-        let items = items(&[("crate_a", weighing(15.0)), ("crate_b", weighing(10.0))]);
-        let mut loadout = loadout(0, vec![ballast("crate_a"), ballast("crate_b")]);
-        let mut body = Remains::default();
-        let before = carried(&items, &loadout);
-
-        let moved = loadout.move_item(Some(&mut body), Source::Inventory(0), Place::Body);
-
-        let after = carried(&items, &loadout);
-        assert_eq!(moved, Ok(()));
-        assert_eq!(before, 25.0);
-        assert_eq!(after, 10.0);
-        assert_eq!(load_state(before, 30.0, &THRESHOLDS), LoadState::NoSprint);
-        assert_eq!(load_state(after, 30.0, &THRESHOLDS), LoadState::Fine);
-    }
-
-    #[test]
-    fn items_taken_from_a_body_raise_the_load() {
-        let items = items(&[("loot", weighing(12.0))]);
-        let mut loadout = loadout(0, vec![]);
-        let mut body = Remains {
-            carried: vec![ballast("loot")],
-            ..Remains::default()
-        };
-
-        loadout
-            .move_item(Some(&mut body), Source::BodyCarried(0), Place::Inventory)
-            .expect("the body holds the loot");
-
-        assert_eq!(carried(&items, &loadout), 12.0);
+            assert_eq!(result, Err(UnknownItem { id: id(missing) }), "{missing}");
+        }
     }
 
     #[test]

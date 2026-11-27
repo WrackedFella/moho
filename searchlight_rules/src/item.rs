@@ -420,6 +420,9 @@ mod tests {
         Text(&'static str),
         Size([u8; 2]),
         Float(f32),
+        List(Vec<Field>),
+        /// A stats entry: its stat and one verb key with a float value.
+        Entry(&'static str, &'static str, f32),
     }
 
     impl<'de> serde::Deserializer<'de> for Field {
@@ -436,7 +439,23 @@ mod tests {
                         size.into_iter(),
                     )),
                 Field::Float(float) => visitor.visit_f32(float),
+                Field::List(items) => visitor
+                    .visit_seq(serde::de::value::SeqDeserializer::<_, Self::Error>::new(
+                        items.into_iter(),
+                    )),
+                Field::Entry(stat, key, value) => {
+                    visitor.visit_map(serde::de::value::MapDeserializer::<_, Self::Error>::new(
+                        [("stat", Field::Text(stat)), (key, Field::Float(value))].into_iter(),
+                    ))
+                }
             }
+        }
+
+        fn deserialize_option<V: serde::de::Visitor<'de>>(
+            self,
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            visitor.visit_some(self)
         }
 
         fn deserialize_enum<V: serde::de::Visitor<'de>>(
@@ -455,7 +474,7 @@ mod tests {
 
         serde::forward_to_deserialize_any! {
             bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
-            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map
+            byte_buf unit unit_struct newtype_struct seq tuple tuple_struct map
             struct identifier ignored_any
         }
     }
@@ -481,6 +500,25 @@ mod tests {
 
         ItemDef::deserialize(definition)
             .expect_err("the weight should be refused")
+            .to_string()
+            .to_lowercase()
+    }
+
+    /// The error text of a gear definition whose one stats entry gives `key` the float `value`
+    /// on `stat`, which JSON cannot always say.
+    fn stat_error_text(stat: &'static str, key: &'static str, value: f32) -> String {
+        let fields = [
+            ("class", Field::Text("gear")),
+            ("size", Field::Size([1, 1])),
+            ("weight", Field::Float(1.0)),
+            ("stats", Field::List(vec![Field::Entry(stat, key, value)])),
+        ];
+        let definition = serde::de::value::MapDeserializer::<_, serde::de::value::Error>::new(
+            fields.into_iter(),
+        );
+
+        ItemDef::deserialize(definition)
+            .expect_err("the non-finite verb should be refused")
             .to_string()
             .to_lowercase()
     }
@@ -916,13 +954,27 @@ mod tests {
     #[test]
     fn an_entry_with_no_verb_or_two_verbs_is_refused_naming_the_stat() {
         let entries = [
-            json!({"stat": "carry_capacity"}),
-            json!({"stat": "carry_capacity", "add": 1.0, "scale": 2.0}),
+            (json!({"stat": "carry_capacity"}), "carry"),
+            (
+                json!({"stat": "stamina", "add": 1.0, "scale": 2.0}),
+                "stamina",
+            ),
         ];
-        for entry in entries {
+        for (entry, named) in entries {
             let text = error_text(pack_with_stats(json!([entry])));
 
-            assert!(text.contains("carry"), "{entry}: {text}");
+            assert!(text.contains(named), "{entry}: {text}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_add_scale_or_cap_is_refused_naming_the_stat() {
+        for key in ["add", "scale", "cap"] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let text = stat_error_text("movement_speed", key, value);
+
+                assert!(text.contains("movement"), "{key} {value}: {text}");
+            }
         }
     }
 

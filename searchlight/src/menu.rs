@@ -643,6 +643,7 @@ mod tests {
             "E",
             "F",
             "Tab",
+            "K",
             "Mouse Right",
         ]
         .map(|text| Some(text.to_owned()))

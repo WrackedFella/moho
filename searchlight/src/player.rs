@@ -19,6 +19,7 @@ pub fn load(_roots: &ContentRoots) -> Result<PlayerDef, ContentError> {
 mod tests {
     use super::*;
     use crate::content_root;
+    use crate::tuning::SHIPPED_PLAYER;
     use moho_core::content::load_kind;
     use searchlight_rules::{ItemDef, ItemId, ItemStat, LoadThresholds, Stat, Verb};
 
@@ -33,50 +34,52 @@ mod tests {
 
     const SHEET: &str = r#"
 [player]
-strength = 10.0
-carry_capacity_per_strength = 3.0
-movement_speed = 1.0
-stamina_pool = 5.0
-slowed_scale = 0.7
+strength = 8.0
+carry_capacity_per_strength = 2.5
+movement_speed = 1.2
+stamina_pool = 7.0
+slowed_scale = 0.55
 [player.thresholds]
-slowed = 0.6
-no_sprint = 0.8
-cannot_move = 1.0
+slowed = 0.5
+no_sprint = 0.7
+cannot_move = 0.9
 "#;
 
     #[test]
-    fn the_shipped_player_sheet_gives_30_kg_of_capacity_and_the_outline_thresholds() {
+    fn the_shipped_player_sheet_matches_the_shipped_tuning_constant() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
 
         let player = load(&roots).expect("the shipped player sheet loads");
 
-        assert_eq!(player.strength, 10.0);
-        assert_eq!(player.carry_capacity_per_strength, 3.0);
-        assert_eq!(player.movement_speed, 1.0);
-        assert_eq!(player.slowed_scale, 0.7);
-        assert_eq!(
-            player.thresholds,
-            LoadThresholds {
-                slowed: 0.6,
-                no_sprint: 0.8,
-                cannot_move: 1.0
-            }
-        );
-        assert_eq!(player.baseline(Stat::CarryCapacity), 30.0);
+        assert_eq!(player, SHIPPED_PLAYER);
     }
 
     #[test]
-    fn a_sheet_in_a_content_folder_loads() {
+    fn a_sheet_in_a_content_folder_loads_whole() {
         let (_dir, roots) = roots_with(Some(SHEET));
 
         let player = load(&roots).expect("a valid sheet loads");
 
-        assert_eq!(player.stamina_pool, 5.0);
+        assert_eq!(
+            player,
+            PlayerDef {
+                strength: 8.0,
+                carry_capacity_per_strength: 2.5,
+                movement_speed: 1.2,
+                stamina_pool: 7.0,
+                slowed_scale: 0.55,
+                thresholds: LoadThresholds {
+                    slowed: 0.5,
+                    no_sprint: 0.7,
+                    cannot_move: 0.9,
+                },
+            }
+        );
     }
 
     #[test]
     fn a_sheet_with_an_unknown_key_is_refused_naming_it() {
-        let sheet = SHEET.replace("slowed_scale = 0.7", "slowed_scale = 0.7\nbogus = 1");
+        let sheet = SHEET.replace("slowed_scale = 0.55", "slowed_scale = 0.55\nbogus = 1");
         let (_dir, roots) = roots_with(Some(&sheet));
 
         let error = load(&roots).expect_err("an unknown key is refused");

@@ -1145,6 +1145,16 @@ impl SearchlightGame {
         }
     }
 
+    /// The colour of the HUD's load icon, from the sim's load state.
+    pub fn load_icon(&self) -> hud::LoadIcon {
+        todo!("the HUD icon for the sim's load state")
+    }
+
+    /// The load line the open inventory screen shows; `None` while it is closed.
+    pub fn inventory_header(&self) -> Option<inventory::LoadHeader> {
+        todo!("the load header while the inventory is open")
+    }
+
     /// `command` with the host's levels and the inventory command the screen queued, the parts
     /// of a tick's command that do not come from the player's hands.
     fn with_host_levels(&mut self, command: SearchlightCommand) -> SearchlightCommand {
@@ -7530,6 +7540,39 @@ mod tests {
             speed.contains(&"Load: speed ×0.70".to_owned()),
             "movement speed lists {speed:?}"
         );
+    }
+
+    #[test]
+    fn the_hud_load_icon_follows_the_sims_load_state() {
+        let expected = [
+            (15.0, hud::LoadIcon::White),
+            (20.0, hud::LoadIcon::Yellow),
+            (25.0, hud::LoadIcon::Yellow),
+            (30.0, hud::LoadIcon::Red),
+        ];
+
+        for (kg, icon) in expected {
+            let game = game_carrying(kg);
+
+            assert_eq!(game.load_icon(), icon, "{kg} of 30 kg");
+        }
+    }
+
+    #[test]
+    fn the_open_inventory_shows_the_load_header_and_the_closed_one_none() {
+        let mut game = game_carrying(20.0);
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let closed = game.screen;
+
+        game.route_input(&mut ctx, TAB, true, false);
+        let header = game.inventory_header();
+
+        assert_eq!(closed, Screen::Playing);
+        assert_eq!(game.screen, Screen::Inventory);
+        let header = header.expect("the open inventory shows a header");
+        assert_eq!(header.text, "20.0 of 30.0 kg");
+        assert_eq!(header.marks, [18.0, 24.0, 30.0]);
     }
 
     #[test]

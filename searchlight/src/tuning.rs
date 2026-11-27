@@ -8,7 +8,10 @@ use searchlight_rules::{
     Remains, RoundStats,
 };
 
+use moho_core::content::ContentRoots;
+
 use crate::brain::EnemyTuning;
+use crate::kit::KitLoadError;
 use crate::sim::{CarryConfig, SimConfig};
 
 /// The player's and every target's body: Source's 0.81 m wide, 1.83 m tall capsule, eye at
@@ -123,6 +126,16 @@ pub fn tuning(kit: Kit) -> SimConfig {
             weapon: ItemId::new("rifle"),
         },
     }
+}
+
+/// The shipped game's tuning: the kit `kit` of the content `roots` with the shipped item
+/// catalogue and `player.toml` as its carry config, so every item in play has a definition.
+///
+/// # Errors
+///
+/// A [`KitLoadError`] when the kit, the items or the player sheet cannot be loaded.
+pub fn shipped(_roots: &ContentRoots, _kit: &str) -> Result<SimConfig, KitLoadError> {
+    todo!("tuning of the kit with the item catalogue and the player sheet")
 }
 
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
@@ -252,6 +265,28 @@ mod tests {
             sim.player_eye().y
         );
         assert!((target.position.y - 0.915).abs() < 0.03, "{target:?}");
+    }
+
+    #[test]
+    fn the_shipped_start_kit_carries_a_finite_positive_load_that_is_fine() {
+        let roots = ContentRoots::base(&crate::content_root()).expect("the shipped content");
+
+        let config = shipped(&roots, crate::kit::START_KIT_ID).expect("the shipped tuning loads");
+
+        let kg = searchlight_rules::load(&config.loadout, &config.carry.weapon, |id| {
+            config.carry.items.get(id)
+        })
+        .expect("every item in the start kit has a definition");
+        let capacity = config
+            .carry
+            .player
+            .baseline(searchlight_rules::Stat::CarryCapacity);
+        assert!(kg.is_finite() && kg > 0.0, "{kg}");
+        assert_eq!(
+            searchlight_rules::load_state(kg, capacity, &config.carry.player.thresholds),
+            searchlight_rules::LoadState::Fine,
+            "{kg} kg of {capacity}"
+        );
     }
 
     #[test]

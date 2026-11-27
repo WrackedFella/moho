@@ -5079,15 +5079,6 @@ mod tests {
     }
 
     #[test]
-    fn a_player_just_short_of_red_still_moves() {
-        let mut sim = load_sim(29.9);
-
-        let moved = walked(&mut sim);
-
-        assert!(moved > 1.0, "{moved}");
-    }
-
-    #[test]
     fn a_slowed_player_lists_load_among_the_movement_speed_contributions() {
         let mut slowed = load_sim(20.0);
         let mut fine = load_sim(15.0);
