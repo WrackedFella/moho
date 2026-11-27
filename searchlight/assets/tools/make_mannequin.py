@@ -2,8 +2,7 @@
 """The shared humanoid placeholder: a segmented mannequin on the engine's 16 humanoid bones
 (Unreal mannequin names), one box per bone, rigidly skinned.
 
-Standard library only; ported from searchlight-assets (source/generators/mannequin.py at
-d94a66c), whose exports it reproduces byte for byte. It is the game's no-art fallback: an art
+Standard library only. It is the game's no-art fallback: an art
 folder's files at the same relative paths take its place one file at a time (ADR-0042).
 
     python3 -I make_mannequin.py [output-directory]

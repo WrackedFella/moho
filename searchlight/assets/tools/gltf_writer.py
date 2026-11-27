@@ -172,7 +172,6 @@ class Document:
         self.bin = bytearray()
         self._materials = {}
 
-    # buffers
     def _view(self, data: bytes, target=None):
         while len(self.bin) % 4:
             self.bin.append(0)
@@ -203,7 +202,6 @@ class Document:
             mm = ([min(c) for c in cols], [max(c) for c in cols]) if width else None
         return self._accessor(view, FLOAT, len(rows), atype, mm)
 
-    # materials
     def material(self, name, rgb, metallic=0.0, roughness=0.85):
         if name not in self._materials:
             self.json["materials"].append({
@@ -216,7 +214,6 @@ class Document:
             self._materials[name] = len(self.json["materials"]) - 1
         return self._materials[name]
 
-    # meshes
     def mesh(self, name, parts, skinned=False):
         """parts: list of (Geometry, material index); one primitive each."""
         prims = []
@@ -236,7 +233,6 @@ class Document:
         self.json["meshes"].append({"name": name, "primitives": prims})
         return len(self.json["meshes"]) - 1
 
-    # nodes
     def node(self, name, parent=None, translation=None, rotation=None, mesh=None, extras=None, scale=None):
         n = {"name": name}
         if translation and any(abs(x) > 1e-9 for x in translation):
@@ -275,7 +271,6 @@ class Document:
             chans.append({"sampler": len(samplers) - 1, "target": {"node": node, "path": path}})
         self.json.setdefault("animations", []).append({"name": name, "samplers": samplers, "channels": chans})
 
-    # output
     def glb(self) -> bytes:
         for key in ("meshes", "materials"):
             if not self.json[key]:
