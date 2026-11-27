@@ -1251,6 +1251,28 @@ mod tests {
         assert_eq!(loadout.rifle(), &rifle_before);
     }
 
+    #[test]
+    fn worn_of_names_the_kind_of_a_rig_or_backpack_and_nothing_else() {
+        let defs = wear_defs();
+        let cases = [
+            (Item::Rig(id("rig_five")), Some(Worn::Rig)),
+            (Item::Other(id("pack")), Some(Worn::Backpack)),
+            (mag_item("m"), None),
+            (bandage(), None),
+            (Item::Weapon(rifle_with(full("in_rifle"))), None),
+            (Item::Rig(id("no_such_definition")), None),
+            (Item::Other(id("no_such_definition")), None),
+            (Item::Rig(id("pack")), None),
+            (Item::Other(id("rig_five")), None),
+        ];
+
+        for (item, expected) in cases {
+            let named = Worn::of(&item, |item| defs.get(item));
+
+            assert_eq!(named, expected, "{item:?}");
+        }
+    }
+
     /// Definitions for the ids the conservation property wears: by the number after `i`.
     struct ConservationDefs {
         rigs: Vec<ItemDef>,
