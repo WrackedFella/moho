@@ -44,6 +44,15 @@ on:
         type: choice
         options: [default, opus, fable]
         default: default
+      dry_run_prior:
+        description: "Dry run, later round: last reviewed SHA, with dry_run_prior_run"
+        required: false
+      dry_run_prior_run:
+        description: "Dry run, later round: run ID of the dry run whose review is the prior round"
+        required: false
+      devflow_ref:
+        description: "Dry run: claude-skills branch or SHA to load devflow from (empty for main)"
+        required: false
 
 permissions:
   contents: write
@@ -466,6 +475,9 @@ jobs:
       RANGE: ${{ inputs.dry_run_range }}
       ISSUE: ${{ inputs.dry_run_issue }}
       CRITIC: ${{ inputs.dry_run_critic_model }}
+      PRIOR: ${{ inputs.dry_run_prior }}
+      PRIOR_RUN: ${{ inputs.dry_run_prior_run }}
+      DEVFLOW_REF: ${{ inputs.devflow_ref }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
@@ -484,6 +496,24 @@ jobs:
             # run move the skill's Fable slot onto the defect finder.
             if [ "$CRITIC" = "fable" ]; then other="model fable"; else other="its default model (Opus)"; fi
             echo "CRITIC_NOTE=This is a model back-test. Call devflow:design-critic with $other on either tier. Call devflow:defect-finder and devflow:refuter with their default model (Opus) and never pass model fable to them." >> "$GITHUB_ENV"
+          fi
+      - name: Later round and devflow source
+        run: |
+          ARGS=""
+          if [ -n "$PRIOR" ]; then
+            [[ $PRIOR =~ ^[0-9a-f]{7,40}$ && $PRIOR_RUN =~ ^[0-9]+$ ]] || { echo "::error::dry_run_prior needs a SHA and dry_run_prior_run a run ID."; exit 1; }
+            gh run download "$PRIOR_RUN" -n "pr-review-dry-run-$PRIOR_RUN" -D "$RUNNER_TEMP/prior"
+            ARGS="--prior $PRIOR $RUNNER_TEMP/prior/pr-review-dry-run.md"
+          fi
+          echo "PRIOR_ARGS=$ARGS" >> "$GITHUB_ENV"
+          if [ -z "$DEVFLOW_REF" ]; then
+            echo "DEVFLOW_MARKETPLACE=https://github.com/WrackedFella/claude-skills.git" >> "$GITHUB_ENV"
+            echo "DEVFLOW_PLUGIN=devflow@claude-skills" >> "$GITHUB_ENV"
+          else
+            [[ $DEVFLOW_REF =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::bad devflow_ref"; exit 1; }
+            git clone -q https://github.com/WrackedFella/claude-skills.git "$RUNNER_TEMP/claude-skills"
+            git -C "$RUNNER_TEMP/claude-skills" checkout -q "$DEVFLOW_REF"
+            echo "PLUGIN_ARG=--plugin-dir $RUNNER_TEMP/claude-skills/plugins/devflow" >> "$GITHUB_ENV"
           fi
       - name: Install toolchain
         run: |
@@ -505,19 +535,20 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
-          plugins: devflow@claude-skills
+          plugin_marketplaces: ${{ env.DEVFLOW_MARKETPLACE }}
+          plugins: ${{ env.DEVFLOW_PLUGIN }}
           display_report: true
           # orchestrate-eval.yml dispatches dry runs on its replays as github-actions[bot].
           # Only a workflow in this repository or a writer can dispatch, so allow that bot.
           allowed_bots: github-actions
-          prompt: /devflow:pr-review --dry-run ${{ env.RANGE }} ${{ env.ISSUE }} ${{ runner.temp }}/pr-review-dry-run.md
+          prompt: /devflow:pr-review --dry-run ${{ env.RANGE }} ${{ env.ISSUE }} ${{ runner.temp }}/pr-review-dry-run.md ${{ env.PRIOR_ARGS }}
           claude_args: |
             --model claude-opus-5-5
+            ${{ env.PLUGIN_ARG }}
             --max-turns 150
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, comment, label or file an issue. ${{ env.CRITIC_NOTE }}"
             --add-dir /home/runner/.claude/plugins/cache /tmp
-            --allowedTools "Bash(cd:*),Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-verdict *),Edit,Write,Task,Skill"
+            --allowedTools "Bash(cd:*),Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-verdict *),Bash(${{ runner.temp }}/claude-skills/plugins/devflow/scripts/pr-facts *),Bash(${{ runner.temp }}/claude-skills/plugins/devflow/scripts/pr-verdict *),Edit,Write,Task,Skill"
       # Also printed to the job log: the log is readable through the REST API, where the
       # Step Summary and artifacts are not reachable from every client.
       - name: Report
