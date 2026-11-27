@@ -711,10 +711,10 @@ impl Stage {
             self.status = text;
         }
         match feedback {
-            Feedback::Fired => self.play_shot(audio),
-            Feedback::EnemyFired { target } => {
+            Feedback::Fired => self.play_shot(feedback, audio),
+            Feedback::EnemyFired { target, .. } => {
                 self.enemy_rig(*target).gun_flash = FLASH_TICKS;
-                self.play_shot(audio);
+                self.play_shot(feedback, audio);
             }
             Feedback::Hit { target, part, .. } => {
                 let tag = SurfaceTag::Part {
@@ -891,12 +891,24 @@ impl Stage {
             .hidden = true;
     }
 
-    fn play_shot(&self, audio: Option<&mut AudioSystem>) {
-        let (Some(audio), Some(path)) = (audio, &self.shot_sound) else {
+    /// The rifle sound for a shot: the player's own from no position, an enemy's from where
+    /// it fired. `None` for any other feedback or when no shot file is configured.
+    fn shot_sound(&self, feedback: &Feedback) -> Option<moho_audio::AudioSource> {
+        let path = self.shot_sound.as_ref()?;
+        let source = moho_audio::AudioSource::new(path).with_volume(SHOT_VOLUME);
+        match feedback {
+            Feedback::Fired => Some(source),
+            Feedback::EnemyFired { from, .. } => Some(source.with_position(from.to_array())),
+            _ => None,
+        }
+    }
+
+    fn play_shot(&self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
+        let (Some(audio), Some(source)) = (audio, self.shot_sound(feedback)) else {
             return;
         };
-        if let Err(error) = audio.play_sound(path, SHOT_VOLUME) {
-            tracing::warn!(%error, path = %path.display(), "rifle shot could not be played");
+        if let Err(error) = audio.play_audio_source(&source) {
+            tracing::warn!(%error, path = source.path(), "rifle shot could not be played");
         }
     }
 
@@ -1057,6 +1069,8 @@ pub struct SearchlightGame {
     /// The view bob after the last tick, and the tick before it for blending.
     bob: Bob,
     previous_bob: Bob,
+    /// The listener of the last frame, read from the view that frame draws.
+    listener: moho_audio::Listener,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -1098,6 +1112,7 @@ impl SearchlightGame {
             zoom: Magnification::DEFAULT,
             bob: Bob::REST,
             previous_bob: Bob::REST,
+            listener: moho_audio::Listener::default(),
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
@@ -1786,6 +1801,34 @@ impl SearchlightGame {
         self.mode.sim()
     }
 
+    #[cfg(test)]
+    fn frame_listener(&self) -> moho_audio::Listener {
+        self.listener
+    }
+
+    /// The view matrix and eye the frame draws at `alpha` between ticks: the interpolated
+    /// pose with lean shift, head bob and lean roll.
+    fn frame_view(&self, alpha: f32) -> (Mat4, Vec3) {
+        let sim = self.mode.sim();
+        let view = first_person_view(
+            &self.previous,
+            &sim.player(),
+            alpha,
+            look_to_turn(scale_look(self.input.pending_look(), self.aim_look_scale())),
+        );
+        let tuning = sim.lean_tuning();
+        let from = self.previous_lean.amount();
+        let amount = from + alpha * (sim.player_lean().amount() - from);
+        let yaw = view.forward.x.atan2(view.forward.z);
+        let bob = self.previous_bob.blend(self.bob, alpha);
+        let eye =
+            view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
+        (
+            rolled_view_matrix(eye, view.forward, amount * tuning.roll),
+            eye,
+        )
+    }
+
     /// The input map, for feeding it device events.
     pub fn input_mut(&mut self) -> &mut ActionMap<SearchlightAction> {
         &mut self.input
@@ -1800,6 +1843,22 @@ impl SearchlightGame {
             self.stage.shell().menu_mut().push(main_screen());
         }
         self
+    }
+
+    /// Opens the inventory on a finished search, and leaves it or the character screen on death,
+    /// before the frame reads its view: both discard the pending look, so the listener and the
+    /// draw share one view.
+    fn settle_screen(&mut self, feedback: &[Feedback]) {
+        let searched = feedback
+            .iter()
+            .any(|f| matches!(f, Feedback::SearchOpened { .. }));
+        if searched && self.screen == Screen::Playing {
+            self.open_inventory();
+        }
+        let on_a_screen_over_play = matches!(self.screen, Screen::Inventory | Screen::Character);
+        if on_a_screen_over_play && self.mode.sim().player_body().is_dead() {
+            self.enter_play();
+        }
     }
 
     /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
@@ -2020,6 +2079,13 @@ impl Game for SearchlightGame {
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
         }
+        let feedback = self.mode.drain_feedback();
+        self.settle_screen(&feedback);
+        let (view, eye) = self.frame_view(alpha);
+        self.listener = moho_audio::Listener::from_view(view);
+        if let Some(audio) = ctx.audio() {
+            audio.set_listener(self.listener);
+        }
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
@@ -2044,7 +2110,7 @@ impl Game for SearchlightGame {
             });
             self.window_mode_applied(mode);
         }
-        for feedback in self.mode.drain_feedback() {
+        for feedback in feedback {
             if let Feedback::PlayerHit { from, .. } = feedback {
                 let player = self.mode.sim().player();
                 self.stage
@@ -2052,9 +2118,6 @@ impl Game for SearchlightGame {
             }
             if hud::shows_strip(&feedback) {
                 self.strip_ticks_left = STRIP_FADE_TICKS;
-            }
-            if matches!(feedback, Feedback::SearchOpened { .. }) && self.screen == Screen::Playing {
-                self.open_inventory();
             }
             self.stage.react(&feedback, ctx.audio());
         }
@@ -2064,20 +2127,12 @@ impl Game for SearchlightGame {
         }
         let dead = self.mode.sim().player_body().is_dead();
         if self.screen == Screen::Inventory {
-            if dead {
-                self.enter_play();
-            } else {
-                let lists = self.inventory_lists();
-                self.stage.shell().menu_mut().set_lists(lists);
-            }
+            let lists = self.inventory_lists();
+            self.stage.shell().menu_mut().set_lists(lists);
         }
         if self.screen == Screen::Character {
-            if dead {
-                self.enter_play();
-            } else {
-                let lists = character::character_lists(self.mode.sim());
-                self.stage.shell().menu_mut().set_lists(lists);
-            }
+            let lists = character::character_lists(self.mode.sim());
+            self.stage.shell().menu_mut().set_lists(lists);
         }
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
@@ -2094,29 +2149,8 @@ impl Game for SearchlightGame {
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
-            let sim = self.mode.sim();
-            let view = first_person_view(
-                &self.previous,
-                &sim.player(),
-                alpha,
-                look_to_turn(scale_look(self.input.pending_look(), self.aim_look_scale())),
-            );
-            let tuning = sim.lean_tuning();
-            let from = self.previous_lean.amount();
-            let amount = from + alpha * (sim.player_lean().amount() - from);
-            let yaw = view.forward.x.atan2(view.forward.z);
-            let bob = self.previous_bob.blend(self.bob, alpha);
-            let eye =
-                view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
             let fov = self.play_fov_degrees();
-            self.stage.draw_at(
-                renderer,
-                (
-                    rolled_view_matrix(eye, view.forward, amount * tuning.roll),
-                    eye,
-                ),
-                fov,
-            );
+            self.stage.draw_at(renderer, (view, eye), fov);
         }
     }
 }
@@ -2169,6 +2203,159 @@ mod tests {
         );
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    fn shot_file() -> &'static Path {
+        Path::new("rifle.wav")
+    }
+
+    fn enemy_shot_from(from: Vec3) -> Feedback {
+        Feedback::EnemyFired { target: 0, from }
+    }
+
+    #[test]
+    fn an_enemy_shot_is_louder_in_the_ear_on_its_side() {
+        let mut game = game().with_shot_sound(shot_file());
+        let mut renderer = SettingsRenderer::default();
+        let view = draw_frame(&mut game, &mut renderer);
+        let eye = moho_audio::Listener::from_view(view);
+        let listener = game.frame_listener();
+
+        for (side, louder_right) in [(1.0, true), (-1.0, false)] {
+            let from = eye.position + eye.right() * (10.0 * side);
+            let source = game
+                .stage
+                .shot_sound(&enemy_shot_from(from))
+                .expect("an enemy shot with a shot file has a sound");
+            let at = Vec3::from(source.position().expect("an enemy shot is positioned"));
+
+            let pan = moho_audio::spatial::stereo_pan(&listener, at);
+
+            assert_eq!(pan.right > pan.left, louder_right, "side {side}: {pan:?}");
+            assert_ne!(pan.right, pan.left, "side {side}: {pan:?}");
+        }
+    }
+
+    #[test]
+    fn a_far_enemy_shot_plays_quieter_than_a_near_one() {
+        let mut stage = Stage::new();
+        stage.shot_sound = Some(shot_file().to_owned());
+        let listener = moho_audio::Listener::default();
+        let heard = |distance: f32| {
+            let source = stage
+                .shot_sound(&enemy_shot_from(Vec3::new(0.0, 0.0, -distance)))
+                .expect("an enemy shot with a shot file has a sound");
+            let at = Vec3::from(source.position().expect("an enemy shot is positioned"));
+            let gain = moho_audio::spatial::distance_gain(listener.position.distance(at))
+                .expect("within audible range");
+            source.volume() * gain
+        };
+
+        let near = heard(5.0);
+        let far = heard(40.0);
+
+        assert!(far < near, "far {far}, near {near}");
+        assert!(far > 0.0, "far {far}");
+    }
+
+    #[test]
+    fn the_players_own_shot_plays_from_no_position() {
+        let mut stage = Stage::new();
+        stage.shot_sound = Some(shot_file().to_owned());
+
+        let source = stage
+            .shot_sound(&Feedback::Fired)
+            .expect("the player's shot has a sound");
+
+        assert_eq!(source.position(), None);
+        assert_eq!(source.volume(), SHOT_VOLUME);
+        assert_eq!(*source.category(), moho_audio::AudioCategory::SoundEffect);
+        assert_eq!(source.path(), shot_file().to_string_lossy());
+    }
+
+    #[test]
+    fn the_listener_is_the_eye_the_frame_draws() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_left = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &lean_left);
+        tick_with(&mut game, &mut clock, &lean_left);
+        let mut renderer = SettingsRenderer::default();
+
+        let view = draw_frame(&mut game, &mut renderer);
+
+        let standing = game.sim().player().eye_position();
+        let listener = game.frame_listener();
+        assert_eq!(listener, moho_audio::Listener::from_view(view));
+        assert!(
+            listener.position.distance(standing) > 0.01,
+            "the lean moved the eye off {standing:?}: {listener:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_without_audio_or_renderer_still_stores_the_listener_at_its_alpha() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_left = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &lean_left);
+        tick_with(&mut game, &mut clock, &lean_left);
+        let frame_clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &frame_clock, None, None);
+
+        game.frame(&mut ctx, 0.25);
+
+        let (view, _) = game.frame_view(0.25);
+        assert_eq!(game.frame_listener(), moho_audio::Listener::from_view(view));
+        assert_ne!(
+            game.frame_listener(),
+            moho_audio::Listener::from_view(game.frame_view(1.0).0)
+        );
+    }
+
+    #[test]
+    fn no_shot_file_plays_no_shot_sound() {
+        let stage = Stage::new();
+
+        let own = stage.shot_sound(&Feedback::Fired);
+        let enemy = stage.shot_sound(&enemy_shot_from(Vec3::new(0.0, 0.0, 10.0)));
+
+        assert!(own.is_none(), "{own:?}");
+        assert!(enemy.is_none(), "{enemy:?}");
+    }
+
+    #[test]
+    fn only_shots_have_a_shot_sound() {
+        let mut stage = Stage::new();
+        stage.shot_sound = Some(shot_file().to_owned());
+        let hit = Feedback::Hit {
+            target: 0,
+            part: searchlight_rules::BodyPart::Head,
+            report: searchlight_rules::Body::new(searchlight_rules::BodyProfile {
+                max_health: 10,
+                head_status: 10,
+                arm_status: 10,
+                leg_status: 10,
+            })
+            .hit(searchlight_rules::BodyPart::Head, 1),
+            point: Vec3::ZERO,
+        };
+        let impact = Feedback::Impact {
+            point: Vec3::ZERO,
+            normal: Vec3::Y,
+        };
+
+        for feedback in [Feedback::Dry, hit, impact] {
+            let sound = stage.shot_sound(&feedback);
+
+            assert!(sound.is_none(), "{feedback:?}: {sound:?}");
+        }
     }
 
     #[test]
@@ -7418,6 +7605,35 @@ mod tests {
     }
 
     #[test]
+    fn a_search_opening_in_a_frame_is_heard_and_drawn_from_the_view_without_the_look_it_discarded()
+    {
+        let (mut game, mut clock) = game_beside_a_body();
+        game.input_mut()
+            .set_look(moho_input::action_map::LookSettings {
+                look_per_count: 0.002,
+                smoothing: false,
+                invert_y: false,
+                acceleration: 0.0,
+            });
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        search_the_body(&mut game, &mut clock);
+        let without_look = game.frame_view(ALPHA).0;
+        mouse(&mut game, 200.0, 0.0);
+        let mut renderer = SettingsRenderer::default();
+
+        let drawn = draw_frame(&mut game, &mut renderer);
+
+        assert_eq!(game.screen, Screen::Inventory);
+        assert_eq!(drawn, without_look);
+        assert_eq!(
+            game.frame_listener(),
+            moho_audio::Listener::from_view(drawn)
+        );
+    }
+
+    #[test]
     fn a_finished_search_opens_the_inventory_with_the_bodys_list() {
         let (mut game, mut clock) = game_beside_a_body();
         assert_eq!(game.screen, Screen::Playing);
@@ -10950,7 +11166,13 @@ mod enemy_and_hud_tests {
         stage.add_arena(Vec::new(), &sim_dummy_spawns());
         drawn_after_sync(&mut stage, &mut renderer, &sim);
 
-        stage.react(&Feedback::EnemyFired { target: 2 }, None);
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 2,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
 
         assert_eq!(stage.enemies[0].gun_flash, FLASH_TICKS);
@@ -10968,7 +11190,13 @@ mod enemy_and_hud_tests {
         let mut stage = Stage::new();
         let mut renderer = RecordingRenderer::default();
 
-        stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 0,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         let flashing = drawn_after_sync(&mut stage, &mut renderer, &sim);
         for _ in 0..FLASH_TICKS {
             stage.tick_flashes();
@@ -10988,8 +11216,20 @@ mod enemy_and_hud_tests {
     fn an_enemy_shot_starts_a_ten_tick_gun_flash_on_that_enemys_rig() {
         let mut stage = Stage::new();
 
-        stage.react(&Feedback::EnemyFired { target: 4 }, None);
-        stage.react(&Feedback::EnemyFired { target: 9 }, None);
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 4,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 9,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
 
         let flashes: Vec<(u16, u32)> = stage
             .enemies
@@ -11129,7 +11369,13 @@ mod enemy_and_hud_tests {
         let mut renderer = RecordingRenderer::default();
         let (struck, plain) = (game.stage.struck_material, game.stage.enemy_material);
 
-        game.stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 0,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         play_frame(&mut game, &mut renderer);
         let flashing: Vec<u32> = renderer
             .unit_box_instances()
@@ -11348,7 +11594,13 @@ mod enemy_and_hud_tests {
         let mut game = lone_game();
         let mut renderer = RecordingRenderer::default();
         let plain = game.stage.enemy_material;
-        game.stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 0,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         play_frame(&mut game, &mut renderer);
         assert!(
             game.stage.enemies[0].gun_flash > 0,
@@ -11388,7 +11640,13 @@ mod enemy_and_hud_tests {
         );
         let mut renderer = RecordingRenderer::default();
         let plain = game.stage.enemy_material;
-        game.stage.react(&Feedback::EnemyFired { target: 1 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 1,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         play_frame(&mut game, &mut renderer);
         assert!(
             game.stage.enemy_rig(1).gun_flash > 0,
@@ -11433,7 +11691,13 @@ mod enemy_and_hud_tests {
         );
         let mut renderer = RecordingRenderer::default();
         let (struck, plain) = (game.stage.struck_material, game.stage.enemy_material);
-        game.stage.react(&Feedback::EnemyFired { target: 1 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 1,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
 
         play_frame(&mut game, &mut renderer);
         let materials = materials_placed(&renderer);

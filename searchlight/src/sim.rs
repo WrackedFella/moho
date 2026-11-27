@@ -251,7 +251,7 @@ pub enum Feedback {
     /// A reload finished.
     ReloadDone,
     /// The enemy numbered `target` fired a shot.
-    EnemyFired { target: u16 },
+    EnemyFired { target: u16, from: Vec3 },
     /// An enemy shot struck `part` of the player; `from` is where the shot began.
     PlayerHit { part: BodyPart, from: Vec3 },
     /// The enemy numbered `target` died and left the arena.
@@ -1092,6 +1092,7 @@ impl SearchlightSim {
             let direction = self.with_spread(aim - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
+                from: eye,
             });
             let strike = resolve_shot(
                 &self.world,
@@ -7344,6 +7345,28 @@ mod enemy_tests {
     }
 
     #[test]
+    fn an_enemy_shot_reports_the_eye_it_fired_from() {
+        let mut sim = SearchlightSim::start(duel(&[]), config());
+        let mut reported = None;
+
+        for _ in 0..12 {
+            sim.tick(&idle(), DT);
+            let eye = sim.enemy_state(0).expect("the enemy lives").eye_position();
+            let from = sim.drain_feedback().into_iter().find_map(|fb| match fb {
+                Feedback::EnemyFired { from, .. } => Some(from),
+                _ => None,
+            });
+            if let Some(from) = from {
+                reported = Some((from, eye));
+                break;
+            }
+        }
+
+        let (from, eye) = reported.expect("the enemy fires within 12 ticks");
+        assert!(from.distance(eye) < 1e-3, "from {from:?}, eye {eye:?}");
+    }
+
+    #[test]
     fn an_enemy_beyond_its_sight_range_does_not_fire() {
         let fired_with_range = |sight_range: f32| {
             let mut config = config();
@@ -7988,7 +8011,7 @@ mod enemy_tests {
     }
 
     fn fired_by(target: u16) -> impl Fn(&Feedback) -> bool {
-        move |feedback| *feedback == Feedback::EnemyFired { target }
+        move |feedback| matches!(feedback, Feedback::EnemyFired { target: fired, .. } if *fired == target)
     }
 
     #[test]
@@ -8956,6 +8979,64 @@ mod grade_tests {
 
     fn player_hit(feedback: &Feedback) -> bool {
         matches!(feedback, Feedback::PlayerHit { .. })
+    }
+
+    #[test]
+    fn two_enemies_firing_in_one_tick_each_report_their_own_eye() {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN, Vec3::new(4.0, 0.0, 10.0)],
+            &[TOWARD_PLAYER],
+        );
+        let mut sim = SearchlightSim::with_start(arena, config(), Start::Empty);
+        sim.spawn_enemy(0, Grade::Rookie)
+            .expect("the marker is free");
+        sim.spawn_enemy(1, Grade::Rookie)
+            .expect("the marker is free");
+        let mut shots = Vec::new();
+
+        for _ in 0..150 {
+            sim.tick(&command(true), DT);
+            let eyes: Vec<Vec3> = (0..2)
+                .map(|index| {
+                    sim.enemy_state(index)
+                        .expect("the enemy lives")
+                        .eye_position()
+                })
+                .collect();
+            let fired: Vec<(u16, Vec3)> = sim
+                .drain_feedback()
+                .into_iter()
+                .filter_map(|fb| match fb {
+                    Feedback::EnemyFired { target, from } => Some((target, from)),
+                    _ => None,
+                })
+                .collect();
+            if fired.len() == 2 {
+                shots = fired
+                    .into_iter()
+                    .map(|(t, from)| (t, from, eyes.clone()))
+                    .collect();
+                break;
+            }
+        }
+
+        assert_eq!(shots.len(), 2, "both enemies fire in the same tick");
+        let mut targets: Vec<u16> = shots.iter().map(|(target, ..)| *target).collect();
+        targets.sort_unstable();
+        assert_eq!(targets, [0, 1]);
+        for (target, from, eyes) in &shots {
+            let eye = eyes[usize::from(*target)];
+            assert!(
+                from.distance(eye) < 1e-3,
+                "enemy {target}: {from:?} vs {eye:?}"
+            );
+        }
+        assert!(
+            shots[0].1.distance(shots[1].1) > 3.0,
+            "the two shots began at different points: {shots:?}"
+        );
     }
 
     fn first_shot_tick(grade: Grade) -> Option<usize> {
