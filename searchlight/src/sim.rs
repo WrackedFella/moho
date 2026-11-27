@@ -32,6 +32,9 @@ const LEAN_CLEARANCE: f32 = 0.15;
 /// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
 pub const STAND_HEIGHT: f32 = SHIPPED_BODY.standing.hull.length / 2.0;
 
+/// How far from the eye a control can be used, in metres.
+pub const USE_REACH: f32 = 2.0;
+
 /// The capsule centre of `body` standing on the floor point `floor`.
 fn standing_centre(body: &CharacterBody, floor: Vec3) -> Vec3 {
     floor + Vec3::Y * (body.standing.hull.length / 2.0)
@@ -969,6 +972,12 @@ impl SearchlightSim {
         &self.body
     }
 
+    /// The control the player looks at within [`USE_REACH`], or `None`: one ray from the eye
+    /// along the view, which a wall or a body in front blocks. `None` while the player is dead.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        unimplemented!("SearchlightSim::control_in_reach")
+    }
+
     /// Enemies still in the world.
     pub fn enemies_alive(&self) -> usize {
         self.targets[self.dummy_count..]
@@ -1071,7 +1080,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -5331,5 +5342,175 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    use moho_render_api::WorldMeshId;
+
+    use super::*;
+    use crate::test_support::{DT, box_mesh, mag, rifle_from, test_config};
+
+    const FLOOR: (Vec3, Vec3) = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+
+    /// A 2 m tall post 0.4 m square whose near face is `distance` ahead of the player at the
+    /// origin, tall enough for a level ray from the eye to meet it.
+    fn post(distance: f32) -> (Vec3, Vec3) {
+        (
+            Vec3::new(-0.2, 0.0, distance),
+            Vec3::new(0.2, 2.0, distance + 0.4),
+        )
+    }
+
+    /// A wall across the view, 3 m high and 6 m wide, its near face `distance` ahead.
+    fn wall(distance: f32) -> (Vec3, Vec3) {
+        (
+            Vec3::new(-3.0, 0.0, distance),
+            Vec3::new(3.0, 3.0, distance + 0.2),
+        )
+    }
+
+    /// A floor, `control` tagged as control 0 and `walls` tagged world.
+    fn world_with_control(control: (Vec3, Vec3), walls: &[(Vec3, Vec3)]) -> PhysicsWorld {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(
+            WorldMeshId(0),
+            &box_mesh(FLOOR.0, FLOOR.1),
+            SurfaceTag::World.into(),
+        );
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &box_mesh(control.0, control.1),
+            SurfaceTag::Control(0).into(),
+        );
+        for (index, &(min, max)) in walls.iter().enumerate() {
+            world.set_world_mesh(
+                WorldMeshId(2 + index as u64),
+                &box_mesh(min, max),
+                SurfaceTag::World.into(),
+            );
+        }
+        world.step(DT);
+        world
+    }
+
+    fn sim_over(world: PhysicsWorld, dummies: &[Vec3]) -> SearchlightSim {
+        SearchlightSim::new(
+            world,
+            Vec3::ZERO,
+            dummies,
+            test_config(rifle_from(mag(30, 30)), vec![]),
+        )
+    }
+
+    fn turn(yaw_delta: f32) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn pull() -> SearchlightCommand {
+        SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let sim = sim_over(world_with_control(post(1.5), &[]), &[]);
+
+        assert_eq!(sim.control_in_reach(), Some(0));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        for yaw in [FRAC_PI_2, -FRAC_PI_2, PI] {
+            let mut sim = sim_over(world_with_control(post(1.5), &[]), &[]);
+            let before = sim.control_in_reach();
+
+            sim.tick(&turn(yaw), DT);
+
+            assert_eq!(before, Some(0), "turn {yaw}: found while looking at it");
+            assert_eq!(sim.control_in_reach(), None, "turn {yaw}");
+        }
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        let inside = sim_over(world_with_control(post(USE_REACH - 0.2), &[]), &[]);
+        let outside = sim_over(world_with_control(post(USE_REACH + 0.2), &[]), &[]);
+
+        assert_eq!(inside.control_in_reach(), Some(0));
+        assert_eq!(outside.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let open = sim_over(world_with_control(post(1.5), &[]), &[]);
+        let walled = sim_over(world_with_control(post(1.5), &[wall(0.8)]), &[]);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(walled.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        let in_front = Vec3::new(0.0, 0.0, 0.9);
+        let open = sim_over(world_with_control(post(1.7), &[]), &[]);
+        let blocked = sim_over(world_with_control(post(1.7), &[]), &[in_front]);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(blocked.control_in_reach(), None);
+    }
+
+    #[test]
+    fn the_player_does_not_block_their_own_use() {
+        let mut sim = sim_over(world_with_control(post(1.5), &[]), &[]);
+
+        sim.tick(&SearchlightCommand::default(), DT);
+
+        assert_eq!(sim.control_in_reach(), Some(0));
+    }
+
+    #[test]
+    fn a_control_is_not_found_while_the_player_is_dead() {
+        let mut sim = sim_over(world_with_control(post(1.5), &[]), &[]);
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+        sim.tick(&SearchlightCommand::default(), DT);
+
+        assert_eq!(alive, Some(0));
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let behind = Vec3::new(0.0, 0.0, 4.0);
+        let mut without = sim_over(world_with_control(post(30.0), &[]), &[behind]);
+        let mut covered = sim_over(world_with_control(post(1.5), &[]), &[behind]);
+
+        without.tick(&pull(), DT);
+        covered.tick(&pull(), DT);
+
+        let hit = |sim: &SearchlightSim| {
+            sim.pending_feedback()
+                .iter()
+                .any(|feedback| matches!(feedback, Feedback::Hit { .. }))
+        };
+        assert!(hit(&without), "the dummy is in the line of fire");
+        assert!(!hit(&covered), "{:?}", covered.pending_feedback());
+        assert!(covered.pending_feedback().contains(&Feedback::Fired));
+        let health = covered.dummy_body(0).expect("a dummy").health();
+        assert_eq!(health, covered.player_max_health());
+        assert_eq!(covered.kills(), 0);
     }
 }

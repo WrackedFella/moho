@@ -163,6 +163,12 @@ impl WaveState {
     pub fn unspawned(&mut self, count: u32) {
         self.to_spawn = self.to_spawn.saturating_add(count);
     }
+
+    /// Starts the next wave when the running one is cleared (none to spawn, none of `alive`
+    /// standing) and returns whether it did; otherwise changes nothing.
+    pub fn call_next(&mut self, _tuning: &WaveTuning, _alive: usize) -> bool {
+        unimplemented!("WaveState::call_next")
+    }
 }
 
 #[cfg(test)]
@@ -448,5 +454,103 @@ mod tests {
         assert_eq!(state.wave(), 2);
         assert_eq!(state.spawned(), 1);
         assert_eq!(state.grades().size(), 6);
+    }
+}
+
+#[cfg(test)]
+mod call_tests {
+    use super::*;
+
+    fn tuning(first_size: u32, growth: u32, score_per_kill: u32) -> WaveTuning {
+        WaveTuning::new(first_size, growth, score_per_kill).expect("a valid tuning")
+    }
+
+    #[test]
+    fn a_cleared_wave_does_not_advance_on_its_own() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+
+        let spawned = state.step(&tuning, 2, 0, 10);
+        let again = state.step(&tuning, 0, 0, 10);
+
+        assert_eq!((spawned, again), (0, 0));
+        assert_eq!(state.wave(), 1);
+        assert_eq!(state.to_spawn(), 0);
+        assert_eq!(state.score(), 20, "the kills still score");
+    }
+
+    #[test]
+    fn calling_a_cleared_wave_starts_the_next() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+        state.step(&tuning, 2, 0, 10);
+
+        let started = state.call_next(&tuning, 0);
+        let spawned = state.step(&tuning, 0, 0, 10);
+
+        assert!(started);
+        assert_eq!(state.wave(), 2);
+        assert_eq!(spawned, 5);
+        assert_eq!(state.to_spawn(), 0);
+        assert_eq!(state.score(), 20, "calling a wave scores nothing");
+    }
+
+    #[test]
+    fn calling_a_cleared_wave_builds_its_grades_on_the_last() {
+        let tuning = tuning(2, 2, 10);
+        let mut state = WaveState::begin(&tuning);
+        let first = state.grades();
+        state.step(&tuning, 0, 0, 2);
+        state.step(&tuning, 2, 0, 10);
+
+        state.call_next(&tuning, 0);
+
+        let expected = tuning.mix().grades(2, 4, Some(first));
+        assert_eq!(state.grades(), expected);
+        assert_eq!(state.grades().size(), 4);
+        assert_eq!(state.to_spawn(), 4);
+    }
+
+    #[test]
+    fn calling_with_enemies_alive_or_to_come_does_nothing() {
+        let tuning = tuning(3, 2, 10);
+        let fresh = WaveState::begin(&tuning);
+        let mut part_handed_out = WaveState::begin(&tuning);
+        part_handed_out.step(&tuning, 0, 0, 1);
+        let mut all_handed_out = WaveState::begin(&tuning);
+        all_handed_out.step(&tuning, 0, 0, 3);
+        let cases = [
+            ("none handed out yet", fresh, 0),
+            ("some still to come, none alive", part_handed_out, 0),
+            ("some still to come, one alive", part_handed_out, 1),
+            ("all handed out, some alive", all_handed_out, 2),
+        ];
+
+        for (name, before, alive) in cases {
+            let mut state = before;
+
+            let started = state.call_next(&tuning, alive);
+
+            assert!(!started, "{name}");
+            assert_eq!(state, before, "{name}");
+        }
+    }
+
+    #[test]
+    fn calling_twice_starts_only_one_wave() {
+        let tuning = tuning(1, 1, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 1);
+        state.step(&tuning, 1, 0, 1);
+
+        let first = state.call_next(&tuning, 0);
+        let second = state.call_next(&tuning, 0);
+
+        assert!(first);
+        assert!(!second, "the new wave has enemies to come");
+        assert_eq!(state.wave(), 2);
+        assert_eq!(state.to_spawn(), 2);
     }
 }

@@ -96,6 +96,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +116,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -5340,5 +5342,206 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use std::time::Duration;
+
+    use moho_app::GameClock;
+    use moho_input::bindings::ActionBindings;
+    use moho_physics::CharacterCommand;
+
+    use super::*;
+    use crate::arena::{arena_mesh_id, control_mesh_id};
+    use crate::control::ControlAction;
+    use crate::test_support::{arena_with_controls, mag, rifle_from, test_config, wave_tuning};
+
+    /// Dead ahead of the player at the origin, within reach.
+    const POST: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+    fn game_with_controls(controls: &[(Vec3, ControlAction)]) -> SearchlightGame {
+        let arena = arena_with_controls(&[], Vec3::ZERO, &[], &[], controls);
+        let mode = ArenaMode::new(
+            arena,
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// A game whose player looks straight at a control within reach.
+    fn game_at_the_button() -> SearchlightGame {
+        game_with_controls(&[(POST, ControlAction::NextWave)])
+    }
+
+    /// A game like [`game_at_the_button`] with nothing to use.
+    fn game_with_no_button() -> SearchlightGame {
+        game_with_controls(&[])
+    }
+
+    fn run_frame(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, None, None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    fn run_tick(game: &mut SearchlightGame, command: &SearchlightCommand) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(1.0 / 60.0),
+            clock: &mut clock,
+        };
+        game.tick(&mut ctx, command);
+    }
+
+    /// Whether the shell paints anything over the game this frame, taking what it painted.
+    fn shell_paints(game: &SearchlightGame) -> bool {
+        game.stage.shell().ui_frame([1280, 720]).is_some()
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut near = game_at_the_button();
+        let mut none = game_with_no_button();
+
+        run_frame(&mut near);
+        run_frame(&mut none);
+
+        assert!(shell_paints(&near), "no prompt over a button in reach");
+        assert!(!shell_paints(&none), "the baseline game paints text");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_at_the_button();
+        run_frame(&mut game);
+        let before = shell_paints(&game);
+        let away = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+
+        run_tick(&mut game, &away);
+        run_frame(&mut game);
+
+        assert!(before, "the prompt was not showing to begin with");
+        assert!(!shell_paints(&game));
+    }
+
+    #[test]
+    fn no_prompt_when_out_of_reach() {
+        let mut game = game_at_the_button();
+        run_frame(&mut game);
+        let before = shell_paints(&game);
+        let back = SearchlightCommand {
+            movement: CharacterCommand {
+                forward: -1.0,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+
+        for _ in 0..90 {
+            run_tick(&mut game, &back);
+        }
+        run_frame(&mut game);
+
+        assert!(before, "the prompt was not showing to begin with");
+        assert!(game.sim().control_in_reach().is_none());
+        assert!(!shell_paints(&game));
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = game_at_the_button();
+        run_frame(&mut dead);
+        let showing = shell_paints(&dead);
+        dead.mode.sim_mut().kill_player();
+        let mut paused = game_at_the_button();
+        let mut paused_baseline = game_with_no_button();
+        paused.pause();
+        paused_baseline.pause();
+
+        run_frame(&mut dead);
+        run_frame(&mut paused);
+        run_frame(&mut paused_baseline);
+
+        assert!(showing, "the prompt was not showing to begin with");
+        assert!(!shell_paints(&dead), "a dead player is prompted");
+        let over_the_pause_menu = paused.stage.shell().ui_frame([1280, 720]);
+        let pause_menu_alone = paused_baseline.stage.shell().ui_frame([1280, 720]);
+        let over_the_pause_menu = over_the_pause_menu.expect("the pause menu paints");
+        let pause_menu_alone = pause_menu_alone.expect("the pause menu paints");
+        assert_eq!(over_the_pause_menu.meshes, pause_menu_alone.meshes);
+    }
+
+    #[test]
+    fn no_prompt_on_the_main_menu() {
+        let mut menu = game_at_the_button().with_main_menu();
+        let mut baseline = game_with_no_button().with_main_menu();
+
+        run_frame(&mut menu);
+        run_frame(&mut baseline);
+
+        let over_the_menu = menu.stage.shell().ui_frame([1280, 720]);
+        let menu_alone = baseline.stage.shell().ui_frame([1280, 720]);
+        let over_the_menu = over_the_menu.expect("the main menu paints");
+        let menu_alone = menu_alone.expect("the main menu paints");
+        assert_eq!(over_the_menu.meshes, menu_alone.meshes);
+    }
+
+    #[test]
+    fn the_control_paint_stands_out_from_every_other_paint() {
+        let others = [
+            Paint::Arena,
+            Paint::ArenaFloor,
+            Paint::Dummy,
+            Paint::Enemy,
+            Paint::Struck,
+            Paint::ArenaMark,
+        ];
+
+        let control = Paint::Control.to_gpu();
+
+        for other in others {
+            let gpu = other.to_gpu();
+            assert!(
+                control.albedo != gpu.albedo || control.params != gpu.params,
+                "{other:?} draws like a control"
+            );
+            assert_ne!(Paint::Control.dedup_key(), other.dedup_key(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let indices = [0u16, 1, 2, 1000, u16::MAX];
+        let ids: Vec<u64> = indices.iter().map(|&i| control_mesh_id(i).0).collect();
+        let last_arena = arena_mesh_id(u32::MAX as usize).0;
+        let dummies = dummy_segments(&SHIPPED_BODY, &[Vec3::ZERO; 200]);
+        let last_dummy = dummies.iter().map(|segment| segment.id.0).max();
+        let rig = EnemyRig {
+            target: u16::MAX,
+            shown: false,
+            gun_flash: 0,
+        };
+        let last_enemy = (0..ENEMY_SEGMENT_COUNT)
+            .map(|slot| rig.mesh_id(slot).0)
+            .max();
+
+        assert_eq!(ids[0], 3 << 32);
+        for (&index, &id) in indices.iter().zip(&ids) {
+            assert_eq!(id, (3 << 32) + u64::from(index), "control {index}");
+        }
+        assert!(ids.iter().all(|&id| id > last_arena));
+        assert!(ids.iter().all(|&id| Some(id) > last_dummy));
+        assert!(ids.iter().all(|&id| Some(id) > last_enemy));
     }
 }
