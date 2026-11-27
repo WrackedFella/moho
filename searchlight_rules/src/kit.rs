@@ -1034,6 +1034,26 @@ mod tests {
     }
 
     #[test]
+    fn interleaved_kinds_each_take_the_first_free_slot_of_their_kind() {
+        let def = start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm", "rounds": 5},
+            {"magazine": "mag_rifle", "round": "round_ball", "rounds": 7},
+            {"magazine": "mag_pistol", "round": "round_9mm", "rounds": 6}
+        ]));
+
+        let kit = resolve_kinded(&def).expect("each kind fits its slots");
+
+        let rounds: Vec<Option<u32>> = kit
+            .loadout
+            .rig()
+            .slots()
+            .iter()
+            .map(|slot| slot.as_ref().map(Magazine::rounds))
+            .collect();
+        assert_eq!(rounds, [Some(5), Some(6), Some(7)]);
+    }
+
+    #[test]
     fn a_kit_stowing_each_kind_within_its_slots_is_accepted_in_slot_order() {
         let def = start(json!([
             {"magazine": "mag_rifle", "round": "round_ball"},

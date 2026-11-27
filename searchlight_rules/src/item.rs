@@ -894,6 +894,16 @@ mod tests {
     }
 
     #[test]
+    fn a_rig_with_an_empty_slot_table_has_no_slots_and_refuses_every_magazine() {
+        let spec = rig_spec_of(json!({}));
+        let mut rig = crate::rig::Rig::new(ItemId::new("rig"), &spec);
+        let rifle = crate::test_support::mag_in_slot("m", "rifle", "rifle");
+
+        assert!(rig.slots().is_empty());
+        assert_eq!(rig.stow(rifle.clone()), Err(rifle));
+    }
+
+    #[test]
     fn a_rig_with_a_bare_slot_count_is_refused() {
         let result = parse(json!({
             "class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}

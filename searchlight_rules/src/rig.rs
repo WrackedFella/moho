@@ -378,6 +378,29 @@ mod tests {
     }
 
     #[test]
+    fn kinds_are_compared_by_exact_text() {
+        let mut rig = kinded_rig(&[("rifle", 1)]);
+        let shouted = crate::test_support::mag_in_slot("m", "rifle", "Rifle");
+
+        let result = rig.stow(shouted.clone());
+
+        assert_eq!(result, Err(shouted));
+        assert_eq!(rig.free_slots(), 1);
+    }
+
+    #[test]
+    fn restoring_a_magazine_into_a_slot_of_another_kind_keeps_it_there() {
+        let spec = crate::test_support::rig_spec(&[("pistol", 1)]);
+        let rifle = crate::test_support::mag_in_slot("m", "rifle", "rifle");
+
+        let rig = Rig::from_slots(id("rig_chest"), &spec, vec![Some(rifle.clone())])
+            .expect("the slot count matches");
+
+        assert_eq!(rig.slots(), [Some(rifle)]);
+        assert_eq!(rig.free_slots(), 0);
+    }
+
+    #[test]
     fn a_magazine_of_a_kind_no_slot_has_fits_no_slot() {
         let mut rig = kinded_rig(&[("rifle", 2)]);
         let odd = crate::test_support::mag_in_slot("m", "rifle", "belt");

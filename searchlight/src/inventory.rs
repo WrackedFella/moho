@@ -560,6 +560,17 @@ mod tests {
     }
 
     #[test]
+    fn a_free_slot_label_capitalises_any_kind_without_panicking() {
+        let label = |kind: Option<&str>| free_slot_label(kind.map(SlotKind::new).as_ref());
+
+        assert_eq!(label(Some("pistol")), "Pistol slot · Empty");
+        assert_eq!(label(Some("écu")), "Écu slot · Empty");
+        assert_eq!(label(Some("ß")), "SS slot · Empty");
+        assert_eq!(label(Some("")), " slot · Empty");
+        assert_eq!(label(None), " slot · Empty");
+    }
+
+    #[test]
     fn a_free_slot_row_reads_its_kind() {
         let items = r#"
 [rifle]

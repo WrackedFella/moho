@@ -947,6 +947,54 @@ mod tests {
     }
 
     #[test]
+    fn a_rifle_magazine_from_a_rifle_slot_goes_back_to_it_when_only_a_pistol_slot_is_otherwise_free()
+     {
+        let mut loadout = kinded_player(&[("pistol", 1), ("rifle", 1)], vec![]);
+        loadout
+            .rig
+            .stow(crate::test_support::mag_in_slot("r", "rifle", "rifle"))
+            .expect("the rifle slot is free");
+        let before = loadout.clone();
+
+        let moved = loadout.move_item(None, Source::MagazineSlot(1), Place::MagazineSlots);
+
+        assert_eq!(moved, Ok(()));
+        assert_eq!(loadout, before);
+    }
+
+    #[test]
+    fn a_rifle_magazine_in_a_pistol_slot_cannot_move_to_a_pistol_only_free_slot() {
+        let mut loadout = kinded_player(&[("pistol", 1), ("rifle", 1)], vec![]);
+        let rifle = |name| crate::test_support::mag_in_slot(name, "rifle", "rifle");
+        loadout.rig.put(0, rifle("odd"));
+        loadout.rig.put(1, rifle("r"));
+        let before = loadout.clone();
+
+        let moved = loadout.move_item(None, Source::MagazineSlot(0), Place::MagazineSlots);
+
+        assert_eq!(moved, Err(MoveRefused::NoFreeSlot));
+        assert_eq!(loadout, before);
+    }
+
+    #[test]
+    fn a_body_carried_rifle_magazine_is_refused_when_only_a_pistol_slot_is_free() {
+        let rifle_mag = Item::Magazine(crate::test_support::mag_in_slot("m", "rifle", "rifle"));
+        let mut loadout = kinded_player(&[("pistol", 1)], vec![]);
+        let mut remains = body(None, vec![rifle_mag]);
+        let (before, remains_before) = (loadout.clone(), remains.clone());
+
+        let moved = loadout.move_item(
+            Some(&mut remains),
+            Source::BodyCarried(0),
+            Place::MagazineSlots,
+        );
+
+        assert_eq!(moved, Err(MoveRefused::NoFreeSlot));
+        assert_eq!(loadout, before);
+        assert_eq!(remains, remains_before);
+    }
+
+    #[test]
     fn a_magazine_moved_between_slots_keeps_to_its_kind() {
         let mut loadout = kinded_player(&[("pistol", 1), ("rifle", 2)], vec![]);
         let rifle = |name| crate::test_support::mag_in_slot(name, "rifle", "rifle");
