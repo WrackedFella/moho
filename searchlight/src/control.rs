@@ -9,18 +9,30 @@ pub enum ControlAction {
 
 impl ControlAction {
     /// The action a marker's `action` value names, or `None` for an unknown name.
-    pub fn parse(_name: &str) -> Option<Self> {
-        None
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether the action changes the whole game rather than the player who used it.
     pub fn is_host_action(self) -> bool {
-        false
+        match self {
+            Self::NextWave => true,
+        }
     }
 
     /// Whether a use from player `slot` takes effect: a host action only from slot 0.
-    pub fn honored_from(self, _slot: u8) -> bool {
-        false
+    pub fn honored_from(self, slot: u8) -> bool {
+        !self.is_host_action() || slot == 0
+    }
+
+    /// What the player reads in the prompt for using the control.
+    pub fn prompt_text(self) -> &'static str {
+        match self {
+            Self::NextWave => "Next wave",
+        }
     }
 }
 

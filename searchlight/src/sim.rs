@@ -862,7 +862,24 @@ impl SearchlightSim {
     /// The control the player is looking at within [`USE_REACH`], by its index in the arena's
     /// controls; `None` while dead, or when a wall or body is in front of it.
     pub fn control_in_reach(&self) -> Option<u16> {
-        None
+        if self.player_body.is_dead() {
+            return None;
+        }
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin: self.leaned_eye(&state),
+                direction: view.forward,
+                range: USE_REACH,
+                ignore: Some(self.player),
+            },
+        )?;
+        match strike.tag {
+            SurfaceTag::Control(index) => Some(index),
+            SurfaceTag::World | SurfaceTag::Part { .. } | SurfaceTag::Player(_) => None,
+        }
     }
 
     /// How far the player leans after the last tick.

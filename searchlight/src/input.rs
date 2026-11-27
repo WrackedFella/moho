@@ -55,7 +55,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
-            SearchlightAction::Use => "unbound_use",
+            SearchlightAction::Use => "use",
         }
     }
 
@@ -74,7 +74,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
-            SearchlightAction::Use => const { &[Binding::key(Key::F12)] },
+            SearchlightAction::Use => const { &[Binding::key(Key::F)] },
         }
     }
 }
@@ -199,7 +199,7 @@ impl SearchlightCommand {
             god_mode: false,
             forced_grade: None,
             lean: None,
-            use_pressed: false,
+            use_pressed: frame.pressed(SearchlightAction::Use),
         }
     }
 }

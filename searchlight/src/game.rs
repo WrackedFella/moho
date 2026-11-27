@@ -25,12 +25,13 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
-    apply_engine_settings,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    apply_engine_command, apply_engine_settings,
 };
 
-use crate::arena::ArenaControl;
+use crate::arena::{ArenaControl, box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::control::ControlAction;
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
@@ -68,6 +69,9 @@ const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
 const SHOT_VOLUME: f32 = 0.8;
+/// Where the use prompt sits: centred, below the crosshair, in logical points.
+const PROMPT_OFFSET: [f32; 2] = [0.0, 60.0];
+const PROMPT_SIZE: f32 = 22.0;
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
 fn aspect_ratio(width: u32, height: u32) -> f32 {
@@ -117,7 +121,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
-            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
+            Paint::Control => ([0.2, 0.75, 0.35], [0.14, 0.55, 0.25], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -149,49 +153,6 @@ impl Renderable for NoActor {
     fn to_instance_with_material(&self, _material_index: u32) -> InstanceGpu {
         match *self {}
     }
-}
-
-/// A closed box with outward-facing triangles and a normal per face.
-fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
-    oriented_box_mesh(centre, half, Quat::IDENTITY)
-}
-
-/// [`box_mesh`] with its axes turned by `rotation` about its centre.
-fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
-    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
-    // seen from outside.
-    const FACES: [(Vec3, Vec3, Vec3); 6] = [
-        (Vec3::X, Vec3::Y, Vec3::Z),
-        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-        (Vec3::Y, Vec3::Z, Vec3::X),
-        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
-    ];
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    for (normal, u, v) in FACES {
-        let first = positions.len() as u32;
-        let (du, dv) = (u * half, v * half);
-        let face_centre = centre + rotation * (normal * half);
-        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
-            positions.push((face_centre + rotation * corner).to_array());
-            normals.push((rotation * normal).to_array());
-        }
-        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
-    }
-    let count = positions.len();
-    WorldMesh::new(
-        positions,
-        normals,
-        vec![1.0; count],
-        vec![[0.0; 3]; count],
-        vec![1.0; count],
-        vec![0; count],
-        indices,
-    )
-    .expect("a box has matching channels and whole triangles")
 }
 
 /// One drawn body part of a dummy, lit while it flashes.
@@ -515,7 +476,16 @@ impl Stage {
     }
 
     /// Draws each of `controls` as a post in [`Paint::Control`], under its own mesh id.
-    fn add_controls(&mut self, _controls: &[ArenaControl]) {}
+    fn add_controls(&mut self, controls: &[ArenaControl]) {
+        let material = self.scene.material_table.find_or_push(&Paint::Control);
+        for (index, control) in controls.iter().enumerate() {
+            self.scene.world_meshes_mut().upsert(
+                control_mesh_id(index),
+                control.mesh.clone(),
+                material,
+            );
+        }
+    }
 
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
         if let Some(text) = hud::status_text(feedback) {
@@ -763,6 +733,9 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
+    /// What each of the arena's controls does, by the index the sim names it with, for the
+    /// prompt.
+    control_actions: Vec<ControlAction>,
 }
 
 impl SearchlightGame {
@@ -783,6 +756,7 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
+            control_actions: Vec::new(),
         }
     }
 
@@ -970,7 +944,42 @@ impl SearchlightGame {
     #[must_use]
     pub fn with_controls(mut self, controls: &[ArenaControl]) -> Self {
         self.stage.add_controls(controls);
+        self.control_actions = controls.iter().map(|control| control.action).collect();
         self
+    }
+
+    /// The prompt for the control the player looks at within reach, while playing.
+    fn use_prompt(&self) -> Option<String> {
+        if self.screen != Screen::Playing {
+            return None;
+        }
+        let index = self.mode.sim().control_in_reach()?;
+        let action = self.control_actions.get(usize::from(index))?;
+        let key = self
+            .input
+            .bindings()
+            .get(SearchlightAction::Use)
+            .first()
+            .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+        Some(hud::use_prompt(&key, action.prompt_text()))
+    }
+
+    /// Hands the shell this frame's prompt, or no text when there is none.
+    fn refresh_prompt(&self) {
+        let texts = self
+            .use_prompt()
+            .map(|text| ScreenText {
+                text,
+                anchor: Anchor::Center,
+                offset: PROMPT_OFFSET,
+                size: PROMPT_SIZE,
+                color: [255, 255, 255, 255],
+            })
+            .into_iter()
+            .collect();
+        if let Err(error) = self.stage.shell().set_texts(texts) {
+            tracing::warn!(%error, "use prompt not shown");
+        }
     }
 
     /// Plays the sound file at `path` for every shot fired.
@@ -1169,6 +1178,7 @@ impl Game for SearchlightGame {
             }
             self.stage.react(&feedback, ctx.audio());
         }
+        self.refresh_prompt();
         if self.screen == Screen::MainMenu {
             self.menu_frame(ctx);
             return;

@@ -111,8 +111,8 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 }
 
 /// The prompt for a control in reach: the use `key` in brackets, then what using it does.
-pub fn use_prompt(_key: &str, _action: &str) -> String {
-    String::new()
+pub fn use_prompt(key: &str, action: &str) -> String {
+    format!("[{key}] {action}")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
