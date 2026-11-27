@@ -27,6 +27,7 @@ moho_ui_shell = { path = "../moho_ui_shell" }
 
 [dev-dependencies]
 proptest = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]
