@@ -546,7 +546,7 @@ mod tests {
         use moho_physics::CharacterCommand;
 
         use super::*;
-        use crate::sim::SearchlightSim;
+        use crate::sim::{SearchlightSim, SimConfig};
         use crate::tuning::tuning;
 
         /// Ticks to wait for a trial to end before calling it failed: far longer than a jump.
@@ -580,6 +580,13 @@ mod tests {
             Vec3::new(across.x, 0.0, across.z).normalize()
         }
 
+        /// The movement tuning the game ships with, from the start kit.
+        fn shipped_config() -> SimConfig {
+            let roots = ContentRoots::base(&content_root()).expect("the shipped content");
+            let kit = kit::load(&roots, START_KIT_ID).expect("the shipped start kit");
+            tuning(kit)
+        }
+
         /// A player standing on the floor point `start`, turned to face `facing`, settled.
         struct Trial {
             sim: SearchlightSim,
@@ -590,13 +597,16 @@ mod tests {
 
         impl Trial {
             /// `start_back` metres behind `origin` along `facing`, on the marker's floor.
-            fn new(level: &Level, marker: &LevelMarker, start_back: f32) -> Self {
-                let roots = ContentRoots::base(&content_root()).expect("the shipped content");
-                let kit = kit::load(&roots, START_KIT_ID).expect("the shipped start kit");
+            fn new(
+                level: &Level,
+                config: &SimConfig,
+                marker: &LevelMarker,
+                start_back: f32,
+            ) -> Self {
                 let facing = facing(marker);
                 let start = marker.position - facing * start_back;
                 let mut sim =
-                    SearchlightSim::new(arena::physics_world(level), start, &[], tuning(kit));
+                    SearchlightSim::new(arena::physics_world(level), start, &[], config.clone());
                 let turn = SearchlightCommand {
                     movement: CharacterCommand {
                         yaw_delta: facing.x.atan2(facing.z),
@@ -661,9 +671,14 @@ mod tests {
 
         /// Whether a jump from the marker lands on the far platform of a gap `width` wide: the
         /// jump is taken at the marker with the run-up behind it, or from standing on it.
-        fn jump_clears(level: &Level, gap: &LevelMarker, running: bool) -> bool {
+        fn jump_clears(
+            level: &Level,
+            config: &SimConfig,
+            gap: &LevelMarker,
+            running: bool,
+        ) -> bool {
             let width = number(gap, "width");
-            let mut trial = Trial::new(level, gap, if running { 5.0 } else { 0.0 });
+            let mut trial = Trial::new(level, config, gap, if running { 5.0 } else { 0.0 });
             if running {
                 trial.run_to_the_marker();
                 trial.tick(1.0, true);
@@ -684,8 +699,8 @@ mod tests {
 
         /// Whether the player reaches the top of the course piece at `piece`: by walking at it,
         /// or by walking at it and jumping as the foot of it comes within a body's reach.
-        fn climbs(level: &Level, piece: &LevelMarker, jumping: bool) -> bool {
-            let mut trial = Trial::new(level, piece, 3.0);
+        fn climbs(level: &Level, config: &SimConfig, piece: &LevelMarker, jumping: bool) -> bool {
+            let mut trial = Trial::new(level, config, piece, 3.0);
             let mut jumped = false;
             for _ in 0..TRIAL_TICKS {
                 let jump = jumping && !jumped && trial.along() >= -1.0;
@@ -704,6 +719,7 @@ mod tests {
         #[test]
         fn every_gap_is_cleared_by_exactly_the_movement_it_names() {
             let (level, _) = shipped("parkour.glb");
+            let config = shipped_config();
             let gaps = markers_named(&level, "gap_");
             assert!(!gaps.is_empty(), "the parkour level has no gaps");
 
@@ -712,8 +728,8 @@ mod tests {
                 let clears = extra(gap, "clears");
                 let expected_running = clears != "none";
                 let expected_standing = clears == "stand";
-                let running = jump_clears(&level, gap, true);
-                let standing = jump_clears(&level, gap, false);
+                let running = jump_clears(&level, &config, gap, true);
+                let standing = jump_clears(&level, &config, gap, false);
                 if (running, standing) != (expected_running, expected_standing) {
                     wrong.push(format!(
                         "{} ({} m) is marked `{clears}`; a running jump clears it: {running}, \
@@ -746,14 +762,15 @@ mod tests {
         #[test]
         fn every_course_piece_is_passable_exactly_as_labelled() {
             let (level, _) = shipped("parkour.glb");
+            let config = shipped_config();
             let pieces = markers_named(&level, "course_");
             assert!(!pieces.is_empty(), "the parkour level has no course");
 
             let mut wrong = Vec::new();
             for piece in pieces {
-                let actual = if climbs(&level, piece, false) {
+                let actual = if climbs(&level, &config, piece, false) {
                     "walk"
-                } else if climbs(&level, piece, true) {
+                } else if climbs(&level, &config, piece, true) {
                     "jump"
                 } else {
                     "none"

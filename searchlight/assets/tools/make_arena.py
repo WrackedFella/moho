@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Generates the FPS prototype's greybox levels (arena.glb, proving_ground.glb, parkour.glb) and rifle shot
-(rifle_shot.wav).
+"""Generates the FPS prototype's greybox levels (arena.glb, proving_ground.glb, parkour.glb)
+and rifle shot (rifle_shot.wav).
 
 Standard library only. Output is deterministic, so rerunning the script leaves the
 committed files unchanged unless the layout below changes.
@@ -287,16 +287,24 @@ def digit_slabs(name, digit, centre_x, far_z, scale=1.0, material="mark"):
     return out
 
 
-def number_slabs(distance):
-    """The distance written in digits, centred on x = 0, just short of its strip."""
-    text = str(distance)
-    total = len(text) * DIGIT_WIDTH + (len(text) - 1) * DIGIT_GAP
-    far_z = distance - STRIP_DEPTH / 2 - DIGIT_STRIP_GAP
+def label_slabs(name, text, centre_x, far_z, scale=1.0, material="mark"):
+    """`text` in block digits `scale` times the standard size, centred on `centre_x`, its far
+    edge at `far_z`."""
+    digit_width = DIGIT_WIDTH * scale
+    gap = DIGIT_GAP * scale
+    total = len(text) * digit_width + (len(text) - 1) * gap
     out = []
     for index, digit in enumerate(text):
-        screen_x = -total / 2 + DIGIT_WIDTH / 2 + index * (DIGIT_WIDTH + DIGIT_GAP)
-        out.extend(digit_slabs(f"mark_{distance}_{index}", digit, -screen_x, far_z))
+        screen_x = -total / 2 + digit_width / 2 + index * (digit_width + gap)
+        out.extend(digit_slabs(f"{name}_{index}", digit, centre_x - screen_x, far_z,
+                               scale, material))
     return out
+
+
+def number_slabs(distance):
+    """The distance written in digits, centred on x = 0, just short of its strip."""
+    far_z = distance - STRIP_DEPTH / 2 - DIGIT_STRIP_GAP
+    return label_slabs(f"mark_{distance}", str(distance), 0.0, far_z)
 
 
 def proving_ground_solids():
@@ -347,18 +355,26 @@ def proving_ground_markers():
 # Parkour level, +Z the direction of travel. Everything stands on y = 0 floors.
 # Gap ladder: one 2 m lane per width, side by side along X, each a run-up platform, a gap of
 # the lane's width over a pit, and a landing platform. The widths are labelled in decimetres.
-GAP_WIDTHS = [0.5 * n for n in range(1, 11)]
-# What clears each gap (the smallest movement): `stand` (a jump from standing), `run` (a
-# jump out of a run-up at walking speed) or `none`. Set from what the headless jump tests
-# measure with the shipped movement tuning; regenerate these when that tuning changes.
-GAP_CLEARS = [
-    "stand", "run", "run", "run", "run", "run", "run", "run", "run", "none",
+# (width in metres, clears): `clears` is the smallest movement that clears the gap: `stand` (a
+# jump from standing), `run` (a jump out of a run-up at walking speed) or `none`. Set from what
+# the headless jump tests measure with the shipped movement tuning; regenerate these when that
+# tuning changes.
+GAPS = [
+    (0.5, "stand"),
+    (1.0, "run"),
+    (1.5, "run"),
+    (2.0, "run"),
+    (2.5, "run"),
+    (3.0, "run"),
+    (3.5, "run"),
+    (4.0, "run"),
+    (4.5, "run"),
+    (5.0, "none"),
 ]
 LANE_WIDTH = 2.0
 RUN_UP_LENGTH = 6.0
 LANDING_LENGTH = 6.0
 PIT_DEPTH = 2.0
-PIT_FLOOR_THICKNESS = 1.0
 APRON_Z = (-12.0, -RUN_UP_LENGTH)
 WALKWAY_X = (10.0, 15.0)
 LABEL_SCALE = 0.4
@@ -394,19 +410,6 @@ def lane_centre(index, count, width):
     return (index - (count - 1) / 2) * width
 
 
-def label_slabs(name, text, centre_x, far_z, material="mark"):
-    """`text` in small block digits centred on `centre_x`, its far edge at `far_z`."""
-    digit_width = DIGIT_WIDTH * LABEL_SCALE
-    gap = DIGIT_GAP * LABEL_SCALE
-    total = len(text) * digit_width + (len(text) - 1) * gap
-    out = []
-    for index, digit in enumerate(text):
-        screen_x = -total / 2 + digit_width / 2 + index * (digit_width + gap)
-        out.extend(digit_slabs(f"{name}_{index}", digit, centre_x - screen_x, far_z,
-                               LABEL_SCALE, material))
-    return out
-
-
 def ramp(name, material, x_range, height, run, z_start):
     """A wedge rising from y = 0 at `z_start` to `height` at `z_start + run`, across x_range."""
     profile = [(z_start, 0.0), (z_start + run, 0.0), (z_start + run, height)]
@@ -424,7 +427,7 @@ def ramp(name, material, x_range, height, run, z_start):
 
 def parkour_solids():
     """Every solid of the parkour level as (name, material, geometry)."""
-    ladder_half = len(GAP_WIDTHS) * LANE_WIDTH / 2
+    ladder_half = len(GAPS) * LANE_WIDTH / 2
     out = [
         block("apron", "floor", (-ladder_half, ladder_half), (-FLOOR_THICKNESS, 0.0), APRON_Z),
         block("walkway", "floor", WALKWAY_X, (-FLOOR_THICKNESS, 0.0),
@@ -432,12 +435,12 @@ def parkour_solids():
         block("course_floor", "floor", (-COURSE_HALF_WIDTH, COURSE_HALF_WIDTH),
               (-FLOOR_THICKNESS, 0.0), COURSE_FLOOR_Z),
     ]
-    for index, width in enumerate(GAP_WIDTHS):
-        centre = lane_centre(index, len(GAP_WIDTHS), LANE_WIDTH)
+    for index, (width, clears) in enumerate(GAPS):
+        centre = lane_centre(index, len(GAPS), LANE_WIDTH)
         lane = (centre - LANE_WIDTH / 2, centre + LANE_WIDTH / 2)
         number = index + 1
         out.append(block(f"pit_{number:02d}", "wall",
-                         lane, (-PIT_DEPTH - PIT_FLOOR_THICKNESS, -PIT_DEPTH),
+                         lane, (-PIT_DEPTH - FLOOR_THICKNESS, -PIT_DEPTH),
                          (-RUN_UP_LENGTH, width + LANDING_LENGTH)))
         out.append(block(f"runup_{number:02d}", "floor", lane, (-PIT_DEPTH, 0.0),
                          (-RUN_UP_LENGTH, 0.0)))
@@ -446,9 +449,9 @@ def parkour_solids():
         decimetres = str(round(width * 10))
         # Raised digits across a lane stop a capsule, so the clears colour is in the digits,
         # which are sparse, not in a strip.
-        colour = "mark_run" if GAP_CLEARS[index] == "run" else "mark"
+        colour = "mark_run" if clears == "run" else "mark"
         out.extend(label_slabs(f"label_{number:02d}", decimetres, centre,
-                               LADDER_LABEL_FAR_Z, colour))
+                               LADDER_LABEL_FAR_Z, LABEL_SCALE, colour))
     for index, (kind, value, _) in enumerate(COURSE):
         centre = lane_centre(index, len(COURSE), COURSE_LANE_WIDTH)
         lane = (centre - COURSE_LANE_WIDTH / 2, centre + COURSE_LANE_WIDTH / 2)
@@ -457,18 +460,15 @@ def parkour_solids():
             run = RAMP_HEIGHT / math.tan(math.radians(value))
             out.append(ramp(f"piece_{number:02d}", "cover", lane, RAMP_HEIGHT, run,
                             COURSE_FOOT_Z))
-            top_start, top = COURSE_FOOT_Z + run, RAMP_HEIGHT
+            out.append(block(f"top_{number:02d}", "cover", lane, (0.0, RAMP_HEIGHT),
+                             (COURSE_FOOT_Z + run, COURSE_FOOT_Z + run + COURSE_TOP_DEPTH)))
             text = str(round(value))
         else:
-            top_start, top = COURSE_FOOT_Z, value
-            out.append(block(f"piece_{number:02d}", "cover", lane, (0.0, top),
+            out.append(block(f"piece_{number:02d}", "cover", lane, (0.0, value),
                              (COURSE_FOOT_Z, COURSE_FOOT_Z + COURSE_TOP_DEPTH)))
             text = str(round(value * 100))
-        if kind == "slope":
-            out.append(block(f"top_{number:02d}", "cover", lane, (0.0, top),
-                             (top_start, top_start + COURSE_TOP_DEPTH)))
         out.extend(label_slabs(f"course_label_{number:02d}", text, centre,
-                               COURSE_FOOT_Z - 1.0))
+                               COURSE_FOOT_Z - 1.0, LABEL_SCALE))
     return out
 
 
@@ -476,8 +476,8 @@ def parkour_markers():
     """The parkour level's markers: a spawn, a `gap_NN` at each take-off edge and a
     `course_NN` at the foot of each piece, all on their floors and facing +Z."""
     out = [("player_spawn", PARKOUR_SPAWN, None)]
-    for index, (width, clears) in enumerate(zip(GAP_WIDTHS, GAP_CLEARS), start=1):
-        centre = lane_centre(index - 1, len(GAP_WIDTHS), LANE_WIDTH)
+    for index, (width, clears) in enumerate(GAPS, start=1):
+        centre = lane_centre(index - 1, len(GAPS), LANE_WIDTH)
         out.append((f"gap_{index:02d}", (centre, 0.0, 0.0),
                     {"width": width, "clears": clears}))
     for index, (kind, value, passable) in enumerate(COURSE, start=1):
