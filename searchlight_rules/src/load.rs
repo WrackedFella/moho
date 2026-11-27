@@ -1,10 +1,8 @@
 //! Load: what the player carries, set against what they can carry.
 
-use crate::inventory::Item;
+use crate::carried::loadout_items;
 use crate::item::{ItemDef, ItemId};
 use crate::loadout::Loadout;
-use crate::magazine::Magazine;
-use crate::rifle::Rifle;
 use crate::stats::{Contribution, SourceLabel, Stat, UnknownItem, Verb};
 use serde::Deserialize;
 use thiserror::Error;
@@ -101,40 +99,10 @@ pub fn load<'a>(
     weapon: &ItemId,
     lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
 ) -> Result<f32, UnknownItem> {
-    let kg = |id: &ItemId| {
-        lookup(id)
-            .map(|def| def.weight)
-            .ok_or_else(|| UnknownItem { id: id.clone() })
-    };
-    let magazine = |magazine: &Magazine| -> Result<f32, UnknownItem> {
-        let mut total = kg(magazine.item())?;
-        for round in magazine.round_items() {
-            total += kg(round)?;
-        }
-        Ok(total)
-    };
-    let rifle = |rifle: &Rifle| -> Result<f32, UnknownItem> {
-        let mut total = kg(weapon)? + magazine(rifle.magazine())?;
-        if let Some(round) = rifle.chamber() {
-            total += kg(round)?;
-        }
-        Ok(total)
-    };
-
-    let mut total = rifle(loadout.rifle())? + kg(loadout.rig().item())?;
-    for spare in loadout.rig().magazines() {
-        total += magazine(spare)?;
-    }
-    if let Some(backpack) = loadout.backpack() {
-        total += kg(backpack)?;
-    }
-    for item in loadout.inventory() {
-        total += match item {
-            Item::Weapon(held) => rifle(held)?,
-            Item::Magazine(spare) => magazine(spare)?,
-            Item::Rounds(stack) => kg(&stack.round)? * stack.count as f32,
-            Item::Rig(id) | Item::Other(id) => kg(id)?,
-        };
+    let mut total = 0.0;
+    for (id, count) in loadout_items(loadout, weapon) {
+        let def = lookup(&id).ok_or_else(|| UnknownItem { id: id.clone() })?;
+        total += def.weight * count as f32;
     }
     Ok(total)
 }

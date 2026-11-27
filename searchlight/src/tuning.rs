@@ -1,12 +1,12 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
-    AccuracyTuning, BodyPart, BodyProfile, Item, ItemClass, ItemDef, ItemId, ItemKind, Kit,
-    LeanTuning, Lifecycle, LoadThresholds, Loadout, Magazine, PlayerDef, Remains, Rifle, Rig,
-    RoundStats, Size,
+    AccuracyTuning, BodyPart, BodyProfile, Carried, ItemClass, ItemDef, ItemId, ItemKind, Kit,
+    LeanTuning, Lifecycle, LoadThresholds, Loadout, PlayerDef, Remains, RoundStats, Size,
+    loadout_items, remains_items,
 };
 
 use moho_core::content::ContentRoots;
@@ -70,13 +70,18 @@ pub const SEARCH_REACH: f32 = 2.5;
 pub const BODY_RADIUS: f32 = 0.8;
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
+///
+/// The carry config's item definitions are weightless placeholders, one per item the loadout
+/// holds, for configs built without content, so load is 0 here. The shipped game uses
+/// [`shipped`], whose definitions come from the item catalogue.
 pub fn tuning(kit: Kit) -> SimConfig {
     let Kit {
         weapon,
         loadout,
         rounds,
     } = kit;
-    let loadout_ids = loadout_item_ids(&loadout);
+    let weapon_item = rifle_item();
+    let loadout_ids = loadout_item_ids(&loadout, &weapon_item);
     SimConfig {
         move_settings: MoveSettings {
             max_speed: 6.0,
@@ -125,63 +130,32 @@ pub fn tuning(kit: Kit) -> SimConfig {
         carry: CarryConfig {
             player: SHIPPED_PLAYER,
             items: weightless(&loadout_ids),
-            weapon: ItemId::new("rifle"),
+            weapon: weapon_item,
         },
     }
 }
 
-fn magazine_ids(magazine: &Magazine, out: &mut Vec<ItemId>) {
-    out.push(magazine.item().clone());
-    out.extend(magazine.round_items().iter().cloned());
+/// The item id of the rifle the player holds, in [`tuning`]'s carry config.
+fn rifle_item() -> ItemId {
+    ItemId::new("rifle")
 }
 
-fn rifle_ids(rifle: &Rifle, out: &mut Vec<ItemId>) {
-    magazine_ids(rifle.magazine(), out);
-    out.extend(rifle.chamber().cloned());
+/// Every distinct item id `loadout` holds.
+fn loadout_item_ids(loadout: &Loadout, weapon: &ItemId) -> Vec<ItemId> {
+    distinct(loadout_items(loadout, weapon))
 }
 
-fn item_ids(item: &Item, out: &mut Vec<ItemId>) {
-    match item {
-        Item::Weapon(rifle) => rifle_ids(rifle, out),
-        Item::Magazine(magazine) => magazine_ids(magazine, out),
-        Item::Rounds(stack) => out.push(stack.round.clone()),
-        Item::Rig(id) | Item::Other(id) => out.push(id.clone()),
-    }
+/// Every distinct item id `remains` holds.
+fn remains_item_ids(remains: &Remains, weapon: &ItemId) -> Vec<ItemId> {
+    distinct(remains_items(remains, weapon))
 }
 
-fn rig_ids(rig: &Rig, out: &mut Vec<ItemId>) {
-    out.push(rig.item().clone());
-    for magazine in rig.magazines() {
-        magazine_ids(magazine, out);
-    }
+fn distinct(carried: Vec<Carried>) -> Vec<ItemId> {
+    let ids: BTreeSet<ItemId> = carried.into_iter().map(|(id, _)| id).collect();
+    ids.into_iter().collect()
 }
 
-/// Every item id `loadout` holds.
-fn loadout_item_ids(loadout: &Loadout) -> Vec<ItemId> {
-    let mut ids = vec![ItemId::new("rifle")];
-    rifle_ids(loadout.rifle(), &mut ids);
-    rig_ids(loadout.rig(), &mut ids);
-    ids.extend(loadout.backpack().cloned());
-    for item in loadout.inventory() {
-        item_ids(item, &mut ids);
-    }
-    ids
-}
-
-/// Every item id `remains` holds.
-fn remains_item_ids(remains: &Remains) -> Vec<ItemId> {
-    let mut ids = Vec::new();
-    if let Some(rig) = &remains.rig {
-        rig_ids(rig, &mut ids);
-    }
-    ids.extend(remains.backpack.iter().cloned());
-    for item in &remains.carried {
-        item_ids(item, &mut ids);
-    }
-    ids
-}
-
-/// A weightless plain definition for each of `ids`, for a config built with no item catalogue.
+/// A weightless plain definition for each of `ids`.
 fn weightless(ids: &[ItemId]) -> BTreeMap<ItemId, ItemDef> {
     ids.iter()
         .map(|id| {
@@ -201,26 +175,60 @@ fn weightless(ids: &[ItemId]) -> BTreeMap<ItemId, ItemDef> {
         .collect()
 }
 
-/// The shipped game's tuning: the kit `kit` of the content `roots` with the shipped item
-/// catalogue and `player.toml` as its carry config, so every item in play has a definition.
+/// The shipped game's tuning: the kit `kit` of the content `roots`, with the catalogue's
+/// definitions of everything it carries and `player.toml` as its carry config.
 ///
 /// # Errors
 ///
 /// A [`KitLoadError`] when the kit, the items or the player sheet cannot be loaded.
 pub fn shipped(roots: &ContentRoots, kit: &str) -> Result<SimConfig, KitLoadError> {
+    assemble(roots, kit, None)
+}
+
+/// [`shipped`] with the kit `enemy_kit` as what every enemy leaves, its items defined by the
+/// catalogue too.
+///
+/// # Errors
+///
+/// As [`shipped`], and for the enemy kit.
+pub fn shipped_with_enemy(
+    roots: &ContentRoots,
+    kit: &str,
+    enemy_kit: &str,
+) -> Result<SimConfig, KitLoadError> {
+    assemble(roots, kit, Some(enemy_kit))
+}
+
+fn assemble(
+    roots: &ContentRoots,
+    kit: &str,
+    enemy_kit: Option<&str>,
+) -> Result<SimConfig, KitLoadError> {
     let catalogue = load_catalogue(roots, kit)?;
     let player = crate::player::load(roots)?;
+    let enemy = enemy_kit
+        .map(|enemy_kit| crate::kit::load_enemy(roots, enemy_kit))
+        .transpose()?;
+    let mut ids = loadout_item_ids(&catalogue.kit.loadout, &catalogue.weapon);
+    if let Some((remains, _)) = &enemy {
+        ids.extend(remains_item_ids(remains, &catalogue.weapon));
+    }
+    let items = catalogue.define(&ids)?;
     let mut config = tuning(catalogue.kit);
     config.carry = CarryConfig {
         player,
-        items: catalogue.items,
+        items,
         weapon: catalogue.weapon,
     };
-    Ok(config)
+    Ok(match enemy {
+        Some((remains, rounds)) => with_enemy_kit(config, remains, rounds),
+        None => config,
+    })
 }
 
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
 /// the round stats the sim flies and scores rounds with, so a looted round still fires.
+/// Items of `remains` the carry config does not define get weightless placeholders.
 pub fn with_enemy_kit(
     mut config: SimConfig,
     remains: Remains,
@@ -229,7 +237,8 @@ pub fn with_enemy_kit(
     for (round, stats) in rounds {
         config.rounds.entry(round).or_insert(stats);
     }
-    for (id, def) in weightless(&remains_item_ids(&remains)) {
+    let weapon = config.carry.weapon.clone();
+    for (id, def) in weightless(&remains_item_ids(&remains, &weapon)) {
         config.carry.items.entry(id).or_insert(def);
     }
     config.enemy_remains = remains;

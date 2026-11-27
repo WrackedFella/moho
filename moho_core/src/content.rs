@@ -137,11 +137,6 @@ impl<T> Definitions<T> {
         self.entries.get(id)
     }
 
-    /// Every definition with its id, in id order.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &T)> {
-        self.entries.iter().map(|(id, def)| (id.as_str(), def))
-    }
-
     /// The definition under `id`.
     ///
     /// # Errors

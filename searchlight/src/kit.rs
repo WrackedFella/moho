@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use moho_core::content::{ContentError, ContentRoots, load_kind};
+use moho_core::content::{ContentError, ContentRoots, Definitions, load_kind};
 use searchlight_rules::{ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats};
 use thiserror::Error;
 
@@ -62,19 +62,32 @@ fn resolve_kit<T>(
     })
 }
 
-/// A resolved kit with the item catalogue it was resolved against and the id of its weapon.
-#[derive(Debug, Clone, PartialEq)]
+/// A resolved kit with the item definitions it was resolved against and the id of its weapon.
+#[derive(Debug)]
 pub struct Catalogue {
     /// The resolved kit.
     pub kit: Kit,
     /// The item id of the kit's weapon.
     pub weapon: ItemId,
-    /// Every item defined in the content roots, by id.
-    pub items: BTreeMap<ItemId, ItemDef>,
+    items: Definitions<ItemDef>,
 }
 
-/// Loads `items` and `kits` through `roots`, resolves the kit `kit`, and returns it with the
-/// whole item catalogue.
+impl Catalogue {
+    /// The definition of each of `ids`, by id.
+    ///
+    /// # Errors
+    ///
+    /// [`KitLoadError::Content`] naming the first id the catalogue does not define. An id a
+    /// resolved kit holds is always defined, so this means `ids` came from somewhere else.
+    pub fn define(&self, ids: &[ItemId]) -> Result<BTreeMap<ItemId, ItemDef>, KitLoadError> {
+        ids.iter()
+            .map(|id| Ok((id.clone(), self.items.require(id.as_str())?.clone())))
+            .collect()
+    }
+}
+
+/// Loads `items` and `kits` through `roots` and resolves the kit `kit`, keeping the item
+/// definitions for [`Catalogue::define`].
 ///
 /// # Errors
 ///
@@ -92,10 +105,7 @@ pub fn load_catalogue(roots: &ContentRoots, kit: &str) -> Result<Catalogue, KitL
     Ok(Catalogue {
         kit: resolved,
         weapon: def.weapon.clone(),
-        items: items
-            .iter()
-            .map(|(id, def)| (ItemId::new(id), def.clone()))
-            .collect(),
+        items,
     })
 }
 

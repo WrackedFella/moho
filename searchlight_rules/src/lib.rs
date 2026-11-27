@@ -4,6 +4,7 @@
 mod accuracy;
 mod ballistics;
 mod body;
+mod carried;
 mod grade;
 mod inventory;
 mod item;
@@ -26,6 +27,7 @@ pub use ballistics::{
     MIN_SPEED, RoundStats, STANDARD_GRAVITY, arrival_damage,
 };
 pub use body::{Body, BodyPart, BodyProfile, HitReport};
+pub use carried::{Carried, loadout_items, remains_items};
 pub use grade::{Grade, GradeDials, UnknownGrade};
 pub use inventory::{Item, MoveRefused, Place, Remains, RoundStack, Source};
 pub use item::{
