@@ -26,7 +26,7 @@ impl Default for VelocityFactor {
 }
 
 impl VelocityFactor {
-    /// The factor.
+    /// The factor, always finite and above 0.
     #[must_use]
     pub fn get(self) -> f32 {
         self.0
