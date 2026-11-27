@@ -1711,7 +1711,6 @@ impl SearchlightGame {
         self.mode.sim()
     }
 
-    /// The listener the last frame set, read from the view it drew.
     #[cfg(test)]
     fn frame_listener(&self) -> moho_audio::Listener {
         self.listener
