@@ -108,6 +108,7 @@ fn window_title(status: &str) -> String {
 /// The glTF material name of the arena meshes that draw glossy.
 const FLOOR_MATERIAL: &str = "floor";
 const MARK_MATERIAL: &str = "mark";
+const MARK_RUN_MATERIAL: &str = "mark_run";
 
 const ARENA_FLOOR_GLOSS: f32 = 0.6;
 
@@ -149,6 +150,7 @@ enum Paint {
     Struck,
     Control,
     ArenaMark,
+    ArenaMarkRun,
     Tracer,
     ImpactMark,
 }
@@ -171,6 +173,7 @@ impl RenderMaterial for Paint {
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::Control => ([0.25, 0.75, 0.35], [0.18, 0.55, 0.26], 0.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::ArenaMarkRun => ([0.3, 0.85, 0.35], [0.22, 0.65, 0.26], 0.0, 0.0),
             Paint::Tracer => ([1.0, 0.85, 0.4], [1.0, 0.85, 0.4], 1.0, 0.0),
             Paint::ImpactMark => ([0.05, 0.05, 0.05], [0.05, 0.05, 0.05], 0.0, 0.0),
         };
@@ -646,8 +649,9 @@ impl Stage {
     }
 
     /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`],
-    /// those named `mark` in [`Paint::ArenaMark`] and the rest, or any past the end of
-    /// `material_names`, in [`Paint::Arena`].
+    /// those named `mark` in [`Paint::ArenaMark`], those named `mark_run` in
+    /// [`Paint::ArenaMarkRun`] and the rest, or any past the end of `material_names`, in
+    /// [`Paint::Arena`].
     fn add_named_arena(
         &mut self,
         meshes: Vec<WorldMesh>,
@@ -657,10 +661,12 @@ impl Stage {
         let arena_material = self.scene.material_table.find_or_push(&Paint::Arena);
         let floor_material = self.scene.material_table.find_or_push(&Paint::ArenaFloor);
         let mark_material = self.scene.material_table.find_or_push(&Paint::ArenaMark);
+        let mark_run_material = self.scene.material_table.find_or_push(&Paint::ArenaMarkRun);
         for (index, mesh) in meshes.into_iter().enumerate() {
             let material = match material_names.get(index).and_then(Option::as_deref) {
                 Some(FLOOR_MATERIAL) => floor_material,
                 Some(MARK_MATERIAL) => mark_material,
+                Some(MARK_RUN_MATERIAL) => mark_run_material,
                 _ => arena_material,
             };
             self.scene.world_meshes_mut().upsert(
@@ -8866,6 +8872,29 @@ mod mutation_tests {
         assert_material(drawn[2], Paint::Arena);
         let (mark, plain) = (Paint::ArenaMark.to_gpu(), Paint::Arena.to_gpu());
         assert_ne!((mark.albedo, mark.params), (plain.albedo, plain.params));
+    }
+
+    #[test]
+    fn a_mark_run_mesh_gets_its_own_paint() {
+        let mut stage = Stage::new();
+        let meshes = vec![
+            box_mesh(Vec3::ZERO, Vec3::ONE),
+            box_mesh(Vec3::new(5.0, 0.0, 0.0), Vec3::ONE),
+        ];
+        let names = [Some("mark_run".to_owned()), Some("mark".to_owned())];
+        stage.add_named_arena(meshes, &names, &[]);
+        let mut renderer = FakeRenderer::default();
+
+        draw_once(&mut stage, &mut renderer);
+
+        let drawn = renderer.drawn_materials();
+        assert_eq!(drawn.len(), 2);
+        assert_material(drawn[0], Paint::ArenaMarkRun);
+        assert_material(drawn[1], Paint::ArenaMark);
+        for other in [Paint::Arena, Paint::ArenaFloor, Paint::ArenaMark] {
+            let (run, other) = (Paint::ArenaMarkRun.to_gpu(), other.to_gpu());
+            assert_ne!((run.albedo, run.params), (other.albedo, other.params));
+        }
     }
 
     #[test]

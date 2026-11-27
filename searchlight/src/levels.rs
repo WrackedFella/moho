@@ -682,13 +682,21 @@ mod tests {
             } else {
                 trial.tick(0.0, true);
             }
+            let launched = trial.sim.player();
+            assert!(
+                !launched.grounded && launched.velocity.y > 0.0,
+                "{}: the jump input did not leave the ground: {launched:?}",
+                gap.name
+            );
             for tick in 0..TRIAL_TICKS {
                 trial.tick(1.0, false);
                 if trial.feet_above_floor() < -PIT_DROP {
                     return false;
                 }
                 if tick > 3 && trial.sim.player().grounded {
-                    return trial.along() >= width;
+                    // Any landing on the floor nearer the far edge than the take-off edge is
+                    // the far platform, even perched on its rim with the centre short of it.
+                    return trial.along() > width / 2.0;
                 }
             }
             false
