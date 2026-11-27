@@ -25,6 +25,7 @@ pub enum SearchlightAction {
     LeanRight,
     Use,
     Inventory,
+    Character,
     Aim,
 }
 
@@ -44,6 +45,7 @@ impl Action for SearchlightAction {
         SearchlightAction::LeanRight,
         SearchlightAction::Use,
         SearchlightAction::Inventory,
+        SearchlightAction::Character,
         SearchlightAction::Aim,
     ];
 
@@ -63,6 +65,7 @@ impl Action for SearchlightAction {
             SearchlightAction::LeanRight => "lean_right",
             SearchlightAction::Use => "use",
             SearchlightAction::Inventory => "inventory",
+            SearchlightAction::Character => "character",
             SearchlightAction::Aim => "aim",
         }
     }
@@ -87,6 +90,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Inventory => {
                 const { &[Binding::key(Key::Tab), Binding::key(Key::I)] }
             }
+            SearchlightAction::Character => const { &[Binding::key(Key::K)] },
             SearchlightAction::Aim => const { &[Binding::mouse(MouseButton::Right)] },
         }
     }
@@ -536,6 +540,23 @@ mod tests {
             [true, true, false]
         );
         assert!(!SearchlightCommand::from_frame(&down).fire);
+    }
+
+    #[test]
+    fn the_character_screen_is_named_character_and_defaults_to_k() {
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&BTreeMap::new());
+
+        assert_eq!(SearchlightAction::Character.name(), "character");
+        assert_eq!(
+            SearchlightAction::Character.default_bindings(),
+            [Binding::key(Key::K)]
+        );
+        assert!(SearchlightAction::ALL.contains(&SearchlightAction::Character));
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(SearchlightAction::Character),
+            [Binding::key(Key::K)]
+        );
     }
 
     #[test]
