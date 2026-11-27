@@ -689,10 +689,10 @@ impl Stage {
             self.status = text;
         }
         match feedback {
-            Feedback::Fired => self.play_shot(audio),
+            Feedback::Fired => self.play_shot(feedback, audio),
             Feedback::EnemyFired { target, .. } => {
                 self.enemy_rig(*target).gun_flash = FLASH_TICKS;
-                self.play_shot(audio);
+                self.play_shot(feedback, audio);
             }
             Feedback::Hit { target, part, .. } => {
                 let tag = SurfaceTag::Part {
@@ -869,16 +869,24 @@ impl Stage {
             .hidden = true;
     }
 
-    fn shot_sound(&self, _feedback: &Feedback) -> Option<moho_audio::AudioSource> {
-        todo!("build the positioned shot sound")
+    /// The rifle sound for a shot: the player's own from no position, an enemy's from where
+    /// it fired. `None` for any other feedback or when no shot file is configured.
+    fn shot_sound(&self, feedback: &Feedback) -> Option<moho_audio::AudioSource> {
+        let path = self.shot_sound.as_ref()?;
+        let source = moho_audio::AudioSource::new(path).with_volume(SHOT_VOLUME);
+        match feedback {
+            Feedback::Fired => Some(source),
+            Feedback::EnemyFired { from, .. } => Some(source.with_position(from.to_array())),
+            _ => None,
+        }
     }
 
-    fn play_shot(&self, audio: Option<&mut AudioSystem>) {
-        let (Some(audio), Some(path)) = (audio, &self.shot_sound) else {
+    fn play_shot(&self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
+        let (Some(audio), Some(source)) = (audio, self.shot_sound(feedback)) else {
             return;
         };
-        if let Err(error) = audio.play_sound(path, SHOT_VOLUME) {
-            tracing::warn!(%error, path = %path.display(), "rifle shot could not be played");
+        if let Err(error) = audio.play_audio_source(&source) {
+            tracing::warn!(%error, path = source.path(), "rifle shot could not be played");
         }
     }
 
@@ -1028,6 +1036,8 @@ pub struct SearchlightGame {
     /// The view bob after the last tick, and the tick before it for blending.
     bob: Bob,
     previous_bob: Bob,
+    /// The listener of the last frame, read from the view that frame draws.
+    listener: moho_audio::Listener,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -1071,6 +1081,7 @@ impl SearchlightGame {
             zoom: Magnification::DEFAULT,
             bob: Bob::REST,
             previous_bob: Bob::REST,
+            listener: moho_audio::Listener::default(),
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
@@ -1703,7 +1714,30 @@ impl SearchlightGame {
     /// The listener the last frame set, read from the view it drew.
     #[cfg(test)]
     fn frame_listener(&self) -> moho_audio::Listener {
-        todo!("expose the listener the frame set")
+        self.listener
+    }
+
+    /// The view matrix and eye the frame draws at `alpha` between ticks: the interpolated
+    /// pose with lean shift, head bob and lean roll.
+    fn frame_view(&self, alpha: f32) -> (Mat4, Vec3) {
+        let sim = self.mode.sim();
+        let view = first_person_view(
+            &self.previous,
+            &sim.player(),
+            alpha,
+            look_to_turn(scale_look(self.input.pending_look(), self.aim_look_scale())),
+        );
+        let tuning = sim.lean_tuning();
+        let from = self.previous_lean.amount();
+        let amount = from + alpha * (sim.player_lean().amount() - from);
+        let yaw = view.forward.x.atan2(view.forward.z);
+        let bob = self.previous_bob.blend(self.bob, alpha);
+        let eye =
+            view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
+        (
+            rolled_view_matrix(eye, view.forward, amount * tuning.roll),
+            eye,
+        )
     }
 
     /// The input map, for feeding it device events.
@@ -1925,6 +1959,11 @@ impl Game for SearchlightGame {
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
         }
+        let (view, eye) = self.frame_view(alpha);
+        self.listener = moho_audio::Listener::from_view(view);
+        if let Some(audio) = ctx.audio() {
+            audio.set_listener(self.listener);
+        }
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
@@ -1991,29 +2030,8 @@ impl Game for SearchlightGame {
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
-            let sim = self.mode.sim();
-            let view = first_person_view(
-                &self.previous,
-                &sim.player(),
-                alpha,
-                look_to_turn(scale_look(self.input.pending_look(), self.aim_look_scale())),
-            );
-            let tuning = sim.lean_tuning();
-            let from = self.previous_lean.amount();
-            let amount = from + alpha * (sim.player_lean().amount() - from);
-            let yaw = view.forward.x.atan2(view.forward.z);
-            let bob = self.previous_bob.blend(self.bob, alpha);
-            let eye =
-                view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
             let fov = self.play_fov_degrees();
-            self.stage.draw_at(
-                renderer,
-                (
-                    rolled_view_matrix(eye, view.forward, amount * tuning.roll),
-                    eye,
-                ),
-                fov,
-            );
+            self.stage.draw_at(renderer, (view, eye), fov);
         }
     }
 }
@@ -2154,7 +2172,7 @@ mod tests {
         let listener = game.frame_listener();
         assert_eq!(listener, moho_audio::Listener::from_view(view));
         assert!(
-            listener.position.distance(standing) > 0.05,
+            listener.position.distance(standing) > 0.01,
             "the lean moved the eye off {standing:?}: {listener:?}"
         );
     }

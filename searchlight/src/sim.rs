@@ -1013,7 +1013,7 @@ impl SearchlightSim {
             let direction = self.with_spread(aim - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
-                from: Vec3::ZERO,
+                from: eye,
             });
             let strike = resolve_shot(
                 &self.world,
