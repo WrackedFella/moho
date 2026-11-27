@@ -287,7 +287,14 @@ model, a clip and a time; it never changes the model.
   action. Call `advance` once per tick before that tick's commands: an action finished before
   the call is dropped, so its last pose is read on the tick it is reached and the base returns
   on the next. `pose` is the base's with no action, the action's for `Whole`, else the layered
-  pose.
+  pose, then the aim pitch applied.
+- Aim pitch: `set_aim_chain` takes `AimLink`s (node index and share) and `set_aim_pitch` holds
+  the pitch in radians (positive raises the front; bodies face +Z with +Y up). `advance` leaves
+  both alone, so the sim sets the pitch each tick. `pose` turns each link's node by
+  `share x pitch` about the model's X axis, pivoting on the node's own origin, and the turn
+  carries to its whole subtree; the body above the chain turns by `pitch x sum(share)`. An empty
+  chain, zero pitch or zero shares give the unpitched pose bit for bit. A turned link
+  (non-zero angle) naming a node outside the model panics in `pose`.
 - `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
   animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is

@@ -14,7 +14,7 @@ use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId,
-    LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec, RoundStats,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -183,8 +183,13 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        rounds: BTreeMap::from([(ItemId::new("test_round"), TEST_BALLISTICS)]),
-        damage: 30,
+        rounds: BTreeMap::from([(
+            ItemId::new("test_round"),
+            RoundStats {
+                ballistics: TEST_BALLISTICS,
+                damage: 30,
+            },
+        )]),
         cooldown_ticks: 3,
         reload_ticks: 10,
         charge_ticks: 0,
@@ -209,6 +214,14 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
 pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
     let standing = &mut config.character_body.standing;
     standing.eye_height = height + standing.hull.length / 2.0;
+}
+
+pub(crate) fn set_round_damage(config: &mut SimConfig, damage: u32) {
+    config
+        .rounds
+        .get_mut(&ItemId::new("test_round"))
+        .expect("the test config has the test round")
+        .damage = damage;
 }
 
 /// Enemy tuning with a 3-tick reaction (so the first shot is on tick 2), a 4-tick cooldown,
@@ -312,6 +325,7 @@ fn build_arena(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        menu_cameras: Vec::new(),
     })
 }
 

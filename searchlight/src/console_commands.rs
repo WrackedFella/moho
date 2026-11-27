@@ -8,6 +8,7 @@ use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
 use searchlight_rules::{Grade, GravityScale, MAX_GRAVITY_SCALE};
 
+use crate::aim::Magnification;
 use crate::head_bob::HeadBobLevel;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,6 +24,28 @@ pub enum ConsoleCommand {
     HeadBob(HeadBobArg),
     /// Open the demo item lists.
     Items,
+    /// Show or hide the outlines of every character's hit volumes.
+    HitVolumes,
+    /// Set how much a held Aim magnifies the view.
+    Zoom(Magnification),
+}
+
+/// Parses `hitvolumes`; it takes no arguments.
+pub fn parse_hitvolumes(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::HitVolumes, String::new())),
+        _ => Err("Usage: hitvolumes".to_owned()),
+    }
+}
+
+/// Parses `zoom <factor>`.
+pub fn parse_zoom(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let usage = || "Usage: zoom <factor> (1 to 12)".to_owned();
+    let [text] = args else {
+        return Err(usage());
+    };
+    let zoom = Magnification::parse(text).ok_or_else(usage)?;
+    Ok((ConsoleCommand::Zoom(zoom), format!("Zoom: {}x", zoom.get())))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -223,6 +246,22 @@ fn console_with_grade(
             parse: parse_items,
         })
         .expect("\"items\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "hitvolumes".to_owned(),
+            usage: "hitvolumes".to_owned(),
+            help: "show or hide every character's hit volumes".to_owned(),
+            parse: parse_hitvolumes,
+        })
+        .expect("\"hitvolumes\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "zoom".to_owned(),
+            usage: "zoom <factor>".to_owned(),
+            help: "magnification while aiming (test tool)".to_owned(),
+            parse: parse_zoom,
+        })
+        .expect("\"zoom\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -619,6 +658,98 @@ mod tests {
 
         assert_eq!(queued, vec![ConsoleCommand::Items]);
         assert_eq!(refused, (vec![], "Usage: items".to_owned()));
+    }
+
+    const ZOOM_USAGE: &str = "Usage: zoom <factor> (1 to 12)";
+
+    fn magnification(factor: f32) -> Magnification {
+        Magnification::new(factor).expect("a factor from 1 to 12")
+    }
+
+    #[test]
+    fn zoom_takes_a_factor_from_one_to_twelve() {
+        for (line, factor, printed) in [
+            ("zoom 5", 5.0, "Zoom: 5x"),
+            ("zoom 1", 1.0, "Zoom: 1x"),
+            ("zoom 12", 12.0, "Zoom: 12x"),
+            ("zoom 2.5", 2.5, "Zoom: 2.5x"),
+            ("zoom 10", 10.0, "Zoom: 10x"),
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert_eq!(
+                console.take_commands(),
+                vec![ConsoleCommand::Zoom(magnification(factor))],
+                "{line}"
+            );
+            assert_eq!(last_line(&console), printed, "{line}");
+        }
+    }
+
+    #[test]
+    fn zoom_outside_one_to_twelve_is_refused_naming_the_range() {
+        for line in [
+            "zoom 0",
+            "zoom 12.5",
+            "zoom -1",
+            "zoom NaN",
+            "zoom inf",
+            "zoom x",
+            "zoom",
+            "zoom 5 6",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            assert_eq!(last_line(&console), ZOOM_USAGE, "{line}");
+        }
+    }
+
+    #[test]
+    fn help_lists_zoom() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        let expected = "  zoom <factor> - magnification while aiming (test tool)".to_owned();
+        assert!(lines.contains(&expected), "{lines:?}");
+    }
+
+    #[test]
+    fn hitvolumes_toggles_outlines() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("hitvolumes");
+        let queued = (console.take_commands(), last_line(&console));
+        console.submit("hitvolumes");
+        let again = console.take_commands();
+        for line in ["hitvolumes 1", "hitvolumes now", "hitvolumes fullscreen"] {
+            console.submit(line);
+
+            assert_eq!(
+                (console.take_commands(), last_line(&console)),
+                (vec![], "Usage: hitvolumes".to_owned()),
+                "{line}"
+            );
+        }
+        console.submit("help");
+
+        assert_eq!(
+            queued,
+            (vec![ConsoleCommand::HitVolumes], "> hitvolumes".to_owned()),
+            "a bare hitvolumes queues the toggle and prints nothing itself"
+        );
+        assert_eq!(again, vec![ConsoleCommand::HitVolumes]);
+        let lines = printed(&console);
+        assert!(
+            lines.iter().any(|line| line.starts_with("  hitvolumes - ")),
+            "{lines:?}"
+        );
     }
 
     #[test]

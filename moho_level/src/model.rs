@@ -3,10 +3,10 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
-use glam::{Affine3A, Mat4};
+use glam::{Affine3A, Mat3A, Mat4, Quat};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, Rgba8Image, WorldMesh};
 
-use crate::anim::{Clip, Pose};
+use crate::anim::{Clip, Pose, Region};
 use crate::image::ImageSources;
 use crate::{LevelError, LevelErrorKind, mesh, rig};
 
@@ -360,7 +360,7 @@ impl Model {
     /// # Panics
     /// When `clip` is not an index into [`Model::clips`].
     pub fn pose(&self, clip: usize, time: f32) -> Pose {
-        self.compose(self.locals_of(clip, time))
+        self.pose_turned((clip, time), None, &[])
     }
 
     /// The pose of `base` (clip, time) with every node from `from` down (the node and all
@@ -373,6 +373,43 @@ impl Model {
     /// When a clip is not an index into [`Model::clips`], or `from` is not an index into
     /// [`Model::nodes`].
     pub fn layered_pose(&self, base: (usize, f32), action: (usize, f32), from: usize) -> Pose {
+        self.pose_turned(base, Some((action, Region::From(from))), &[])
+    }
+
+    /// The pose [`crate::anim::Animator::pose`] builds: `base`, or `action` over its region
+    /// when there is one, then each `(node, turn)` of `turns` pre-multiplying that node's
+    /// posed matrix (see [`Model::compose`]).
+    ///
+    /// # Panics
+    /// As [`Model::layered_pose`]; also when a turn names a node past the last.
+    pub(crate) fn pose_turned(
+        &self,
+        base: (usize, f32),
+        action: Option<((usize, f32), Region)>,
+        turns: &[(usize, Quat)],
+    ) -> Pose {
+        for &(node, _) in turns {
+            assert!(
+                node < self.nodes.len(),
+                "pose_turned: turn node {node} is not a node (count {})",
+                self.nodes.len()
+            );
+        }
+        let locals = match action {
+            None => self.locals_of(base.0, base.1),
+            Some((action, Region::Whole)) => self.locals_of(action.0, action.1),
+            Some((action, Region::From(from))) => self.layered_locals(base, action, from),
+        };
+        self.compose(locals, turns)
+    }
+
+    /// The locals of [`Model::layered_pose`].
+    fn layered_locals(
+        &self,
+        base: (usize, f32),
+        action: (usize, f32),
+        from: usize,
+    ) -> Vec<Affine3A> {
         assert!(
             from < self.nodes.len(),
             "layered_pose: from {from} is not a node (count {})",
@@ -387,7 +424,7 @@ impl Model {
                 locals[index] = action_locals[index];
             }
         }
-        self.compose(locals)
+        locals
     }
 
     /// Each node's local at `time` of `clip`: nodes no channel targets keep `local` exactly,
@@ -405,13 +442,18 @@ impl Model {
             .collect()
     }
 
-    /// Globals from the chosen `locals`, parent-first in walk order.
-    fn compose(&self, locals: Vec<Affine3A>) -> Pose {
+    /// Globals from the chosen `locals`, parent-first in walk order. Each turn naming a node
+    /// pre-multiplies the matrix part of that node's global (translation unchanged) before its
+    /// children are composed, so the turn carries down the whole subtree.
+    fn compose(&self, locals: Vec<Affine3A>, turns: &[(usize, Quat)]) -> Pose {
         let mut globals: Vec<Affine3A> = Vec::with_capacity(self.nodes.len());
-        for (node, local) in self.nodes.iter().zip(locals) {
+        for (index, (node, local)) in self.nodes.iter().zip(locals).enumerate() {
             // The same product the loader forms for `rest`, so an unanimated chain
             // reproduces it bit for bit.
-            let global = node.parent.map_or(local, |p| globals[p] * local);
+            let mut global = node.parent.map_or(local, |p| globals[p] * local);
+            for &(_, turn) in turns.iter().filter(|(at, _)| *at == index) {
+                global.matrix3 = Mat3A::from_quat(turn) * global.matrix3;
+            }
             globals.push(global);
         }
         Pose::new(globals)
@@ -460,7 +502,9 @@ impl Model {
 #[cfg(test)]
 mod tests {
     use glam::{Affine3A, Mat3, Vec3};
+    use glam::{Mat3A, Quat};
     use moho_render_api::{RenderMaterial, WorldMesh};
+    use proptest::prelude::*;
 
     use super::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode};
     use crate::anim::{Channel, Clip, Interpolation, Track};
@@ -815,5 +859,143 @@ mod tests {
         assert_ne!(grey_key, less_red.dedup_key());
         assert_ne!(grey_key, less_green.dedup_key());
         assert_ne!(grey_key, less_blue.dedup_key());
+    }
+
+    /// A chain `root` -> `turned` -> `child`, each a translation up from its parent, with the
+    /// `turned` node scaled by 2.
+    fn turn_chain() -> Model {
+        let nodes = vec![
+            ModelNode {
+                name: Some("root".to_owned()),
+                parent: None,
+                local: Affine3A::from_translation(Vec3::new(1.0, 2.0, 3.0)),
+                rest: Affine3A::IDENTITY,
+            },
+            ModelNode {
+                name: Some("turned".to_owned()),
+                parent: Some(0),
+                local: Affine3A::from_scale_rotation_translation(
+                    Vec3::new(2.0, 0.5, 3.0),
+                    Quat::from_rotation_z(0.7),
+                    Vec3::new(0.0, 1.0, 0.0),
+                ),
+                rest: Affine3A::IDENTITY,
+            },
+            ModelNode {
+                name: Some("child".to_owned()),
+                parent: Some(1),
+                local: Affine3A::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+                rest: Affine3A::IDENTITY,
+            },
+        ];
+        Model::for_tests(nodes, Vec::new())
+    }
+
+    fn locals(model: &Model) -> Vec<Affine3A> {
+        model.nodes().iter().map(|n| n.local).collect()
+    }
+
+    #[test]
+    fn a_turn_keeps_the_turned_nodes_origin() {
+        let model = turn_chain();
+        let quarter = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        let unturned = model.compose(locals(&model), &[]);
+
+        let turned = model.compose(locals(&model), &[(1, quarter)]);
+
+        assert_eq!(bits(turned.nodes()[0]), bits(unturned.nodes()[0]));
+        let node = turned.nodes()[1];
+        assert_eq!(node.translation, unturned.nodes()[1].translation);
+        let expected = Mat3A::from_quat(quarter) * unturned.nodes()[1].matrix3;
+        assert!(
+            node.matrix3.abs_diff_eq(expected, 1e-5),
+            "{:?} != {expected:?}",
+            node.matrix3
+        );
+        assert_ne!(bits(node), bits(unturned.nodes()[1]));
+        // The child hangs off the turned parent, so the turn is applied inside the walk.
+        let child = turned.nodes()[2];
+        let expected_child = node * model.nodes()[2].local;
+        assert!(
+            child.abs_diff_eq(expected_child, 1e-5),
+            "{child:?} != {expected_child:?}"
+        );
+        assert_ne!(child.translation, unturned.nodes()[2].translation);
+    }
+
+    #[test]
+    fn a_turn_on_a_root_turns_every_descendant_and_keeps_the_roots_translation() {
+        let model = turn_chain();
+        let turn = Quat::from_rotation_x(0.9);
+        let unturned = model.compose(locals(&model), &[]);
+
+        let turned = model.compose(locals(&model), &[(0, turn)]);
+
+        let root = turned.nodes()[0];
+        assert_eq!(root.translation, unturned.nodes()[0].translation);
+        let expected = Mat3A::from_quat(turn) * unturned.nodes()[0].matrix3;
+        assert!(root.matrix3.abs_diff_eq(expected, 1e-5));
+        for index in 1..3 {
+            let want = root * unturned.nodes()[0].inverse() * unturned.nodes()[index];
+            let got = turned.nodes()[index];
+            assert!(
+                got.abs_diff_eq(want, 1e-4),
+                "node {index}: {got:?} != {want:?}"
+            );
+            assert_ne!(got.translation, unturned.nodes()[index].translation);
+        }
+    }
+
+    /// Root, then three nested nodes `a`, `b` and `above`, each 1 m up from its parent, with the
+    /// given Euler angles and scales (three of each per nested node).
+    fn nested(angles: [f32; 9], scales: [f32; 9]) -> Model {
+        let up = Affine3A::from_translation(Vec3::new(0.0, 1.0, 0.0));
+        let local = |i: usize| {
+            Affine3A::from_scale_rotation_translation(
+                Vec3::new(scales[i * 3], scales[i * 3 + 1], scales[i * 3 + 2]),
+                Quat::from_euler(
+                    glam::EulerRot::XYZ,
+                    angles[i * 3],
+                    angles[i * 3 + 1],
+                    angles[i * 3 + 2],
+                ),
+                Vec3::new(0.0, 1.0, 0.0),
+            )
+        };
+        let nodes = vec![
+            node(Some("root"), None, up),
+            node(Some("a"), Some(0), local(0)),
+            node(Some("b"), Some(1), local(1)),
+            node(Some("above"), Some(2), local(2)),
+        ];
+        Model::for_tests(nodes, Vec::new())
+    }
+
+    proptest! {
+        #[test]
+        fn turns_on_two_nested_nodes_add_up_above_both(
+            share_a in -2.0_f32..2.0,
+            share_b in -2.0_f32..2.0,
+            pitch in -1.0_f32..1.0,
+            angles in prop::array::uniform9(-3.0_f32..3.0),
+            scales in prop::array::uniform9(0.8_f32..1.25),
+        ) {
+            let model = nested(angles, scales);
+            let turns = [
+                (1, Quat::from_rotation_x(-pitch * share_a)),
+                (2, Quat::from_rotation_x(-pitch * share_b)),
+            ];
+            let unturned = model.compose(locals(&model), &[]);
+
+            let posed = model.compose(locals(&model), &turns);
+
+            let motion = posed.nodes()[3] * unturned.nodes()[3].inverse();
+            let expected = Mat3A::from_rotation_x(-pitch * (share_a + share_b));
+            prop_assert!(
+                motion.matrix3.abs_diff_eq(expected, 1e-5),
+                "{:?} != {expected:?}",
+                motion.matrix3
+            );
+        }
     }
 }
