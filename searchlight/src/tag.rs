@@ -12,6 +12,8 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control numbered `0`: stops a ray, damages nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -52,6 +54,7 @@ impl From<SurfaceTag> for HitTag {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
+            SurfaceTag::Control(_) => HitTag(WORLD),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -176,6 +179,70 @@ mod encoding_tests {
 
             assert_eq!(decoded, Err(UnknownTag(raw)), "tag {raw}");
         }
+    }
+}
+
+#[cfg(test)]
+mod control_encoding_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    const PARTS: [BodyPart; 6] = [
+        BodyPart::Head,
+        BodyPart::Torso,
+        BodyPart::LeftArm,
+        BodyPart::RightArm,
+        BodyPart::LeftLeg,
+        BodyPart::RightLeg,
+    ];
+
+    fn any_surface_tag() -> impl Strategy<Value = SurfaceTag> {
+        prop_oneof![
+            Just(SurfaceTag::World),
+            (any::<u16>(), proptest::sample::select(PARTS.to_vec()))
+                .prop_map(|(target, part)| SurfaceTag::Part { target, part }),
+            proptest::sample::select(PARTS.to_vec()).prop_map(SurfaceTag::Player),
+            any::<u16>().prop_map(SurfaceTag::Control),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn control_tags_round_trip(index in any::<u16>()) {
+            let tag = SurfaceTag::Control(index);
+
+            let back = SurfaceTag::try_from(HitTag::from(tag));
+
+            prop_assert_eq!(back, Ok(tag));
+        }
+
+        #[test]
+        fn any_two_distinct_surface_tags_including_controls_get_distinct_engine_tags(
+            a in any_surface_tag(),
+            b in any_surface_tag(),
+        ) {
+            prop_assume!(a != b);
+
+            prop_assert_ne!(HitTag::from(a), HitTag::from(b));
+        }
+
+        #[test]
+        fn any_surface_tag_including_controls_round_trips(tag in any_surface_tag()) {
+            let back = SurfaceTag::try_from(HitTag::from(tag));
+
+            prop_assert_eq!(back, Ok(tag));
+        }
+    }
+
+    #[test]
+    fn control_tags_sit_above_every_player_tag() {
+        let right_leg = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+
+        let first = HitTag::from(SurfaceTag::Control(0));
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        assert!(first.0 > right_leg.0);
+        assert!(last.0 > first.0);
     }
 }
 

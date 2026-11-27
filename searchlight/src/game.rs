@@ -29,6 +29,7 @@ use moho_ui_shell::{
     apply_engine_settings,
 };
 
+use crate::arena::ArenaControl;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -96,6 +97,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +117,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -956,6 +959,12 @@ impl SearchlightGame {
         self.stage.body = *self.mode.sim().character_body();
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
+        self
+    }
+
+    /// Draws `controls` as posts in [`Paint::Control`] and names them in the use prompt.
+    #[must_use]
+    pub fn with_controls(self, _controls: &[ArenaControl]) -> Self {
         self
     }
 
@@ -4804,6 +4813,216 @@ mod mutation_tests {
 
         let frame = drawn.expect("the menu text makes the shell draw with the console closed");
         assert!(!frame.meshes.is_empty());
+    }
+
+    const BUTTON: Vec3 = Vec3::new(0.0, 0.0, 1.2);
+
+    /// A game on an arena with the next-wave button just ahead of the player.
+    fn game_by_the_button_with(bindings: &BTreeMap<String, String>) -> SearchlightGame {
+        use crate::control::ControlAction;
+        use crate::test_support::{arena_with_controls, mag, rifle_from, test_config, wave_tuning};
+
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(BUTTON, ControlAction::NextWave)],
+        );
+        let mode = ArenaMode::new(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = moho_input::bindings::ActionBindings::load(bindings);
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_arena(arena.meshes.clone(), &[])
+            .with_controls(&arena.controls)
+    }
+
+    fn game_by_the_button() -> SearchlightGame {
+        game_by_the_button_with(&BTreeMap::new())
+    }
+
+    /// Turns the player to look at the middle of the button.
+    fn look_at_the_button(game: &mut SearchlightGame) {
+        let eye = game.mode.sim().player_eye();
+        let pitch = -(eye.y - 0.6).atan2(BUTTON.z - eye.z);
+        turn_player(game, 0.0, pitch);
+    }
+
+    fn turn_player(game: &mut SearchlightGame, yaw: f32, pitch: f32) {
+        let command = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: yaw,
+                pitch_delta: pitch,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        game.mode.tick(&command, 1.0 / 60.0);
+    }
+
+    /// Vertices the shell draws for the frame it was last handed, 0 when it draws nothing.
+    fn shell_vertices(game: &SearchlightGame) -> usize {
+        game.stage.shell().ui_frame([800, 600]).map_or(0, |frame| {
+            frame.meshes.iter().map(|m| m.vertices.len()).sum()
+        })
+    }
+
+    /// Vertices a bare shell draws for `text` as one line of screen text.
+    fn text_vertices(text: &str) -> usize {
+        use moho_ui_shell::{Anchor, ScreenText};
+
+        let mut shell = UiShell::<ConsoleCommand, MenuAction>::new(
+            console_commands::console(&BTreeMap::new()).0,
+        );
+        shell
+            .set_texts(vec![ScreenText {
+                text: text.to_owned(),
+                anchor: Anchor::Center,
+                offset: [0.0, 0.0],
+                size: 24.0,
+                color: [255; 4],
+            }])
+            .expect("a valid text");
+        shell.ui_frame([800, 600]).map_or(0, |frame| {
+            frame.meshes.iter().map(|m| m.vertices.len()).sum()
+        })
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = game_by_the_button();
+        let mut renderer = FakeRenderer::default();
+        frame_with(&mut game, &mut renderer);
+        let before_looking = shell_vertices(&game);
+        look_at_the_button(&mut game);
+
+        frame_with(&mut game, &mut renderer);
+        let prompt = shell_vertices(&game);
+
+        assert_eq!(game.mode.sim().control_in_reach(), Some(0));
+        assert_eq!(before_looking, 0, "a prompt with nothing in reach");
+        assert!(prompt > 0, "no prompt drawn");
+        assert_eq!(prompt, text_vertices("[F] Next wave"));
+        assert_ne!(prompt, text_vertices("[unbound] Next wave"));
+    }
+
+    #[test]
+    fn the_prompt_names_the_first_use_binding() {
+        let bindings = BTreeMap::from([("use".to_owned(), "Space".to_owned())]);
+        let mut game = game_by_the_button_with(&bindings);
+        look_at_the_button(&mut game);
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let prompt = shell_vertices(&game);
+
+        let label = moho_input::bindings::Binding::key(Key::Space).label();
+        assert_eq!(prompt, text_vertices(&format!("[{label}] Next wave")));
+        assert_ne!(prompt, text_vertices("[F] Next wave"));
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_by_the_button();
+        look_at_the_button(&mut game);
+        let mut renderer = FakeRenderer::default();
+        frame_with(&mut game, &mut renderer);
+        let looking = shell_vertices(&game);
+        turn_player(&mut game, std::f32::consts::FRAC_PI_2, 0.0);
+
+        frame_with(&mut game, &mut renderer);
+        let aside = shell_vertices(&game);
+
+        assert!(looking > 0, "the prompt never showed");
+        assert_eq!(aside, 0);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut renderer = FakeRenderer::default();
+        let mut dead = game_by_the_button();
+        look_at_the_button(&mut dead);
+        frame_with(&mut dead, &mut renderer);
+        let alive = shell_vertices(&dead);
+        dead.mode.sim_mut().kill_player();
+        dead.mode.tick(&SearchlightCommand::default(), 1.0 / 60.0);
+        frame_with(&mut dead, &mut renderer);
+        let dead_prompt = shell_vertices(&dead);
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut paused_at_it = game_by_the_button();
+        look_at_the_button(&mut paused_at_it);
+        paused_at_it.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        frame_with(&mut paused_at_it, &mut renderer);
+        let mut paused_away = game_by_the_button();
+        paused_away.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        frame_with(&mut paused_away, &mut renderer);
+
+        let at_it = shell_vertices(&paused_at_it);
+        let away = shell_vertices(&paused_away);
+
+        assert!(alive > 0, "the prompt never showed");
+        assert_eq!(dead_prompt, 0);
+        assert_eq!(paused_at_it.screen, Screen::Paused);
+        assert!(away > 0, "the pause menu draws text");
+        assert_eq!(at_it, away, "the prompt shows over the pause menu");
+    }
+
+    #[test]
+    fn the_button_draws_in_the_control_paint() {
+        let mut game = game_by_the_button();
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+
+        let drawn = renderer.drawn_materials();
+        assert_eq!(drawn.len(), 2, "the floor and the post");
+        assert_material(drawn[1], Paint::Control);
+        let control = Paint::Control.to_gpu();
+        for other in [
+            Paint::Arena,
+            Paint::ArenaFloor,
+            Paint::ArenaMark,
+            Paint::Dummy,
+            Paint::Enemy,
+            Paint::Struck,
+        ] {
+            let other = other.to_gpu();
+            assert_ne!(
+                (control.albedo, control.params),
+                (other.albedo, other.params),
+                "{other:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let spawns: Vec<Vec3> = (0..1000).map(|i| Vec3::new(i as f32, 0.0, 0.0)).collect();
+        let dummies = dummy_segments(&SHIPPED_BODY, &spawns);
+        let last_enemy = EnemyRig {
+            target: u16::MAX,
+            shown: false,
+            gun_flash: 0,
+        };
+        let others: Vec<WorldMeshId> = (0..1000)
+            .map(crate::arena::arena_mesh_id)
+            .chain(dummies.iter().map(|segment| segment.id))
+            .chain((0..ENEMY_SEGMENT_COUNT).map(|slot| last_enemy.mesh_id(slot)))
+            .collect();
+
+        for index in [0, 1, 7, 1000, usize::from(u16::MAX)] {
+            let id = crate::arena::control_mesh_id(index);
+
+            assert!(!others.contains(&id), "control {index} shares {id:?}");
+            assert!(
+                others.iter().all(|other| other.0 < id.0),
+                "control {index} sits below another range"
+            );
+        }
     }
 }
 

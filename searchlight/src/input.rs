@@ -22,6 +22,7 @@ pub enum SearchlightAction {
     Restart,
     LeanLeft,
     LeanRight,
+    Use,
 }
 
 impl Action for SearchlightAction {
@@ -37,6 +38,7 @@ impl Action for SearchlightAction {
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
+        SearchlightAction::Use,
     ];
 
     fn name(self) -> &'static str {
@@ -52,6 +54,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
+            SearchlightAction::Use => "use",
         }
     }
 
@@ -70,6 +73,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
+            SearchlightAction::Use => const { &[Binding::key(Key::G)] },
         }
     }
 }
@@ -135,6 +139,8 @@ pub struct SearchlightCommand {
     pub forced_grade: Option<Grade>,
     /// The side the player holds a lean toward, after key resolution.
     pub lean: Option<LeanSide>,
+    /// The use input went down this tick.
+    pub use_pressed: bool,
 }
 
 /// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
@@ -192,6 +198,7 @@ impl SearchlightCommand {
             god_mode: false,
             forced_grade: None,
             lean: None,
+            use_pressed: false,
         }
     }
 }
@@ -565,6 +572,108 @@ mod tests {
         let held = lean_after(&mut map, None);
 
         assert_eq!(held, Some(LeanSide::Right));
+    }
+}
+
+#[cfg(test)]
+mod use_tests {
+    use std::collections::BTreeMap;
+
+    use moho_input::action_map::ActionMap;
+    use moho_input::bindings::{ActionBindings, Input};
+
+    use super::*;
+
+    fn fresh_map() -> ActionMap<SearchlightAction> {
+        let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
+        assert!(warnings.is_empty());
+        ActionMap::new(bindings, 1.0)
+    }
+
+    #[test]
+    fn use_defaults_to_f_and_sets_use_pressed_on_its_press() {
+        let mut map = fresh_map();
+        map.key(Key::F, true);
+
+        let pressed = SearchlightCommand::from_frame(&map.end_tick());
+        let held = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, true);
+        let again = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert_eq!(
+            SearchlightAction::Use.default_bindings(),
+            [Binding::key(Key::F)]
+        );
+        assert_eq!(SearchlightAction::Use.name(), "use");
+        assert!(SearchlightAction::ALL.contains(&SearchlightAction::Use));
+        assert_eq!(
+            [
+                pressed.use_pressed,
+                held.use_pressed,
+                released.use_pressed,
+                again.use_pressed
+            ],
+            [true, false, false, true]
+        );
+        assert_eq!(
+            SearchlightCommand {
+                use_pressed: false,
+                ..pressed
+            },
+            SearchlightCommand::default(),
+            "a use press sets nothing but use"
+        );
+    }
+
+    #[test]
+    fn no_other_key_sets_use_pressed() {
+        let mut map = fresh_map();
+        for key in [Key::G, Key::Q, Key::E, Key::R, Key::C, Key::F8] {
+            map.key(key, true);
+        }
+
+        let command = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(!command.use_pressed);
+        assert!(!SearchlightCommand::default().use_pressed);
+    }
+
+    #[test]
+    fn no_other_action_defaults_to_the_use_key() {
+        for &action in SearchlightAction::ALL {
+            if action == SearchlightAction::Use {
+                continue;
+            }
+
+            let on_f = action
+                .default_bindings()
+                .iter()
+                .any(|binding| binding.input == Input::Key(Key::F));
+
+            assert!(!on_f, "{} shares the use key", action.name());
+        }
+    }
+
+    #[test]
+    fn a_saved_bindings_file_without_use_keeps_the_default() {
+        let saved = BTreeMap::from([("jump".to_owned(), "Space".to_owned())]);
+
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(bindings.get(SearchlightAction::Use), [Binding::key(Key::F)]);
+    }
+
+    #[test]
+    fn use_can_be_rebound_from_a_saved_bindings_file() {
+        let saved = BTreeMap::from([("use".to_owned(), "G".to_owned())]);
+
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(bindings.get(SearchlightAction::Use), [Binding::key(Key::G)]);
     }
 }
 
