@@ -137,6 +137,14 @@ pub enum KitError {
         /// The round item.
         round: ItemId,
     },
+    /// The weapon's barrel launches the round at a speed too large to be finite.
+    #[error("round \"{round}\" leaves weapon \"{weapon}\" at a speed that is not finite")]
+    NotFiniteFromWeapon {
+        /// The weapon item.
+        weapon: ItemId,
+        /// The round item.
+        round: ItemId,
+    },
     /// A carried entry names fields its item does not take, or lacks one it needs.
     #[error("the entry for item \"{id}\" has fields that do not fit its item")]
     EntryFields {
@@ -235,17 +243,23 @@ impl KitDef {
                 });
             }
             let stats = spec_round.stats();
-            if spec.well == weapon.well
-                && stats
+            if spec.well == weapon.well {
+                let launch = stats
                     .ballistics
                     .through_barrel(weapon.muzzle_velocity_factor)
-                    .muzzle_velocity
-                    <= MIN_SPEED
-            {
-                return Err(KitError::TooSlowFromWeapon {
-                    weapon: self.weapon.clone(),
-                    round: round.clone(),
-                });
+                    .muzzle_velocity;
+                if !launch.is_finite() {
+                    return Err(KitError::NotFiniteFromWeapon {
+                        weapon: self.weapon.clone(),
+                        round: round.clone(),
+                    });
+                }
+                if launch <= MIN_SPEED {
+                    return Err(KitError::TooSlowFromWeapon {
+                        weapon: self.weapon.clone(),
+                        round: round.clone(),
+                    });
+                }
             }
             let count = held.unwrap_or(spec.capacity);
             let filled = Magazine::filled(magazine.clone(), spec, round, count).map_err(|_| {
@@ -527,6 +541,38 @@ mod tests {
         let def = barrel_kit("round_fast", json!([]));
 
         let kit = resolve_with(&items, &def).expect("202 x 0.5 is above the minimum speed");
+
+        assert!(kit.rounds.contains_key(&id("round_fast")));
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_launches_at_an_infinite_speed_is_refused_naming_both() {
+        let items = barrel_items(1.0e37, 940.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let error = resolve_with(&items, &def).expect_err("940 x 1e37 overflows f32");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::NotFiniteFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains("rifle") && text.contains("round_fast"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_large_but_finite_launch_speed_is_accepted() {
+        let items = barrel_items(10.0, 940.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let kit = resolve_with(&items, &def).expect("940 x 10 is a finite speed");
 
         assert!(kit.rounds.contains_key(&id("round_fast")));
     }
