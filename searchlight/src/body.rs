@@ -7,7 +7,7 @@ use glam::Affine3A;
 use moho_core::assets::{AssetError, AssetRoots};
 use moho_level::anim::{ClipError, ClipPlayer, Playback};
 use moho_level::humanoid::{Bone, Humanoid, load_humanoid};
-use moho_level::{LevelError, Model, load_model};
+use moho_level::{LevelError, MeshSkin, Model, load_model};
 use thiserror::Error;
 
 use crate::TICK_HZ;
@@ -163,19 +163,14 @@ pub fn check(assets: &AssetRoots, eye_height: f32) -> Result<BodyReport, BodyErr
 
     let (model, humanoid) = check_rig(BODY, &body)?;
     let (player_model, player_humanoid) = check_rig(PLAYER_BODY, &player_body)?;
-    check_headless(&player_model, player_humanoid).map_err(|bone| {
-        BodyError::HeadInHeadlessBody {
-            file: PLAYER_BODY,
-            bone,
-        }
-    })?;
+    check_headless(PLAYER_BODY, &player_model, player_humanoid)?;
 
     let head_model = load_model(&head).map_err(|source| BodyError::Load { file: HEAD, source })?;
     if head_model.node("attach").is_none() {
         return Err(BodyError::NoAttach { file: HEAD });
     }
 
-    let head_height = standing_head_height(&model, humanoid);
+    let head_height = standing_head_height(BODY, &model, humanoid)?;
     if (head_height - eye_height).abs() > HEAD_TOLERANCE {
         return Err(BodyError::HeadHeight {
             file: BODY,
@@ -290,46 +285,53 @@ fn check_no_detached_mesh(
     Ok(())
 }
 
-/// The bone name of the first head or neck mesh in `model`: a vertex weighted on it, or an
-/// unskinned mesh under it.
-fn check_headless(model: &Model, humanoid: Humanoid) -> Result<(), &'static str> {
-    let hidden = [Bone::Head, Bone::Neck];
+/// The bones the first-person body must not show.
+const HIDDEN_BONES: [Bone; 2] = [Bone::Head, Bone::Neck];
+
+/// No vertex is weighted on the head or neck and no unskinned mesh sits under either.
+fn check_headless(file: &'static str, model: &Model, humanoid: Humanoid) -> Result<(), BodyError> {
     for mesh in model.meshes() {
-        match &mesh.skin {
-            Some(skin) => {
-                let joints = &model.skins()[skin.skin].joints;
-                for (influences, weights) in skin.joints.iter().zip(&skin.weights) {
-                    for (&joint, &weight) in influences.iter().zip(weights) {
-                        let node = joints[usize::from(joint)];
-                        if let Some(bone) = hidden
-                            .into_iter()
-                            .find(|&bone| weight > 0.0 && humanoid.node(bone) == node)
-                        {
-                            return Err(bone.name());
-                        }
-                    }
-                }
-            }
-            None => {
-                if let Some(bone) = hidden
-                    .into_iter()
-                    .find(|&bone| is_under(model, mesh.node, humanoid.node(bone)))
-                {
-                    return Err(bone.name());
-                }
-            }
+        let shown = match &mesh.skin {
+            Some(skin) => weighted_hidden_bone(model, humanoid, skin),
+            None => HIDDEN_BONES
+                .into_iter()
+                .find(|&bone| is_under(model, mesh.node, humanoid.node(bone))),
+        };
+        if let Some(bone) = shown {
+            return Err(BodyError::HeadInHeadlessBody {
+                file,
+                bone: bone.name(),
+            });
         }
     }
     Ok(())
 }
 
+/// The first head or neck bone that some vertex of `skin` weighs on.
+fn weighted_hidden_bone(model: &Model, humanoid: Humanoid, skin: &MeshSkin) -> Option<Bone> {
+    let joints = &model.skins()[skin.skin].joints;
+    skin.joints
+        .iter()
+        .zip(&skin.weights)
+        .flat_map(|(influences, weights)| influences.iter().zip(weights))
+        .filter(|&(_, &weight)| weight > 0.0)
+        .find_map(|(&joint, _)| {
+            let node = joints[usize::from(joint)];
+            HIDDEN_BONES
+                .into_iter()
+                .find(|&bone| humanoid.node(bone) == node)
+        })
+}
+
 /// The head bone's model-space height in `idle` at time 0.
-fn standing_head_height(model: &Model, humanoid: Humanoid) -> f32 {
-    let idle = model
-        .clip("idle")
-        .expect("check_rig played idle, so the model has it");
-    let pose = model.pose(idle, 0.0);
-    humanoid.bone(&pose, Bone::Head).translation.y
+fn standing_head_height(
+    file: &'static str,
+    model: &Model,
+    humanoid: Humanoid,
+) -> Result<f32, BodyError> {
+    let idle = ClipPlayer::new(model, "idle", Playback::Once)
+        .map_err(|source| BodyError::Clip { file, source })?;
+    Ok(humanoid.bone(&idle.pose(model), Bone::Head).translation.y)
 }
 
 #[cfg(test)]
