@@ -1,24 +1,37 @@
 //! A rig: slots that carry spare magazines.
 
-use crate::item::{ItemId, RigSpec};
+use crate::item::{ItemId, RigSpec, SlotKind};
 use crate::magazine::Magazine;
 
-/// A worn rig with a fixed number of magazine slots and a cursor for the next reload.
+/// A worn rig with a fixed number of magazine slots, each of a kind, and a cursor for the
+/// next reload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rig {
     item: ItemId,
     slots: Vec<Option<Magazine>>,
+    /// The kind of each slot, in slot order.
+    kinds: Vec<SlotKind>,
     /// Slot the next scan starts from; may equal the slot count, as the scan wraps it.
     next: usize,
+}
+
+/// The kind of each slot a rig of `spec` has, in slot order.
+fn kinds_of(spec: &RigSpec) -> Vec<SlotKind> {
+    spec.magazine_slots
+        .iter()
+        .flat_map(|(kind, &count)| std::iter::repeat_n(kind.clone(), count as usize))
+        .collect()
 }
 
 impl Rig {
     /// A rig of the item `item` with every slot free.
     #[must_use]
     pub fn new(item: ItemId, spec: &RigSpec) -> Self {
+        let kinds = kinds_of(spec);
         Self {
             item,
-            slots: vec![None; spec.magazine_slots as usize],
+            slots: vec![None; kinds.len()],
+            kinds,
             next: 0,
         }
     }
@@ -27,20 +40,40 @@ impl Rig {
     ///
     /// # Errors
     ///
-    /// Gives `slots` back when their number is not `spec.magazine_slots`.
+    /// Gives `slots` back when their number is not the number of slots `spec` lists.
     pub fn from_slots(
         item: ItemId,
         spec: &RigSpec,
         slots: Vec<Option<Magazine>>,
     ) -> Result<Self, Vec<Option<Magazine>>> {
-        if slots.len() != spec.magazine_slots as usize {
+        let kinds = kinds_of(spec);
+        if slots.len() != kinds.len() {
             return Err(slots);
         }
         Ok(Self {
             item,
             slots,
+            kinds,
             next: 0,
         })
+    }
+
+    /// The kind of slot `slot`; `None` when out of range.
+    #[must_use]
+    pub fn slot_kind(&self, slot: usize) -> Option<&SlotKind> {
+        self.kinds.get(slot)
+    }
+
+    /// Whether a slot of kind `kind` is free.
+    pub(crate) fn has_free_slot_for(&self, kind: &SlotKind) -> bool {
+        self.free_slot_for(kind).is_some()
+    }
+
+    fn free_slot_for(&self, kind: &SlotKind) -> Option<usize> {
+        self.slots
+            .iter()
+            .zip(&self.kinds)
+            .position(|(held, slot_kind)| held.is_none() && slot_kind == kind)
     }
 
     /// The item this rig is an instance of.
@@ -66,13 +99,13 @@ impl Rig {
         self.slots.iter().flatten()
     }
 
-    /// Puts `magazine` in the first free slot and returns its index.
+    /// Puts `magazine` in the first free slot of its kind and returns its index.
     ///
     /// # Errors
     ///
-    /// Gives the magazine back when no slot is free.
+    /// Gives the magazine back when no slot of its kind is free.
     pub fn stow(&mut self, magazine: Magazine) -> Result<usize, Magazine> {
-        match self.slots.iter().position(Option::is_none) {
+        match self.free_slot_for(magazine.slot()) {
             Some(index) => {
                 self.slots[index] = Some(magazine);
                 Ok(index)
@@ -116,16 +149,13 @@ impl Rig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::item::RigSpec;
     use crate::magazine::Magazine;
     use crate::test_support::{id, mag_of};
 
     fn rig_of(slots: u32) -> Rig {
         Rig::new(
             id("rig_chest"),
-            &RigSpec {
-                magazine_slots: slots,
-            },
+            &crate::test_support::rig_spec(&[("rifle", slots)]),
         )
     }
 
@@ -273,7 +303,7 @@ mod tests {
 
     #[test]
     fn from_slots_keeps_the_layout_when_it_matches_the_spec() {
-        let spec = RigSpec { magazine_slots: 3 };
+        let spec = crate::test_support::rig_spec(&[("rifle", 3)]);
 
         let rig = Rig::from_slots(id("rig_chest"), &spec, vec![None, Some(named("a")), None]);
 
@@ -282,7 +312,7 @@ mod tests {
 
     #[test]
     fn from_slots_with_the_wrong_number_of_slots_gives_them_back() {
-        let spec = RigSpec { magazine_slots: 2 };
+        let spec = crate::test_support::rig_spec(&[("rifle", 2)]);
 
         let rig = Rig::from_slots(id("rig_chest"), &spec, vec![Some(named("a")); 3]);
 
@@ -305,5 +335,79 @@ mod tests {
         let mut rig = rig_with(&[Some("a")]);
 
         rig.put(0, named("b"));
+    }
+
+    /// Slots run in the order of their kinds' names, as the table is sorted: `pistol` first.
+    fn kinded_rig(slots: &[(&str, u32)]) -> Rig {
+        Rig::new(id("rig_chest"), &crate::test_support::rig_spec(slots))
+    }
+
+    #[test]
+    fn a_magazine_takes_the_first_free_slot_of_its_kind() {
+        let cases = [("rifle", 1), ("pistol", 0)];
+        for (kind, expected) in cases {
+            let mut rig = kinded_rig(&[("rifle", 1), ("pistol", 1)]);
+
+            let slot = rig.stow(crate::test_support::mag_in_slot("m", "rifle", kind));
+
+            assert_eq!(slot, Ok(expected), "{kind}");
+            assert_eq!(rig.free_slots(), 1, "{kind}");
+            assert!(rig.slots()[expected].is_some(), "{kind}");
+        }
+
+        let mut rig = kinded_rig(&[("pistol", 1), ("rifle", 2)]);
+        let first = rig.stow(crate::test_support::mag_in_slot("a", "rifle", "rifle"));
+        let second = rig.stow(crate::test_support::mag_in_slot("b", "rifle", "rifle"));
+        assert_eq!(first, Ok(1));
+        assert_eq!(second, Ok(2));
+    }
+
+    #[test]
+    fn a_magazine_with_no_free_slot_of_its_kind_is_given_back_and_the_rig_is_unchanged() {
+        let mut rig = kinded_rig(&[("pistol", 1), ("rifle", 1)]);
+        rig.stow(crate::test_support::mag_in_slot("a", "rifle", "rifle"))
+            .expect("the rifle slot is free");
+        let before = rig.clone();
+        let another = crate::test_support::mag_in_slot("b", "rifle", "rifle");
+
+        let result = rig.stow(another.clone());
+
+        assert_eq!(result, Err(another));
+        assert_eq!(rig, before);
+        assert_eq!(rig.free_slots(), 1, "the pistol slot stays free");
+    }
+
+    #[test]
+    fn kinds_are_compared_by_exact_text() {
+        let mut rig = kinded_rig(&[("rifle", 1)]);
+        let shouted = crate::test_support::mag_in_slot("m", "rifle", "Rifle");
+
+        let result = rig.stow(shouted.clone());
+
+        assert_eq!(result, Err(shouted));
+        assert_eq!(rig.free_slots(), 1);
+    }
+
+    #[test]
+    fn restoring_a_magazine_into_a_slot_of_another_kind_keeps_it_there() {
+        let spec = crate::test_support::rig_spec(&[("pistol", 1)]);
+        let rifle = crate::test_support::mag_in_slot("m", "rifle", "rifle");
+
+        let rig = Rig::from_slots(id("rig_chest"), &spec, vec![Some(rifle.clone())])
+            .expect("the slot count matches");
+
+        assert_eq!(rig.slots(), [Some(rifle)]);
+        assert_eq!(rig.free_slots(), 0);
+    }
+
+    #[test]
+    fn a_magazine_of_a_kind_no_slot_has_fits_no_slot() {
+        let mut rig = kinded_rig(&[("rifle", 2)]);
+        let odd = crate::test_support::mag_in_slot("m", "rifle", "belt");
+
+        let result = rig.stow(odd.clone());
+
+        assert_eq!(result, Err(odd));
+        assert_eq!(rig.free_slots(), 2);
     }
 }

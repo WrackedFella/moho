@@ -2,12 +2,21 @@
 //! screen only shows and asks; the sim owns the items and applies every move.
 
 use moho_ui_shell::{ItemList, ItemLists, ListId};
-use searchlight_rules::{Item, LoadThresholds, Loadout, Magazine, Place, Remains, Source};
+use searchlight_rules::{
+    Item, LoadThresholds, Loadout, Magazine, Place, Remains, SlotKind, Source,
+};
 
 use crate::menu::{MenuAction, item_row};
 
-/// The label of a magazine slot with no magazine in it.
-pub const EMPTY_SLOT: &str = "(empty)";
+/// The label of a free magazine slot of kind `kind`, such as "Rifle slot · Empty".
+fn free_slot_label(kind: &SlotKind) -> String {
+    let mut letters = kind.as_str().chars();
+    let name: String = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default();
+    format!("{name} slot · Empty")
+}
 
 /// The worn rig and backpack; nothing in it moves.
 pub const EQUIPMENT: ListId = ListId(0);
@@ -22,7 +31,7 @@ pub const BODY: ListId = ListId(3);
 ///
 /// A row is labelled with its item's id; a magazine's count is its rounds and a stack of
 /// rounds' is its size. The magazine slots list has one row per slot, a free one labelled
-/// [`EMPTY_SLOT`] with no count.
+/// with its kind, such as "Rifle slot · Empty", and no count.
 pub fn gear_lists(loadout: &Loadout) -> ItemLists<MenuAction> {
     ItemLists {
         lists: vec![
@@ -146,7 +155,16 @@ fn entries(list: ListId, loadout: &Loadout, body: Option<&Remains>) -> Vec<Entry
             .enumerate()
             .map(|(slot, held)| match held {
                 Some(magazine) => Entry::of_magazine(magazine, Source::MagazineSlot(slot)),
-                None => Entry::new(EMPTY_SLOT, None, Some(Source::MagazineSlot(slot))),
+                None => Entry::new(
+                    free_slot_label(
+                        loadout
+                            .rig()
+                            .slot_kind(slot)
+                            .expect("every slot index of a rig has a kind"),
+                    ),
+                    None,
+                    Some(Source::MagazineSlot(slot)),
+                ),
             })
             .collect(),
         INVENTORY => loadout
@@ -202,22 +220,17 @@ fn list(
 
 #[cfg(test)]
 mod tests {
-    use searchlight_rules::{Item, ItemId, Place, Rig, RigSpec, Source};
+    use searchlight_rules::{Item, ItemId, Place, Rig, Source};
 
     use super::*;
-    use crate::test_support::{mag, rifle_from};
+    use crate::test_support::{mag, rifle_from, rig_spec};
 
     fn bandage() -> Item {
         Item::Other(ItemId::new("bandage"))
     }
 
     fn rig_with(slots: u32, held: usize) -> Rig {
-        let mut rig = Rig::new(
-            ItemId::new("test_rig"),
-            &RigSpec {
-                magazine_slots: slots,
-            },
-        );
+        let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(slots));
         for _ in 0..held {
             rig.stow(mag(30, 30)).expect("the rig has a free slot");
         }
@@ -386,7 +399,12 @@ mod tests {
 
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
-            ["test_mag", EMPTY_SLOT, EMPTY_SLOT, EMPTY_SLOT]
+            [
+                "test_mag",
+                "Test slot · Empty",
+                "Test slot · Empty",
+                "Test slot · Empty"
+            ]
         );
     }
 
@@ -394,7 +412,7 @@ mod tests {
     fn sparse_player() -> Loadout {
         let rig = Rig::from_slots(
             ItemId::new("test_rig"),
-            &RigSpec { magazine_slots: 4 },
+            &rig_spec(4),
             vec![None, Some(mag(30, 30)), None, Some(mag(30, 30))],
         )
         .expect("four slots for a four-slot spec");
@@ -409,7 +427,7 @@ mod tests {
             rig: Some(
                 Rig::from_slots(
                     ItemId::new("body_rig"),
-                    &RigSpec { magazine_slots: 3 },
+                    &rig_spec(3),
                     vec![Some(mag(30, 30)), None, Some(mag(30, 30))],
                 )
                 .expect("three slots for a three-slot spec"),
@@ -459,7 +477,12 @@ mod tests {
         );
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
-            [EMPTY_SLOT, "test_mag", EMPTY_SLOT, "test_mag"]
+            [
+                "Test slot · Empty",
+                "test_mag",
+                "Test slot · Empty",
+                "test_mag"
+            ]
         );
         assert_eq!(
             sources(&shown, INVENTORY, &loadout, Some(&remains)),
@@ -556,6 +579,64 @@ mod tests {
 
         assert_eq!(titles(&shown), ["Inventory", "Body"]);
         assert!(labels(&shown, BODY).is_empty());
+    }
+
+    #[test]
+    fn a_free_slot_label_capitalises_any_kind_without_panicking() {
+        let label = |kind: &str| free_slot_label(&SlotKind::new(kind));
+
+        assert_eq!(label("pistol"), "Pistol slot · Empty");
+        assert_eq!(label("écu"), "Écu slot · Empty");
+        assert_eq!(label("ß"), "SS slot · Empty");
+        assert_eq!(label(""), " slot · Empty");
+    }
+
+    #[test]
+    fn a_free_slot_row_reads_its_kind() {
+        let items = r#"
+[rifle]
+class = "weapon"
+size = [2, 5]
+weight = 3.4
+condition = 100
+weapon = { well = "rifle", fire = "semi_auto", cooldown_ticks = 6, reload_ticks = 120, charge_ticks = 30 }
+
+[mag_rifle]
+class = "gear"
+size = [1, 2]
+weight = 0.25
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 30, slot = "rifle" }
+
+[round_ball]
+class = "consumable"
+size = [1, 1]
+weight = 0.01
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0, damage = 30 }
+
+[rig_mixed]
+class = "gear"
+size = [3, 2]
+weight = 1.0
+rig = { magazine_slots = { rifle = 1, pistol = 1 } }
+"#;
+        let kits = "[start]\nrig = \"rig_mixed\"\nweapon = \"rifle\"\n\
+                    loaded = { magazine = \"mag_rifle\", round = \"round_ball\" }\n";
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        std::fs::write(dir.path().join("items.toml"), items).expect("items written");
+        std::fs::write(dir.path().join("kits.toml"), kits).expect("kits written");
+        let roots =
+            moho_core::content::ContentRoots::base(dir.path()).expect("the scratch content");
+        let loadout = crate::kit::load(&roots, crate::kit::START_KIT_ID)
+            .expect("a kit with a free pistol slot and a free rifle slot loads")
+            .loadout;
+
+        let shown = gear_lists(&loadout);
+
+        assert_eq!(
+            labels(&shown, MAGAZINE_SLOTS),
+            ["Pistol slot · Empty", "Rifle slot · Empty"],
+            "slots sort by kind"
+        );
     }
 
     const THRESHOLDS: LoadThresholds = LoadThresholds {

@@ -32,7 +32,7 @@ pub use grade::{Grade, GradeDials, UnknownGrade};
 pub use inventory::{Item, MoveRefused, Place, Remains, RoundStack, Source};
 pub use item::{
     BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, ItemStat, Lifecycle,
-    MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size,
+    MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size, SlotKind,
 };
 pub use kit::check_launch;
 pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};

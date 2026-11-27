@@ -182,7 +182,7 @@ charge_ticks = 30
 [mag_rifle]
 class = "gear"
 size = [1, 2]
-magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 30, slot = "rifle" }
 weight = 0.25
 
 [round_ball]
@@ -194,7 +194,7 @@ weight = 0.01
 [rig_chest]
 class = "gear"
 size = [3, 2]
-rig = { magazine_slots = 3 }
+rig = { magazine_slots = { rifle = 3 } }
 weight = 1.0
 
 [crowbar]
@@ -517,7 +517,7 @@ weight = 2.0
 [mag_rifle_20]
 class = "gear"
 size = [1, 2]
-magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 20, slot = "rifle" }
 weight = 0.2
 "#;
 
