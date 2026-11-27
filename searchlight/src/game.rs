@@ -1070,8 +1070,6 @@ pub struct SearchlightGame {
     controls: Option<ControlsDraft>,
     /// Ticks the rig strip stays up after the last trigger.
     strip_ticks_left: u32,
-    /// The check-gear key was held on the last tick, which keeps the strip up.
-    check_gear_held: bool,
     /// Outlines of every character's hit volumes are drawn; session state, off at every launch.
     hit_volumes: bool,
 }
@@ -1106,7 +1104,6 @@ impl SearchlightGame {
             queued_inventory: None,
             controls: None,
             strip_ticks_left: 0,
-            check_gear_held: false,
             hit_volumes: false,
         }
     }
@@ -1140,10 +1137,9 @@ impl SearchlightGame {
         self.stage.capture_cursor();
     }
 
-    /// Lets go of every held input and the check-gear hold that mirrors it.
+    /// Lets go of every held input.
     fn release_held_input(&mut self) {
         self.input.release_all();
-        self.check_gear_held = false;
     }
 
     fn pause(&mut self) {
@@ -1760,9 +1756,9 @@ impl SearchlightGame {
     }
 
     /// The marks the rig strip shows, or `None` while it is hidden: shown for the fade ticks
-    /// after a trigger and while check gear is held, and never off the playing screen.
+    /// after a trigger, and never off the playing screen.
     fn strip_marks(&self) -> Option<Vec<hud::SlotMark>> {
-        let up = self.strip_ticks_left > 0 || self.check_gear_held;
+        let up = self.strip_ticks_left > 0;
         (self.screen == Screen::Playing && up).then(|| hud::rig_strip(self.mode.sim().rig()))
     }
 
@@ -1930,7 +1926,6 @@ impl Game for SearchlightGame {
         self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
         self.strip_ticks_left = self.strip_ticks_left.saturating_sub(1);
-        self.check_gear_held = command.check_gear;
         let dt = ctx.tick_length.as_secs_f32();
         self.mode.tick(command, dt);
         self.previous_bob = self.bob;
@@ -3884,32 +3879,6 @@ mod tests {
         assert_eq!(long_after, None);
     }
 
-    #[test]
-    fn holding_check_gear_keeps_the_strip_until_release() {
-        let mut game = game_with_a_full_rig();
-        let mut clock = GameClock::new(0.0, 1.0, 1.0);
-        let hold = SearchlightCommand {
-            check_gear: true,
-            ..SearchlightCommand::default()
-        };
-        let before = game.strip_marks();
-
-        let mut while_held = Vec::new();
-        for _ in 0..crate::tuning::STRIP_FADE_TICKS + 30 {
-            tick_with(&mut game, &mut clock, &hold);
-            while_held.push(game.strip_marks().is_some());
-        }
-        idle_ticks(&mut game, &mut clock, 1);
-        let after_release = game.strip_marks();
-
-        assert_eq!(before, None, "the strip starts hidden");
-        assert!(
-            while_held.iter().all(|&showing| showing),
-            "hidden while held: {while_held:?}"
-        );
-        assert_eq!(after_release, None, "still showing after the release");
-    }
-
     /// What a fresh shell paints for the rig strip reading `text`, on a twin game's shell.
     fn painted_strip_reading(text: &str) -> Option<Vec<UiMesh>> {
         painted_texts(vec![
@@ -3943,25 +3912,16 @@ mod tests {
     #[test]
     fn the_strip_is_not_painted_for_a_dead_player() {
         let mut reloaded = game_with_a_full_rig();
-        let mut checking = game_with_a_full_rig();
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         finish_a_reload(&mut reloaded, &mut clock);
         let alive = prompt_shows(&mut reloaded);
-        let hold = SearchlightCommand {
-            check_gear: true,
-            ..SearchlightCommand::default()
-        };
 
         reloaded.mode.sim_mut().kill_player();
         idle_ticks(&mut reloaded, &mut clock, 1);
-        checking.mode.sim_mut().kill_player();
-        tick_with(&mut checking, &mut clock, &hold);
 
         assert!(alive, "no strip to take away");
         assert!(reloaded.sim().player_body().is_dead());
-        assert!(checking.sim().player_body().is_dead());
         assert!(!prompt_shows(&mut reloaded), "painted after a reload");
-        assert!(!prompt_shows(&mut checking), "painted for held check gear");
     }
 
     #[test]
@@ -4005,28 +3965,6 @@ mod tests {
             "the second reload did not renew the fade"
         );
         assert_eq!(at_the_fade, None, "the fades added up");
-    }
-
-    #[test]
-    fn check_gear_held_into_a_menu_does_not_show_the_strip_on_return() {
-        let mut paused = game_with_a_full_rig();
-        let mut console = game_with_a_full_rig();
-        let mut clock = GameClock::new(0.0, 1.0, 1.0);
-        let hold = SearchlightCommand {
-            check_gear: true,
-            ..SearchlightCommand::default()
-        };
-        tick_with(&mut paused, &mut clock, &hold);
-        tick_with(&mut console, &mut clock, &hold);
-        let held = paused.strip_marks().is_some();
-
-        paused.pause();
-        paused.enter_play();
-        open_the_console(&mut console, &clock);
-
-        assert!(held, "no strip to take away");
-        assert_eq!(paused.strip_marks(), None, "pause leaked the hold");
-        assert_eq!(console.strip_marks(), None, "the console leaked the hold");
     }
 
     #[test]

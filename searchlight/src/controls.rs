@@ -211,7 +211,6 @@ pub fn label(action: SearchlightAction) -> &'static str {
         SearchlightAction::Fire => "Fire",
         SearchlightAction::Reload => "Reload",
         SearchlightAction::CheckMagazine => "Check magazine",
-        SearchlightAction::CheckGear => "Check gear",
         SearchlightAction::Restart => "Restart",
         SearchlightAction::LeanLeft => "Lean left",
         SearchlightAction::LeanRight => "Lean right",
@@ -290,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_keeps_check_magazines_second_binding() {
+    fn a_primary_capture_replaces_check_magazines_hold_r() {
         let mut draft = draft();
 
         let outcome = draft.capture(
@@ -302,7 +301,7 @@ mod tests {
         assert_eq!(outcome, Capture::Set);
         assert_eq!(
             draft.bindings().get(SearchlightAction::CheckMagazine),
-            [Binding::key(Key::Z), Binding::key(Key::R).held()]
+            [Binding::key(Key::Z)]
         );
     }
 
@@ -636,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn a_secondary_capture_replaces_check_magazines_hold_r() {
+    fn a_secondary_capture_adds_beside_check_magazines_hold_r() {
         let mut draft = draft();
 
         let outcome = draft.capture(
@@ -648,7 +647,7 @@ mod tests {
         assert_eq!(outcome, Capture::Set);
         assert_eq!(
             draft.bindings().get(SearchlightAction::CheckMagazine),
-            [Binding::key(Key::C), Binding::key(Key::Z)]
+            [Binding::key(Key::R).held(), Binding::key(Key::Z)]
         );
     }
 
@@ -831,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_all_restores_check_magazines_two_defaults() {
+    fn reset_all_restores_check_magazines_hold_r_default() {
         let mut draft = draft();
         draft.capture(
             SearchlightAction::CheckMagazine,
@@ -845,7 +844,7 @@ mod tests {
 
         assert_eq!(
             draft.bindings().get(SearchlightAction::CheckMagazine),
-            [Binding::key(Key::C), Binding::key(Key::R).held()]
+            [Binding::key(Key::R).held()]
         );
         assert_eq!(draft.bindings(), defaults());
         assert!(!draft.is_unbound(SearchlightAction::Jump));
