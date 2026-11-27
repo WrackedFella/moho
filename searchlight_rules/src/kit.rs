@@ -182,8 +182,10 @@ impl KitDef {
     /// # Errors
     ///
     /// A [`KitError`] naming the offending item: unknown, of the wrong kind, a round of
-    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, or more
-    /// magazines than the rig has slots. Rig magazines that do not fit the weapon are allowed.
+    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, a round in a
+    /// magazine of the weapon's well that its barrel launches at a speed not finite or not above
+    /// [`crate::MIN_SPEED`], or more magazines than the rig has slots. Rig magazines that do not
+    /// fit the weapon are allowed.
     pub fn resolve<'a>(
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
