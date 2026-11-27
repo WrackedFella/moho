@@ -130,7 +130,7 @@ pub enum KitError {
         capacity: u32,
     },
     /// A carried entry names fields its item does not take, or lacks one it needs.
-    #[error("the entry for item \"{id}\" has fields its item does not take")]
+    #[error("the entry for item \"{id}\" has fields that do not fit its item")]
     EntryFields {
         /// The entry's item.
         id: ItemId,

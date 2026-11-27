@@ -436,6 +436,17 @@ mod feedback_tests {
     }
 
     #[test]
+    fn the_search_prompt_names_the_key_and_search_or_searching() {
+        let idle = search_prompt("F", false);
+        let under_way = search_prompt("F", true);
+        let unbound = search_prompt("unbound", false);
+
+        assert_eq!(idle, "[F] Search");
+        assert_eq!(under_way, "[F] Searching");
+        assert_eq!(unbound, "[unbound] Search");
+    }
+
+    #[test]
     fn the_status_line_shows_health() {
         assert_eq!(health_text(70, 100), "HP 70/100");
         assert_eq!(health_text(0, 100), "HP 0/100");

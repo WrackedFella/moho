@@ -1628,7 +1628,11 @@ impl SearchlightGame {
                     self.pause();
                     return routing;
                 }
-                if pressed && !repeat && self.is_inventory_key(input) {
+                if pressed
+                    && !repeat
+                    && self.is_inventory_key(input)
+                    && !self.mode.sim().player_body().is_dead()
+                {
                     self.open_inventory();
                     return routing;
                 }
@@ -7002,6 +7006,81 @@ mod tests {
         (game, clock)
     }
 
+    #[test]
+    fn the_prompt_reads_search_with_the_use_key_over_a_body_in_view() {
+        let (mut game, _clock) = game_beside_a_body();
+        assert_eq!(game.sim().body_in_view(), Some(0));
+
+        let paint = painted(&mut game);
+
+        let expected = painted_prompt_reading("[F] Search");
+        assert!(expected.as_ref().is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(paint, expected);
+    }
+
+    #[test]
+    fn the_prompt_reads_searching_while_the_search_is_under_way() {
+        let (mut game, mut clock) = game_beside_a_body();
+        let using = SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &using);
+        assert_eq!(game.sim().searching(), Some(0), "no search under way");
+
+        let paint = painted(&mut game);
+
+        assert_eq!(paint, painted_prompt_reading("[F] Searching"));
+        assert_ne!(paint, painted_prompt_reading("[F] Search"));
+    }
+
+    #[test]
+    fn no_search_prompt_shows_once_the_inventory_is_open() {
+        let opened_over_the_body = {
+            let (mut game, _clock) = game_beside_a_body();
+            let events_clock = GameClock::default();
+            let mut ctx = EventContext::new(&events_clock, None, None);
+            game.route_input(&mut ctx, TAB, true, false);
+            assert_eq!(game.screen, Screen::Inventory);
+            assert_eq!(game.sim().body_in_view(), Some(0));
+            painted(&mut game)
+        };
+        let opened_looking_away = {
+            let (mut game, mut clock) = game_beside_a_body();
+            tick_with(&mut game, &mut clock, &turn_around());
+            let events_clock = GameClock::default();
+            let mut ctx = EventContext::new(&events_clock, None, None);
+            game.route_input(&mut ctx, TAB, true, false);
+            assert_eq!(game.screen, Screen::Inventory);
+            assert_eq!(game.sim().body_in_view(), None);
+            painted(&mut game)
+        };
+
+        assert!(
+            opened_looking_away
+                .as_ref()
+                .is_some_and(|meshes| !meshes.is_empty())
+        );
+        assert_eq!(opened_over_the_body, opened_looking_away);
+    }
+
+    #[test]
+    fn the_inventory_key_does_nothing_while_dead() {
+        let (mut game, mut clock) = game_beside_a_body();
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        assert!(game.sim().player_body().is_dead());
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+
+        game.route_input(&mut ctx, TAB, true, false);
+        game.route_input(&mut ctx, Input::Key(Key::I), true, false);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!game.stage.shell().menu_mut().is_open());
+        assert_eq!(game.command().inventory, None);
+    }
+
     /// Searches the body of [`game_beside_a_body`] until the sim reports it open.
     fn search_the_body(game: &mut SearchlightGame, clock: &mut GameClock) {
         let using = SearchlightCommand {
@@ -9217,6 +9296,80 @@ mod enemy_and_hud_tests {
         assert_eq!(before, 3 * 7);
         assert_eq!(after, 7, "stale enemy models are still drawn");
         assert_eq!(stage.enemies.iter().filter(|rig| rig.shown).count(), 1);
+    }
+
+    /// Syncs the enemies and the bodies of `sim` onto `stage` and draws them.
+    fn drawn_with_bodies(
+        stage: &mut Stage,
+        renderer: &mut RecordingRenderer,
+        sim: &SearchlightSim,
+    ) -> Vec<(Vec3, Vec3, MaterialGpu)> {
+        stage.sync_enemies(sim);
+        stage.sync_bodies(sim);
+        stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        renderer.drawn()
+    }
+
+    fn tick_once(sim: &mut SearchlightSim, command: SearchlightCommand) {
+        sim.tick(&command, 1.0 / 60.0);
+    }
+
+    #[test]
+    fn a_dead_enemys_body_is_a_box_in_the_scene_at_its_point() {
+        let mut sim = lone_enemy();
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        let alive = drawn_with_bodies(&mut stage, &mut renderer, &sim);
+        sim.kill_enemy(0);
+        tick_once(&mut sim, SearchlightCommand::default());
+        let point = sim.bodies()[&0].point;
+
+        let dead = drawn_with_bodies(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(alive.len(), 7, "the living enemy is seven segments");
+        assert!(stage.shown_bodies.contains(&0));
+        assert_eq!(dead.len(), 1, "only the body box remains: {dead:?}");
+        let (centre, half, material) = dead[0];
+        assert!(
+            centre.distance(point + Vec3::Y * BODY_BOX_HALF.y) < 1e-4,
+            "the box is at {centre}, not on the body at {point}"
+        );
+        assert!(half.distance(BODY_BOX_HALF) < 1e-4, "{half}");
+        assert!(is_paint(material, Paint::Enemy), "not the enemy material");
+    }
+
+    #[test]
+    fn restarting_removes_the_boxes_of_bodies_that_no_longer_exist() {
+        let mut sim = lone_enemy();
+        let mut stage = Stage::new();
+        let mut renderer = RecordingRenderer::default();
+        sim.kill_enemy(0);
+        tick_once(&mut sim, SearchlightCommand::default());
+        let with_body = drawn_with_bodies(&mut stage, &mut renderer, &sim);
+        sim.kill_player();
+        tick_once(&mut sim, SearchlightCommand::default());
+        tick_once(
+            &mut sim,
+            SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+        );
+        assert!(sim.bodies().is_empty());
+
+        let after = drawn_with_bodies(&mut stage, &mut renderer, &sim);
+
+        assert_eq!(with_body.len(), 1, "no body box to take away");
+        assert!(stage.shown_bodies.is_empty());
+        assert_eq!(
+            after.len(),
+            7,
+            "only the standing enemy is drawn: {after:?}"
+        );
+        assert!(
+            after.iter().all(|(_, half, _)| *half != BODY_BOX_HALF),
+            "a stale body box is still drawn"
+        );
     }
 
     #[test]

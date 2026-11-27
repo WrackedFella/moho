@@ -632,9 +632,12 @@ impl SearchlightSim {
 
         self.fire_enemies(&firing, command.god_mode);
         self.remove_dead_enemies();
-        self.step_looting(command);
         if self.player_body.is_dead() {
+            // Death ends looting on the tick it happens: no queued move applies.
+            self.loot = LootState::Idle;
             self.outbox.push(Feedback::PlayerDied);
+        } else {
+            self.step_looting(command);
         }
     }
 
@@ -4377,6 +4380,105 @@ mod tests {
             "opened on the very tick of the press"
         );
         assert_eq!(sim.looting(), Some(0));
+    }
+
+    /// Where a second enemy stands, facing the player and out of the body's way.
+    const KILLER_AT: Vec3 = Vec3::new(-6.0, 0.0, 6.0);
+
+    /// A sim with a body at [`BODY_AT`] and a living enemy that shoots the player on sight
+    /// after a long reaction, for `damage` a shot. Searches take `search_ticks`.
+    fn sim_with_a_body_and_a_shooter(damage: u32, search_ticks: u32) -> SearchlightSim {
+        let mut config = test_config(rifle_with(30), vec![]);
+        config.enemy.patrol_speed = 0.0;
+        config.enemy.reaction_ticks = 60;
+        config.enemy.damage = damage;
+        config.enemy_remains = two_magazines();
+        config.search_ticks = search_ticks;
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[BODY_AT, KILLER_AT],
+            &[Vec3::new(-3.0, 0.0, 3.0)],
+        );
+        let mut sim = SearchlightSim::start(arena, config);
+        sim.tick(&idle(), DT);
+        sim.kill_enemy(0);
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        sim
+    }
+
+    /// The index, counted from the sim's start, of the tick on which the shooter kills a player
+    /// who does nothing.
+    fn death_tick() -> usize {
+        let mut sim = sim_with_a_body_and_a_shooter(100, SEARCH_TICKS);
+        (0..300)
+            .find(|_| {
+                sim.tick(&idle(), DT);
+                sim.drain_feedback().contains(&Feedback::PlayerDied)
+            })
+            .expect("the shooter never killed the player")
+    }
+
+    #[test]
+    fn a_move_queued_on_the_tick_the_player_dies_is_not_applied() {
+        let death = death_tick();
+        let mut sim = sim_with_a_body_and_a_shooter(100, 2);
+        look_down_at_the_body(&mut sim);
+        let (opened_on, _) = search(&mut sim, 30);
+        let elapsed = 1 + opened_on.expect("the search never finished") + 1;
+        assert!(elapsed < death, "the screen opens after the death tick");
+        for _ in elapsed..death {
+            sim.tick(&idle(), DT);
+        }
+        assert_eq!(sim.looting(), Some(0), "the screen is still open");
+        assert!(!sim.player_body().is_dead());
+        sim.drain_feedback();
+
+        sim.tick(&taking_the_first_item(), DT);
+
+        assert!(sim.drain_feedback().contains(&Feedback::PlayerDied));
+        assert_eq!(sim.loadout().inventory().len(), 0, "{:?}", sim.loadout());
+        assert_eq!(sim.bodies()[&0].remains, two_magazines());
+    }
+
+    /// Presses use so a `search_ticks` search would finish on tick `finish` of a sim whose
+    /// shooter does `damage` a shot, and returns each tick's feedback up to and including it.
+    fn feedback_of_a_search_finishing_on(
+        finish: usize,
+        damage: u32,
+        search_ticks: u32,
+    ) -> Vec<Vec<Feedback>> {
+        let mut sim = sim_with_a_body_and_a_shooter(damage, search_ticks);
+        look_down_at_the_body(&mut sim);
+        let press = finish - usize::try_from(search_ticks).unwrap();
+        (1..=finish)
+            .map(|tick| {
+                let command = if tick == press { using() } else { idle() };
+                sim.tick(&command, DT);
+                sim.drain_feedback()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_search_finishing_on_the_tick_the_player_dies_opens_nothing() {
+        let death = death_tick();
+        let ticks = 20;
+        // The same schedule against a shooter that cannot kill finishes the search on `death`.
+        let control = feedback_of_a_search_finishing_on(death, 1, ticks);
+        let last = control.last().expect("the schedule has ticks");
+        assert!(opened(last), "the schedule misses the finish: {control:?}");
+
+        let lethal = feedback_of_a_search_finishing_on(death, 100, ticks);
+
+        let last = lethal.last().expect("the schedule has ticks");
+        assert!(last.contains(&Feedback::PlayerDied), "{lethal:?}");
+        assert!(!opened(last), "{lethal:?}");
+        assert!(
+            !last.contains(&Feedback::SearchCancelled),
+            "death ends the search without a word: {lethal:?}"
+        );
     }
 
     #[test]
