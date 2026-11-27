@@ -61,6 +61,13 @@ on:
       devflow_ref:
         description: claude-skills branch or SHA to load devflow from (empty for the marketplace's main)
         required: false
+      bash_output_max_chars:
+        description: Claude Code `bashOutputMaxChars` setting for the replay (empty for the default)
+        required: false
+      exclude_dynamic:
+        description: Pass --exclude-dynamic-system-prompt-sections to the replay
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -169,6 +176,14 @@ jobs:
           git fetch origin "eval-base/$ID:refs/remotes/origin/eval-base/$ID"
           echo "MODEL_ARG=$([ '${{ inputs.model }}' = default ] || echo '--model ${{ inputs.model }}')" >> "$GITHUB_ENV"
           echo "BASE_DATE=$(git show -s --format=%cI "$BASE_SHA")" >> "$GITHUB_ENV"
+      # Context-cut candidates (D0041): settings only, no devflow change.
+      - name: Context settings
+        env:
+          MAX_CHARS: ${{ inputs.bash_output_max_chars }}
+        run: |
+          [[ -z $MAX_CHARS || $MAX_CHARS =~ ^[0-9]+$ ]] || { echo "::error::bash_output_max_chars must be a number"; exit 1; }
+          [ -z "$MAX_CHARS" ] || echo "SETTINGS_ARG=--settings '{\"bashOutputMaxChars\":$MAX_CHARS}'" >> "$GITHUB_ENV"
+          [ '${{ inputs.exclude_dynamic }}' != true ] || echo "EXCLUDE_DYNAMIC_ARG=--exclude-dynamic-system-prompt-sections" >> "$GITHUB_ENV"
       # An unmerged devflow change is measured from a clone loaded with --plugin-dir, so a
       # set never needs a merge into claude-skills main before it is scored.
       - name: Devflow source
@@ -218,6 +233,8 @@ jobs:
           claude_args: |
             ${{ env.MODEL_ARG }}
             ${{ env.PLUGIN_ARG }}
+            ${{ env.SETTINGS_ARG }}
+            ${{ env.EXCLUDE_DYNAMIC_ARG }}
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The replay starts at ${{ env.BASE_DATE }}: issues, pull requests and comments created after that did not exist yet, so ignore them wherever you or a subagent read the tracker, and put this sentence in every subagent brief. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, start the final report with the line 'Paused: needs a human answer', then the numbered questions, and stop.${{ inputs.intake_only && ' INTAKE ONLY: this replay measures step 1 alone. Skip the claim and the environment setup command, run step 1 through its conformance check, then end the run without starting step 2 and without pushing. If the check pauses, end as a pause above; otherwise start the final report with the line Intake: proceed, then the unconfirmed findings it reported, if any. The Stop hook will name steps 2 to 11 as missing: this override exempts them, so say so and stop.' || '' }}"
             --add-dir /home/runner/.claude/plugins/cache /home/runner/work/_temp/claude-skills /tmp
@@ -361,4 +378,5 @@ jobs:
           gh workflow run orchestrate-eval.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
             -f label="${LABEL%-a[0-9]*}-a$((ATTEMPT + 1))" -f replays="$replays" \
             -f model='${{ inputs.model }}' -f review='${{ inputs.review }}' -f attempt="$((ATTEMPT + 1))" \
-            -f intake_only='${{ inputs.intake_only }}' -f devflow_ref='${{ inputs.devflow_ref }}'
+            -f intake_only='${{ inputs.intake_only }}' -f devflow_ref='${{ inputs.devflow_ref }}' \
+            -f bash_output_max_chars='${{ inputs.bash_output_max_chars }}' -f exclude_dynamic='${{ inputs.exclude_dynamic }}'
