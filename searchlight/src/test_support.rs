@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, control_mesh_id, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -68,6 +69,25 @@ pub(crate) fn world_with(boxes: &[(Vec3, Vec3)]) -> PhysicsWorld {
             &box_mesh(min, max),
             SurfaceTag::World.into(),
         );
+    }
+    world.step(DT);
+    world
+}
+
+/// A 60 m floor (top at y = 0) and one `World` box per `(min, max)` pair in `boxes`, plus one
+/// `Control`-tagged box per pair in `controls`, numbered in order; stepped once.
+pub(crate) fn world_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    controls: &[(Vec3, Vec3)],
+) -> PhysicsWorld {
+    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    let solids: Vec<(Vec3, Vec3)> = std::iter::once(floor)
+        .chain(boxes.iter().copied())
+        .collect();
+    let mut world = world_with(&solids);
+    for (index, &(min, max)) in controls.iter().enumerate() {
+        let tag = SurfaceTag::Control(u16::try_from(index).expect("a handful of test controls"));
+        world.set_world_mesh(control_mesh_id(index), &box_mesh(min, max), tag.into());
     }
     world.step(DT);
     world
@@ -225,6 +245,18 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// [`arena_with`] plus one next-wave control per `(min, max)` box in `controls`, numbered in
+/// order. Test controls may be taller than the real post, so a level ray from the eye meets them.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
@@ -241,7 +273,31 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls: controls
+            .iter()
+            .map(|&(min, max)| ArenaControl {
+                action: ControlAction::NextWave,
+                mesh: box_mesh(min, max),
+            })
+            .collect(),
     })
+}
+
+/// A control box 0.4 m square and 2 m tall whose near face is `distance` m in front of the
+/// origin along +Z, centred on x = 0: taller than the standing eye, so a level look meets it.
+pub(crate) fn control_ahead(distance: f32) -> (Vec3, Vec3) {
+    (
+        Vec3::new(-0.2, 0.0, distance),
+        Vec3::new(0.2, 2.0, distance + 0.4),
+    )
+}
+
+/// A wall 4 m tall across the view, its near face `distance` m ahead of the origin along +Z.
+pub(crate) fn wall_ahead(distance: f32) -> (Vec3, Vec3) {
+    (
+        Vec3::new(-3.0, 0.0, distance),
+        Vec3::new(3.0, 4.0, distance + 0.2),
+    )
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

@@ -22,6 +22,7 @@ pub enum SearchlightAction {
     Restart,
     LeanLeft,
     LeanRight,
+    Use,
 }
 
 impl Action for SearchlightAction {
@@ -37,6 +38,7 @@ impl Action for SearchlightAction {
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
+        SearchlightAction::Use,
     ];
 
     fn name(self) -> &'static str {
@@ -52,6 +54,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
+            SearchlightAction::Use => "use",
         }
     }
 
@@ -70,6 +73,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
+            SearchlightAction::Use => const { &[Binding::key(Key::F)] },
         }
     }
 }
@@ -127,6 +131,8 @@ pub struct SearchlightCommand {
     pub check: bool,
     /// The restart input went down this tick.
     pub restart: bool,
+    /// The use input went down this tick.
+    pub use_pressed: bool,
     /// God mode is on: a level, carried on every tick like a pause.
     pub god_mode: bool,
     /// The grade every enemy spawned this tick gets, or `None` for the normal grade: a level,
@@ -189,6 +195,7 @@ impl SearchlightCommand {
             reload: frame.pressed(SearchlightAction::Reload),
             check: frame.pressed(SearchlightAction::CheckMagazine),
             restart: frame.pressed(SearchlightAction::Restart),
+            use_pressed: false,
             god_mode: false,
             forced_grade: None,
             lean: None,
@@ -390,6 +397,39 @@ mod tests {
             [true, false, false, true]
         );
         assert!(!pressed.fire && !pressed.reload && !pressed.check);
+    }
+
+    #[test]
+    fn use_defaults_to_f_and_sets_use_pressed_on_its_press() {
+        let mut map = fresh_map();
+        map.key(Key::F, true);
+
+        let pressed = SearchlightCommand::from_frame(&map.end_tick());
+        let held = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, true);
+        let again = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, false);
+        map.key(Key::E, true);
+        let lean_key = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert_eq!(SearchlightAction::Use.name(), "use");
+        assert_eq!(
+            SearchlightAction::Use.default_bindings(),
+            [Binding::key(Key::F)]
+        );
+        assert_eq!(
+            [
+                pressed.use_pressed,
+                held.use_pressed,
+                released.use_pressed,
+                again.use_pressed
+            ],
+            [true, false, false, true]
+        );
+        assert!(!lean_key.use_pressed);
+        assert!(!pressed.fire && !pressed.reload && !pressed.check && !pressed.restart);
     }
 
     #[test]

@@ -29,6 +29,7 @@ use moho_ui_shell::{
     apply_engine_settings,
 };
 
+use crate::arena::ArenaControl;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -96,6 +97,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +117,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -957,6 +960,20 @@ impl SearchlightGame {
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
         self
+    }
+
+    /// Draws `controls` as posts in [`Paint::Control`] and remembers what each does, so the
+    /// prompt can name it.
+    #[must_use]
+    pub fn with_controls(self, controls: &[ArenaControl]) -> Self {
+        let _ = controls;
+        self
+    }
+
+    /// What the use prompt reads now, or `None` while no control is looked at within reach, or
+    /// the game is not being played.
+    pub fn use_prompt_text(&self) -> Option<String> {
+        None
     }
 
     /// Plays the sound file at `path` for every shot fired.
@@ -5340,5 +5357,160 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    use glam::Vec3;
+    use moho_app::GameClock;
+    use moho_input::bindings::ActionBindings;
+    use moho_physics::CharacterCommand;
+
+    use super::*;
+    use crate::arena::{arena_mesh_id, control_mesh_id};
+    use crate::test_support::{
+        arena_with_controls, control_ahead, mag, rifle_from, test_config, wave_tuning,
+    };
+
+    fn game_with(
+        bindings: &BTreeMap<String, String>,
+        controls_at: &[(Vec3, Vec3)],
+    ) -> SearchlightGame {
+        let arena = arena_with_controls(&[], Vec3::ZERO, &[], &[], controls_at);
+        let mode = ArenaMode::new(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(bindings);
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0)).with_controls(&arena.controls)
+    }
+
+    fn control_game() -> SearchlightGame {
+        game_with(&BTreeMap::new(), &[control_ahead(1.5)])
+    }
+
+    fn tick(game: &mut SearchlightGame, command: &SearchlightCommand) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(1.0 / 60.0),
+            clock: &mut clock,
+        };
+        game.tick(&mut ctx, command);
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let game = control_game();
+
+        let prompt = game.use_prompt_text();
+
+        assert_eq!(prompt.as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn the_prompt_names_the_key_the_use_action_is_bound_to() {
+        let rebound = BTreeMap::from([("use".to_owned(), "G".to_owned())]);
+        let game = game_with(&rebound, &[control_ahead(1.5)]);
+
+        let prompt = game.use_prompt_text();
+
+        assert_eq!(prompt.as_deref(), Some("[G] Next wave"));
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = control_game();
+        let facing_it = game.use_prompt_text();
+
+        tick(
+            &mut game,
+            &SearchlightCommand {
+                movement: CharacterCommand {
+                    yaw_delta: std::f32::consts::FRAC_PI_2,
+                    ..CharacterCommand::default()
+                },
+                ..SearchlightCommand::default()
+            },
+        );
+
+        assert_eq!(facing_it.as_deref(), Some("[F] Next wave"));
+        assert_eq!(game.use_prompt_text(), None);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = control_game();
+        let mut paused = control_game();
+        let menu = control_game().with_main_menu();
+        let showing = (dead.use_prompt_text(), paused.use_prompt_text());
+
+        dead.mode.sim_mut().kill_player();
+        tick(&mut dead, &SearchlightCommand::default());
+        paused.pause();
+
+        assert_eq!(
+            showing,
+            (
+                Some("[F] Next wave".to_owned()),
+                Some("[F] Next wave".to_owned())
+            )
+        );
+        assert!(dead.mode.sim().player_body().is_dead());
+        assert_eq!(dead.use_prompt_text(), None);
+        assert_eq!(paused.use_prompt_text(), None);
+        assert_eq!(menu.use_prompt_text(), None);
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let arena_ids = 0..DUMMY_MESH_BASE;
+        let dummy_ids = DUMMY_MESH_BASE..ENEMY_MESH_BASE;
+        let enemy_ids =
+            ENEMY_MESH_BASE..ENEMY_MESH_BASE + (u64::from(u16::MAX) + 1) * ENEMY_MESH_SLOTS;
+        let indices = [0usize, 1, 2, 255, 256, 65_535];
+
+        let ids: Vec<u64> = indices.iter().map(|&i| control_mesh_id(i).0).collect();
+
+        for id in &ids {
+            assert!(!arena_ids.contains(id), "{id} is an arena id");
+            assert!(!dummy_ids.contains(id), "{id} is a dummy id");
+            assert!(!enemy_ids.contains(id), "{id} is an enemy id");
+        }
+        let mut distinct = ids.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            ids.len(),
+            "two controls share an id: {ids:?}"
+        );
+        assert_ne!(arena_mesh_id(0), control_mesh_id(0));
+    }
+
+    #[test]
+    fn the_control_paint_stands_out_from_every_other_paint() {
+        let control = Paint::Control.to_gpu();
+
+        for other in [
+            Paint::Arena,
+            Paint::ArenaFloor,
+            Paint::Dummy,
+            Paint::Enemy,
+            Paint::Struck,
+            Paint::ArenaMark,
+        ] {
+            let gpu = other.to_gpu();
+            assert!(
+                gpu.albedo != control.albedo || gpu.params != control.params,
+                "{other:?} draws like a control"
+            );
+        }
+        assert_ne!(Paint::Control.dedup_key(), Paint::Arena.dedup_key());
     }
 }

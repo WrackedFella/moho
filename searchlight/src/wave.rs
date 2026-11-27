@@ -158,6 +158,13 @@ impl WaveState {
         spawn
     }
 
+    /// Starts the next wave when the running one is cleared (nothing left to spawn and none
+    /// alive) and returns whether it did; otherwise changes nothing.
+    pub fn call_next(&mut self, tuning: &WaveTuning, alive: usize) -> bool {
+        let _ = (tuning, alive);
+        todo!("call_next is not implemented")
+    }
+
     /// Gives back `count` enemies that [`step`](Self::step) asked for but that could not be
     /// spawned, so they stay to come.
     pub fn unspawned(&mut self, count: u32) {
@@ -218,6 +225,60 @@ mod tests {
         assert_eq!(state.score(), 20);
         assert_eq!(second, 5);
         assert_eq!(state.to_spawn(), 0);
+    }
+
+    #[test]
+    fn a_cleared_wave_does_not_advance_on_its_own() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+
+        let spawned = state.step(&tuning, 2, 0, 10);
+        let later = state.step(&tuning, 0, 0, 10);
+
+        assert_eq!((spawned, later), (0, 0));
+        assert_eq!(state.wave(), 1);
+        assert_eq!(state.to_spawn(), 0);
+        assert_eq!(state.score(), 20);
+    }
+
+    #[test]
+    fn calling_a_cleared_wave_starts_the_next() {
+        let tuning = tuning(2, 3, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 2);
+
+        let called = state.call_next(&tuning, 0);
+        let spawned = state.step(&tuning, 0, 0, 10);
+
+        assert!(called);
+        assert_eq!(state.wave(), 2);
+        assert_eq!(state.grades().size(), 5);
+        assert_eq!(spawned, 5);
+    }
+
+    #[test]
+    fn calling_with_enemies_alive_or_to_come_does_nothing() {
+        let tuning = tuning(3, 2, 10);
+        let mut state = WaveState::begin(&tuning);
+        let before_any_spawn = state;
+        state.step(&tuning, 0, 0, 1);
+        let with_some_to_come = state;
+
+        let to_come = state.call_next(&tuning, 0);
+        let mut alive = WaveState::begin(&tuning);
+        alive.step(&tuning, 0, 0, 3);
+        let alive_before = alive;
+        let while_alive = alive.call_next(&tuning, 1);
+        let mut fresh = before_any_spawn;
+        let before_spawn = fresh.call_next(&tuning, 0);
+
+        assert!(!to_come);
+        assert!(!while_alive);
+        assert!(!before_spawn);
+        assert_eq!(state, with_some_to_come);
+        assert_eq!(alive, alive_before);
+        assert_eq!(fresh, before_any_spawn);
     }
 
     #[test]
