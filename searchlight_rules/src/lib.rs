@@ -30,6 +30,7 @@ pub use item::{
     BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle,
     MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size,
 };
+pub use kit::check_launch;
 pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};
 pub use loadout::Loadout;
 pub use magazine::{Magazine, MagazineError, MagazineLevel};

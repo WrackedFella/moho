@@ -322,7 +322,12 @@ impl KitDef {
 
 /// Refuses a round that `weapon`'s barrel launches at a speed that is not finite or is not above
 /// [`MIN_SPEED`], naming the weapon item `weapon_id` and the round item `round_id`.
-fn check_launch(
+///
+/// # Errors
+///
+/// [`KitError::NotFiniteFromWeapon`] when the scaled muzzle velocity overflows, else
+/// [`KitError::TooSlowFromWeapon`] when it is at or below [`MIN_SPEED`].
+pub fn check_launch(
     weapon_id: &ItemId,
     weapon: &RifleDef,
     round_id: &ItemId,

@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use moho_core::content::{ContentError, ContentRoots, load_kind};
-use searchlight_rules::{ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats};
+use searchlight_rules::{
+    ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats, check_launch,
+};
 use thiserror::Error;
 
 /// The id of the kit a run starts with.
@@ -41,6 +43,44 @@ pub fn load_enemy(
     kit: &str,
 ) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
     resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup))
+}
+
+/// Loads `items` and `kits` through `roots` once and resolves the kit `start` as the player's
+/// and the kit `enemy` as the gear of a dead enemy, with the ballistics and damage of every
+/// round the enemy kit names.
+///
+/// The player may fire any looted round, and the round's magazine well is not known once the
+/// rounds are joined, so every enemy round is checked against the player's barrel, whether
+/// or not the player's weapon could take its magazine.
+///
+/// # Errors
+///
+/// As [`load`] and [`load_enemy`]; also [`KitLoadError::Kit`] for `enemy` with
+/// [`KitError::TooSlowFromWeapon`] or [`KitError::NotFiniteFromWeapon`], naming the player's
+/// weapon and the round, when the player's barrel launches an enemy round too slowly or at a
+/// speed that is not finite.
+pub fn load_start_and_enemy(
+    roots: &ContentRoots,
+    start: &str,
+    enemy: &str,
+) -> Result<(Kit, Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
+    let items = load_kind::<ItemDef>(roots, "items")?;
+    let kits = load_kind::<KitDef>(roots, "kits")?;
+    let lookup = |id: &ItemId| items.get(id.as_str());
+    let kit_error = |kit: &str| {
+        let kit = kit.to_owned();
+        move |source| KitLoadError::Kit { kit, source }
+    };
+    let start_def = kits.require(start)?;
+    let enemy_def = kits.require(enemy)?;
+    let kit = start_def.resolve(lookup).map_err(kit_error(start))?;
+    let (remains, rounds) = enemy_def
+        .resolve_remains(lookup)
+        .map_err(kit_error(enemy))?;
+    for (round, stats) in &rounds {
+        check_launch(&start_def.weapon, &kit.weapon, round, stats).map_err(kit_error(enemy))?;
+    }
+    Ok((kit, remains, rounds))
 }
 
 /// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`.
@@ -530,6 +570,107 @@ carried = [{ item = "bandage" }]
         assert_eq!(ball.ballistics.muzzle_velocity, 940.0);
         assert_eq!(ball.ballistics.drag, 1.0);
         assert_eq!(ball.damage, 30);
+    }
+
+    const CARBINE_AND_SLOW_ROUND: &str = r#"
+[carbine]
+class = "weapon"
+size = [2, 4]
+condition = 100
+weight = 2.5
+[carbine.weapon]
+well = "rifle"
+fire = "semi_auto"
+cooldown_ticks = 6
+reload_ticks = 120
+charge_ticks = 30
+
+[round_slow]
+class = "consumable"
+size = [1, 1]
+weight = 0.01
+round = { caliber = "5.56x45", muzzle_velocity = 150.0, drag = 1.0, damage = 20 }
+"#;
+
+    /// A player rifle with a 0.5 barrel and an enemy carbine with the default barrel that
+    /// holds `enemy_round`.
+    fn looting_content(enemy_round: &str) -> (tempfile::TempDir, ContentRoots) {
+        let items = items_toml().replace(
+            "charge_ticks = 30",
+            "charge_ticks = 30\nmuzzle_velocity_factor = 0.5",
+        );
+        let enemy = format!(
+            "[enemy]\nrig = \"rig_chest\"\nweapon = \"carbine\"\nloaded = {{ magazine = \"mag_rifle\", round = \"{enemy_round}\" }}\n"
+        );
+        base_with(
+            &format!("{items}{CARBINE_AND_SLOW_ROUND}"),
+            &format!("{}{enemy}", start_kit(2)),
+        )
+    }
+
+    #[test]
+    fn a_looted_round_the_players_barrel_slows_to_the_minimum_speed_is_refused() {
+        let (_dir, roots) = looting_content("round_slow");
+
+        let Err(error) = load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID) else {
+            panic!("a 150 m/s round from a 0.5 barrel loaded");
+        };
+
+        let KitLoadError::Kit { kit, source } = &error else {
+            panic!("expected a kit error, got {error:?}");
+        };
+        assert_eq!(kit, ENEMY_KIT_ID);
+        assert!(
+            matches!(
+                source,
+                KitError::TooSlowFromWeapon { weapon, round }
+                    if *weapon == ItemId::new("rifle") && *round == ItemId::new("round_slow")
+            ),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_looted_round_the_players_barrel_overflows_is_refused() {
+        let items = items_toml().replace(
+            "charge_ticks = 30",
+            "charge_ticks = 30\nmuzzle_velocity_factor = 1e10",
+        );
+        let huge = "\n[round_huge]\nclass = \"consumable\"\nsize = [1, 1]\nweight = 0.01\nround = { caliber = \"5.56x45\", muzzle_velocity = 1e30, drag = 1.0, damage = 20 }\n";
+        let enemy = "[enemy]\nrig = \"rig_chest\"\nweapon = \"carbine\"\nloaded = { magazine = \"mag_rifle\", round = \"round_huge\" }\n";
+        let (_dir, roots) = base_with(
+            &format!("{items}{CARBINE_AND_SLOW_ROUND}{huge}"),
+            &format!("{}{enemy}", start_kit(2)),
+        );
+
+        let Err(error) = load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID) else {
+            panic!("a round that overflows the player's barrel loaded");
+        };
+
+        let KitLoadError::Kit { kit, source } = &error else {
+            panic!("expected a kit error, got {error:?}");
+        };
+        assert_eq!(kit, ENEMY_KIT_ID);
+        assert!(
+            matches!(
+                source,
+                KitError::NotFiniteFromWeapon { weapon, round }
+                    if *weapon == ItemId::new("rifle") && *round == ItemId::new("round_huge")
+            ),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_looted_round_fast_enough_for_the_players_barrel_is_accepted() {
+        let (_dir, roots) = looting_content("round_ball");
+
+        let (start, remains, rounds) =
+            load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID).expect("both kits load");
+
+        assert_eq!(start.weapon.muzzle_velocity_factor.get(), 0.5);
+        assert!(matches!(remains.carried.first(), Some(Item::Weapon(_))));
+        assert!(rounds.contains_key(&ItemId::new("round_ball")));
     }
 
     #[test]
