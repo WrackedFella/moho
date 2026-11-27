@@ -30,7 +30,7 @@ impl Ballistics {
     pub fn through_barrel(self, factor: VelocityFactor) -> Self {
         Self {
             muzzle_velocity: self.muzzle_velocity * factor.get(),
-            drag: self.drag,
+            ..self
         }
     }
 }
