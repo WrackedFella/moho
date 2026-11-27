@@ -1,6 +1,6 @@
 //! Magazine capacity, rounds and the approximate fill level.
 
-use crate::item::{Caliber, ItemId, MagazineSpec, MagazineWell};
+use crate::item::{Caliber, ItemId, MagazineSpec, MagazineWell, SlotKind};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -46,6 +46,8 @@ pub struct Magazine {
     item: ItemId,
     well: MagazineWell,
     caliber: Caliber,
+    /// Boxed so a magazine handed back in an `Err` stays under clippy's size limit.
+    slot: Box<SlotKind>,
     capacity: u32,
     /// Last loaded is last in the vector and fires first.
     rounds: Vec<ItemId>,
@@ -57,6 +59,7 @@ struct RawMagazine {
     item: ItemId,
     well: MagazineWell,
     caliber: Caliber,
+    slot: SlotKind,
     capacity: u32,
     rounds: Vec<ItemId>,
 }
@@ -82,6 +85,7 @@ impl TryFrom<RawMagazine> for Magazine {
             item: raw.item,
             well: raw.well,
             caliber: raw.caliber,
+            slot: Box::new(raw.slot),
             capacity: raw.capacity,
             rounds: raw.rounds,
         })
@@ -96,6 +100,7 @@ impl Magazine {
             item,
             well: spec.well.clone(),
             caliber: spec.caliber.clone(),
+            slot: Box::new(spec.slot.clone()),
             capacity: spec.capacity,
             rounds: Vec::new(),
         }
@@ -154,6 +159,12 @@ impl Magazine {
     #[must_use]
     pub fn caliber(&self) -> &Caliber {
         &self.caliber
+    }
+
+    /// The kind of rig slot it takes.
+    #[must_use]
+    pub fn slot(&self) -> &SlotKind {
+        &self.slot
     }
 
     /// Maximum rounds the magazine holds.
@@ -354,7 +365,7 @@ mod tests {
 
     #[test]
     fn deserialize_rejects_rounds_over_capacity() {
-        let json = r#"{"item":"mag","well":"rifle","caliber":"5.56x45","capacity":2,"rounds":["a","b","c"]}"#;
+        let json = r#"{"item":"mag","well":"rifle","caliber":"5.56x45","slot":"rifle","capacity":2,"rounds":["a","b","c"]}"#;
 
         let result = serde_json::from_str::<Magazine>(json);
 

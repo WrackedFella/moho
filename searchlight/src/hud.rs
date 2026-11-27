@@ -245,9 +245,7 @@ mod tests {
     fn rig_holding(slots: u32, magazines: Vec<searchlight_rules::Magazine>) -> Rig {
         let mut rig = Rig::new(
             searchlight_rules::ItemId::new("test_rig"),
-            &searchlight_rules::RigSpec {
-                magazine_slots: slots,
-            },
+            &crate::test_support::rig_spec(slots),
         );
         for magazine in magazines {
             rig.stow(magazine).expect("the rig has a slot per magazine");
