@@ -25,10 +25,11 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
-    apply_engine_settings,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    apply_engine_command, apply_engine_settings,
 };
 
+use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -67,6 +68,10 @@ const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
 const SHOT_VOLUME: f32 = 0.8;
+/// Size of the use prompt's text, in logical points.
+const PROMPT_SIZE: f32 = 22.0;
+/// How far below the screen centre the use prompt sits, in logical points.
+const PROMPT_OFFSET_Y: f32 = 48.0;
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
 fn aspect_ratio(width: u32, height: u32) -> f32 {
@@ -96,6 +101,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +121,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.2, 0.8, 0.4], [0.15, 0.65, 0.3], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -146,49 +153,6 @@ impl Renderable for NoActor {
     fn to_instance_with_material(&self, _material_index: u32) -> InstanceGpu {
         match *self {}
     }
-}
-
-/// A closed box with outward-facing triangles and a normal per face.
-fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
-    oriented_box_mesh(centre, half, Quat::IDENTITY)
-}
-
-/// [`box_mesh`] with its axes turned by `rotation` about its centre.
-fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
-    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
-    // seen from outside.
-    const FACES: [(Vec3, Vec3, Vec3); 6] = [
-        (Vec3::X, Vec3::Y, Vec3::Z),
-        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-        (Vec3::Y, Vec3::Z, Vec3::X),
-        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
-    ];
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    for (normal, u, v) in FACES {
-        let first = positions.len() as u32;
-        let (du, dv) = (u * half, v * half);
-        let face_centre = centre + rotation * (normal * half);
-        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
-            positions.push((face_centre + rotation * corner).to_array());
-            normals.push((rotation * normal).to_array());
-        }
-        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
-    }
-    let count = positions.len();
-    WorldMesh::new(
-        positions,
-        normals,
-        vec![1.0; count],
-        vec![[0.0; 3]; count],
-        vec![1.0; count],
-        vec![0; count],
-        indices,
-    )
-    .expect("a box has matching channels and whole triangles")
 }
 
 /// One drawn body part of a dummy, lit while it flashes.
@@ -508,6 +472,17 @@ impl Stage {
                 segment.mesh.clone(),
                 self.dummy_material,
             );
+        }
+    }
+
+    /// Draws `meshes` as the arena's controls, the first under [`control_mesh_id`]`(0)`, in
+    /// [`Paint::Control`].
+    fn add_controls(&mut self, meshes: Vec<WorldMesh>) {
+        let material = self.scene.material_table.find_or_push(&Paint::Control);
+        for (index, mesh) in meshes.into_iter().enumerate() {
+            self.scene
+                .world_meshes_mut()
+                .upsert(control_mesh_id(index), mesh, material);
         }
     }
 
@@ -959,6 +934,13 @@ impl SearchlightGame {
         self
     }
 
+    /// Draws `meshes` as the arena's control posts, the index of each being its control's.
+    #[must_use]
+    pub fn with_controls(mut self, meshes: Vec<WorldMesh>) -> Self {
+        self.stage.add_controls(meshes);
+        self
+    }
+
     /// Plays the sound file at `path` for every shot fired.
     #[must_use]
     pub fn with_shot_sound(mut self, path: &Path) -> Self {
@@ -1027,6 +1009,30 @@ impl SearchlightGame {
             }
         }
         routing
+    }
+
+    /// The use prompt, below the crosshair: one text while the player is playing and looking at
+    /// a control within reach, none otherwise.
+    fn prompt_texts(&self) -> Vec<ScreenText> {
+        if self.screen != Screen::Playing || self.mode.sim().player_body().is_dead() {
+            return Vec::new();
+        }
+        let Some(action) = self.mode.control_in_reach() else {
+            return Vec::new();
+        };
+        let key = self
+            .input
+            .bindings()
+            .get(SearchlightAction::Use)
+            .first()
+            .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+        vec![ScreenText {
+            text: hud::use_prompt(&key, hud::control_action_text(action)),
+            anchor: Anchor::Center,
+            offset: [0.0, PROMPT_OFFSET_Y],
+            size: PROMPT_SIZE,
+            color: [255; 4],
+        }]
     }
 
     /// The window title's vitals line: health or death, the wave and score when the mode
@@ -1165,6 +1171,10 @@ impl Game for SearchlightGame {
         self.stage.refresh_hud(dead);
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
+        }
+        let prompt = self.prompt_texts();
+        if let Err(error) = self.stage.shell().set_texts(prompt) {
+            tracing::warn!(%error, "use prompt not shown");
         }
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {

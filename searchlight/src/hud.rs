@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -112,8 +113,15 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 
 /// The prompt for a usable object: the `key` that uses it and the `action` it takes, such as
 /// `[F] Next wave`.
-pub fn use_prompt(_key: &str, _action: &str) -> String {
-    todo!("word the use prompt")
+pub fn use_prompt(key: &str, action: &str) -> String {
+    format!("[{key}] {action}")
+}
+
+/// What the player reads for the action of a control.
+pub fn control_action_text(action: ControlAction) -> &'static str {
+    match action {
+        ControlAction::NextWave => "Next wave",
+    }
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
