@@ -105,9 +105,9 @@ impl KeybindCaptureHandler {
                 let Some(target) = row_action(listen_id) else {
                     return false;
                 };
-                if self.place_key(target, key, bindings, on_binding_changed) {
-                    self.listening = None;
-                }
+                // A conflict ends listening too, so no later key binds while the prompt is open.
+                self.place_key(target, key, bindings, on_binding_changed);
+                self.listening = None;
                 return true;
             }
         }
