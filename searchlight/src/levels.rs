@@ -24,6 +24,10 @@ pub const LEVELS: &[NamedLevel] = &[
         name: "proving_ground",
         file: "proving_ground.glb",
     },
+    NamedLevel {
+        name: "parkour",
+        file: "parkour.glb",
+    },
 ];
 
 /// The level a launch argument asks for.
@@ -167,7 +171,7 @@ mod tests {
         assert_eq!(error.name, "nowhere");
         assert_eq!(
             error.to_string(),
-            "no level named `nowhere`; levels: arena, proving_ground"
+            "no level named `nowhere`; levels: arena, proving_ground, parkour"
         );
     }
 
@@ -464,5 +468,330 @@ mod tests {
         let notices = notices_of(&level);
 
         assert_eq!(notices, ["No walkable area; enemies cannot path here"]);
+    }
+
+    #[test]
+    fn parkour_loads_by_name_with_a_spawn_and_no_waves() {
+        let choice = chosen("parkour").expect("`parkour` is a level");
+        let file = named(choice).file;
+
+        let (_, markers) = shipped(file);
+        let mode = shipped_mode(file);
+
+        assert_eq!(file, "parkour.glb");
+        assert!(
+            markers.enemy_spawns.is_empty(),
+            "{:?}",
+            markers.enemy_spawns
+        );
+        assert!(markers.dummies.is_empty(), "{:?}", markers.dummies);
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
+    }
+
+    #[test]
+    fn every_parkour_marker_has_its_extras() {
+        let (level, _) = shipped("parkour.glb");
+
+        let gaps = parkour::markers_named(&level, "gap_");
+        let pieces = parkour::markers_named(&level, "course_");
+
+        let mut widths: Vec<f32> = gaps.iter().map(|g| parkour::number(g, "width")).collect();
+        widths.sort_by(f32::total_cmp);
+        let expected: Vec<f32> = (1..=10).map(|i| i as f32 * 0.5).collect();
+        assert_eq!(widths, expected, "one gap per width, 0.5 to 5.0 m");
+        for gap in &gaps {
+            let clears = parkour::extra(gap, "clears");
+            assert!(
+                ["stand", "run", "none"].contains(&clears),
+                "{}: clears `{clears}`",
+                gap.name
+            );
+        }
+        let mut kinds: Vec<(&str, f32)> = pieces
+            .iter()
+            .map(|p| (parkour::extra(p, "kind"), parkour::number(p, "value")))
+            .collect();
+        kinds.sort_by(|a, b| a.0.cmp(b.0).then(a.1.total_cmp(&b.1)));
+        assert_eq!(
+            kinds,
+            [
+                ("ledge", 1.0),
+                ("ledge", 1.2),
+                ("ledge", 1.4),
+                ("slope", 30.0),
+                ("slope", 45.0),
+                ("slope", 50.0),
+                ("step", 0.3),
+                ("step", 0.5),
+                ("step", 0.6),
+            ]
+        );
+        for piece in &pieces {
+            let passable = parkour::extra(piece, "passable");
+            assert!(
+                ["walk", "jump", "none"].contains(&passable),
+                "{}: passable `{passable}`",
+                piece.name
+            );
+        }
+    }
+
+    /// The headless jump and climb trials on the shipped parkour level, with the shipped
+    /// movement tuning. A marker stands on the floor at the take-off edge of a gap, or at the
+    /// foot of a course piece, and faces across or up it (its rotation turns +Z that way).
+    mod parkour {
+        use glam::Vec3;
+        use moho_level::LevelMarker;
+        use moho_physics::CharacterCommand;
+
+        use super::*;
+        use crate::sim::{SearchlightSim, SimConfig};
+        use crate::tuning::tuning;
+
+        /// Ticks to wait for a trial to end before calling it failed: far longer than a jump.
+        const TRIAL_TICKS: usize = 300;
+        /// How far below its floor a character's feet are when it is in the pit.
+        const PIT_DROP: f32 = 0.5;
+
+        pub(super) fn markers_named<'a>(level: &'a Level, prefix: &str) -> Vec<&'a LevelMarker> {
+            level
+                .markers
+                .iter()
+                .filter(|marker| marker.name.starts_with(prefix))
+                .collect()
+        }
+
+        pub(super) fn extra<'a>(marker: &'a LevelMarker, key: &str) -> &'a str {
+            marker
+                .properties
+                .get(key)
+                .unwrap_or_else(|| panic!("{}: no `{key}` extra", marker.name))
+        }
+
+        pub(super) fn number(marker: &LevelMarker, key: &str) -> f32 {
+            let text = extra(marker, key);
+            text.parse()
+                .unwrap_or_else(|_| panic!("{}: `{key}` is `{text}`, not a number", marker.name))
+        }
+
+        fn facing(marker: &LevelMarker) -> Vec3 {
+            let across = marker.rotation * Vec3::Z;
+            Vec3::new(across.x, 0.0, across.z).normalize()
+        }
+
+        fn shipped_config() -> SimConfig {
+            let roots = ContentRoots::base(&content_root()).expect("the shipped content");
+            let kit = kit::load(&roots, START_KIT_ID).expect("the shipped start kit");
+            tuning(kit)
+        }
+
+        /// A player standing on the floor point `start`, turned to face `facing`, settled.
+        struct Trial {
+            sim: SearchlightSim,
+            origin: Vec3,
+            facing: Vec3,
+            floor: f32,
+        }
+
+        impl Trial {
+            /// `start_back` metres behind `origin` along `facing`, on the marker's floor.
+            fn new(
+                level: &Level,
+                config: &SimConfig,
+                marker: &LevelMarker,
+                start_back: f32,
+            ) -> Self {
+                let facing = facing(marker);
+                let start = marker.position - facing * start_back;
+                let mut sim =
+                    SearchlightSim::new(arena::physics_world(level), start, &[], config.clone());
+                let turn = SearchlightCommand {
+                    movement: CharacterCommand {
+                        yaw_delta: facing.x.atan2(facing.z),
+                        ..CharacterCommand::default()
+                    },
+                    ..SearchlightCommand::default()
+                };
+                sim.tick(&turn, DT);
+                for _ in 0..30 {
+                    sim.tick(&SearchlightCommand::default(), DT);
+                }
+                assert!(
+                    sim.player().grounded,
+                    "{}: the player never landed",
+                    marker.name
+                );
+                Self {
+                    sim,
+                    origin: marker.position,
+                    facing,
+                    floor: marker.position.y,
+                }
+            }
+
+            fn tick(&mut self, forward: f32, jump: bool) {
+                let command = SearchlightCommand {
+                    movement: CharacterCommand {
+                        forward,
+                        jump,
+                        ..CharacterCommand::default()
+                    },
+                    ..SearchlightCommand::default()
+                };
+                self.sim.tick(&command, DT);
+            }
+
+            /// How far past the marker the player's centre is, along the marker's facing.
+            fn along(&self) -> f32 {
+                (self.sim.player().position - self.origin).dot(self.facing)
+            }
+
+            fn feet_above_floor(&self) -> f32 {
+                self.sim.player().position.y - STAND_HEIGHT - self.floor
+            }
+
+            fn run_to_the_marker(&mut self) {
+                for _ in 0..TRIAL_TICKS {
+                    if self.along() >= 0.0 {
+                        return;
+                    }
+                    self.tick(1.0, false);
+                }
+                panic!(
+                    "never reached the marker at {}, stopped at {}",
+                    self.origin,
+                    self.along(),
+                );
+            }
+        }
+
+        /// Whether a jump from the marker lands on the far platform of a gap `width` wide: the
+        /// jump is taken at the marker with the run-up behind it, or from standing on it.
+        fn jump_clears(
+            level: &Level,
+            config: &SimConfig,
+            gap: &LevelMarker,
+            running: bool,
+        ) -> bool {
+            let width = number(gap, "width");
+            let mut trial = Trial::new(level, config, gap, if running { 5.0 } else { 0.0 });
+            if running {
+                trial.run_to_the_marker();
+                trial.tick(1.0, true);
+            } else {
+                trial.tick(0.0, true);
+            }
+            let launched = trial.sim.player();
+            assert!(
+                !launched.grounded && launched.velocity.y > 0.0,
+                "{}: the jump input did not leave the ground: {launched:?}",
+                gap.name
+            );
+            for tick in 0..TRIAL_TICKS {
+                trial.tick(1.0, false);
+                if trial.feet_above_floor() < -PIT_DROP {
+                    return false;
+                }
+                if tick > 3 && trial.sim.player().grounded {
+                    // Any landing on the floor nearer the far edge than the take-off edge is
+                    // the far platform, even perched on its rim with the centre short of it.
+                    return trial.along() > width / 2.0;
+                }
+            }
+            false
+        }
+
+        /// Whether the player reaches the top of the course piece at `piece`: by walking at it,
+        /// or by walking at it and jumping as the foot of it comes within a body's reach.
+        fn climbs(level: &Level, config: &SimConfig, piece: &LevelMarker, jumping: bool) -> bool {
+            let mut trial = Trial::new(level, config, piece, 3.0);
+            let mut jumped = false;
+            for _ in 0..TRIAL_TICKS {
+                let jump = jumping && !jumped && trial.along() >= -1.0;
+                jumped |= jump;
+                trial.tick(1.0, jump);
+                if trial.sim.player().grounded
+                    && trial.along() >= 1.0
+                    && trial.feet_above_floor() >= 0.25
+                {
+                    return true;
+                }
+            }
+            false
+        }
+
+        #[test]
+        fn every_gap_is_cleared_by_exactly_the_movement_it_names() {
+            let (level, _) = shipped("parkour.glb");
+            let config = shipped_config();
+            let gaps = markers_named(&level, "gap_");
+            assert!(!gaps.is_empty(), "the parkour level has no gaps");
+
+            let mut wrong = Vec::new();
+            for gap in gaps {
+                let clears = extra(gap, "clears");
+                let expected_running = clears != "none";
+                let expected_standing = clears == "stand";
+                let running = jump_clears(&level, &config, gap, true);
+                let standing = jump_clears(&level, &config, gap, false);
+                if (running, standing) != (expected_running, expected_standing) {
+                    wrong.push(format!(
+                        "{} ({} m) is marked `{clears}`; a running jump clears it: {running}, \
+                         a standing jump: {standing}",
+                        gap.name,
+                        extra(gap, "width")
+                    ));
+                }
+            }
+
+            assert!(wrong.is_empty(), "{wrong:#?}");
+        }
+
+        #[test]
+        fn the_ladder_has_a_running_gap_and_an_uncleared_gap() {
+            let (level, _) = shipped("parkour.glb");
+
+            let marks: BTreeSet<&str> = markers_named(&level, "gap_")
+                .into_iter()
+                .map(|gap| extra(gap, "clears"))
+                .collect();
+
+            assert!(
+                marks.contains("run"),
+                "no gap needs a running jump: {marks:?}"
+            );
+            assert!(marks.contains("none"), "no gap is out of reach: {marks:?}");
+        }
+
+        #[test]
+        fn every_course_piece_is_passable_exactly_as_labelled() {
+            let (level, _) = shipped("parkour.glb");
+            let config = shipped_config();
+            let pieces = markers_named(&level, "course_");
+            assert!(!pieces.is_empty(), "the parkour level has no course");
+
+            let mut wrong = Vec::new();
+            for piece in pieces {
+                let actual = if climbs(&level, &config, piece, false) {
+                    "walk"
+                } else if climbs(&level, &config, piece, true) {
+                    "jump"
+                } else {
+                    "none"
+                };
+                let label = extra(piece, "passable");
+                if actual != label {
+                    wrong.push(format!(
+                        "{} ({} {}) is labelled `{label}` but is `{actual}`",
+                        piece.name,
+                        extra(piece, "kind"),
+                        extra(piece, "value")
+                    ));
+                }
+            }
+
+            assert!(wrong.is_empty(), "{wrong:#?}");
+        }
     }
 }
