@@ -19,7 +19,7 @@ use moho_render_api::{
     UiTextureSet, UiVertex, WorldMesh, WorldMeshId,
 };
 use moho_renderer::{EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle};
-use searchlight_rules::{Grade, GravityScale, Lean, LeanSide, Stat};
+use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -51,7 +51,9 @@ use crate::menu::{
 };
 use crate::menu_feed::{MenuCamera, MenuFeed};
 use crate::mode::ArenaMode;
-use crate::sim::{Feedback, RoundTrace, SearchlightSim, UseTarget, dummy_at, dummy_hit_volumes_of};
+use crate::sim::{
+    CarrySheet, Feedback, RoundTrace, SearchlightSim, UseTarget, dummy_at, dummy_hit_volumes_of,
+};
 use crate::tag::SurfaceTag;
 use crate::tuning::{SHIPPED_BODY, STRIP_FADE_TICKS};
 use crate::{TICK_HZ, hud};
@@ -111,6 +113,11 @@ fn load_icon_color(icon: hud::LoadIcon) -> [u8; 4] {
         hud::LoadIcon::Yellow => [255, 214, 51, 230],
         hud::LoadIcon::Red => [230, 51, 51, 230],
     }
+}
+
+/// The load line the inventory screen shows for `sheet`.
+fn header_of(sheet: &CarrySheet) -> inventory::LoadHeader {
+    inventory::load_header(sheet.load_kg, sheet.capacity, sheet.thresholds())
 }
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
@@ -996,6 +1003,14 @@ enum Screen {
     Character,
 }
 
+impl Screen {
+    /// Whether this is a screen over play that takes input like a menu while the loop keeps
+    /// running: the inventory or the character screen.
+    fn is_overlay(self) -> bool {
+        matches!(self, Self::Inventory | Self::Character)
+    }
+}
+
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
 pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
     moho_ui_shell::runtime_window_mode(mode)
@@ -1137,22 +1152,20 @@ impl SearchlightGame {
         self.hand_input_to_screen();
     }
 
-    /// Whether `input` is bound to the inventory action.
-    fn is_inventory_key(&self, input: Input) -> bool {
+    /// Whether `input` is bound to `action`.
+    fn is_bound(&self, action: SearchlightAction, input: Input) -> bool {
         self.input
             .bindings()
-            .get(SearchlightAction::Inventory)
+            .get(action)
             .iter()
             .any(|binding| binding.input == input)
     }
 
     /// Whether the loop stands still: on the main menu or the pause menu, or with the console
-    /// open. The inventory screen takes input but leaves the world running.
+    /// open. The inventory and character screens take input but leave the world running.
     fn loop_paused(&self) -> bool {
-        !matches!(
-            self.screen,
-            Screen::Playing | Screen::Inventory | Screen::Character
-        ) || self.stage.shell().console_mut().is_open()
+        !(self.screen == Screen::Playing || self.screen.is_overlay())
+            || self.stage.shell().console_mut().is_open()
     }
 
     /// The lists the inventory screen shows: the loot screen while a body is open, otherwise
@@ -1167,28 +1180,12 @@ impl SearchlightGame {
 
     /// The colour of the HUD's load icon, from the sim's load state.
     pub fn load_icon(&self) -> hud::LoadIcon {
-        hud::load_icon(self.mode.sim().load_state())
+        hud::load_icon(self.mode.sim().carry_sheet().state)
     }
 
     /// The load line the open inventory screen shows; `None` while it is closed.
     pub fn inventory_header(&self) -> Option<inventory::LoadHeader> {
-        let sim = self.mode.sim();
-        (self.screen == Screen::Inventory).then(|| {
-            inventory::load_header(
-                sim.load_kg(),
-                sim.stat(Stat::CarryCapacity),
-                sim.load_thresholds(),
-            )
-        })
-    }
-
-    /// Whether `input` is bound to the character screen action.
-    fn is_character_key(&self, input: Input) -> bool {
-        self.input
-            .bindings()
-            .get(SearchlightAction::Character)
-            .iter()
-            .any(|binding| binding.input == input)
+        (self.screen == Screen::Inventory).then(|| header_of(&self.mode.sim().carry_sheet()))
     }
 
     /// Opens the character screen over play, the world still running behind it.
@@ -1721,17 +1718,22 @@ impl SearchlightGame {
             })
             .into_iter()
             .collect();
+        let sheet = (live || self.screen == Screen::Inventory).then(|| sim.carry_sheet());
         // Nothing carried, nothing to weigh: the icon appears with the first kilogram.
-        if live && sim.load_kg() > 0.0 {
+        if let Some(sheet) = sheet.as_ref().filter(|sheet| live && sheet.load_kg > 0.0) {
             texts.push(ScreenText {
                 text: "LOAD".to_owned(),
                 anchor: Anchor::BottomLeft,
                 offset: LOAD_ICON_OFFSET,
                 size: STRIP_SIZE,
-                color: load_icon_color(self.load_icon()),
+                color: load_icon_color(hud::load_icon(sheet.state)),
             });
         }
-        if let Some(header) = self.inventory_header().filter(|_| !dead) {
+        let header = sheet
+            .as_ref()
+            .filter(|_| self.screen == Screen::Inventory && !dead)
+            .map(header_of);
+        if let Some(header) = header {
             let [slowed, no_sprint, cannot_move] = header.marks;
             texts.push(ScreenText {
                 text: format!(
@@ -1828,7 +1830,7 @@ impl SearchlightGame {
                 if self.screen == Screen::Inventory
                     && pressed
                     && !repeat
-                    && self.is_inventory_key(input) =>
+                    && self.is_bound(SearchlightAction::Inventory, input) =>
             {
                 self.close_inventory();
             }
@@ -1836,7 +1838,7 @@ impl SearchlightGame {
                 if self.screen == Screen::Character
                     && pressed
                     && !repeat
-                    && self.is_character_key(input) =>
+                    && self.is_bound(SearchlightAction::Character, input) =>
             {
                 self.enter_play();
             }
@@ -1849,7 +1851,7 @@ impl SearchlightGame {
                 }
                 if pressed
                     && !repeat
-                    && self.is_inventory_key(input)
+                    && self.is_bound(SearchlightAction::Inventory, input)
                     && !self.mode.sim().player_body().is_dead()
                 {
                     self.open_inventory();
@@ -1857,7 +1859,7 @@ impl SearchlightGame {
                 }
                 if pressed
                     && !repeat
-                    && self.is_character_key(input)
+                    && self.is_bound(SearchlightAction::Character, input)
                     && !self.mode.sim().player_body().is_dead()
                 {
                     self.open_character();
@@ -1900,9 +1902,7 @@ impl Game for SearchlightGame {
             self.aiming = false;
             // The inventory screen leaves the world running: it keeps the host levels and sends
             // what the player asked of it, and nothing the player's hands would do.
-            return if matches!(self.screen, Screen::Inventory | Screen::Character)
-                && !self.loop_paused()
-            {
+            return if self.screen.is_overlay() && !self.loop_paused() {
                 self.with_host_levels(SearchlightCommand::default())
             } else {
                 SearchlightCommand::default()

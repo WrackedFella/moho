@@ -40,10 +40,11 @@ pub fn load_enemy(
     roots: &ContentRoots,
     kit: &str,
 ) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup))
+    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup)).map(|(enemy, _)| enemy)
 }
 
-/// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`.
+/// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`,
+/// returning the result with the item definitions it resolved against.
 fn resolve_kit<T>(
     roots: &ContentRoots,
     kit: &str,
@@ -51,15 +52,17 @@ fn resolve_kit<T>(
         &'d KitDef,
         &dyn Fn(&ItemId) -> Option<&'d ItemDef>,
     ) -> Result<T, KitError>,
-) -> Result<T, KitLoadError> {
+) -> Result<(T, Definitions<ItemDef>), KitLoadError> {
     let items = load_kind::<ItemDef>(roots, "items")?;
     let kits = load_kind::<KitDef>(roots, "kits")?;
-    resolve(kits.require(kit)?, &|id: &ItemId| items.get(id.as_str())).map_err(|source| {
-        KitLoadError::Kit {
-            kit: kit.to_owned(),
-            source,
-        }
-    })
+    let resolved =
+        resolve(kits.require(kit)?, &|id: &ItemId| items.get(id.as_str())).map_err(|source| {
+            KitLoadError::Kit {
+                kit: kit.to_owned(),
+                source,
+            }
+        })?;
+    Ok((resolved, items))
 }
 
 /// A resolved kit with the item definitions it was resolved against and the id of its weapon.
@@ -93,18 +96,13 @@ impl Catalogue {
 ///
 /// As [`load`].
 pub fn load_catalogue(roots: &ContentRoots, kit: &str) -> Result<Catalogue, KitLoadError> {
-    let items = load_kind::<ItemDef>(roots, "items")?;
-    let kits = load_kind::<KitDef>(roots, "kits")?;
-    let def = kits.require(kit)?;
-    let resolved = def
-        .resolve(|id: &ItemId| items.get(id.as_str()))
-        .map_err(|source| KitLoadError::Kit {
-            kit: kit.to_owned(),
-            source,
-        })?;
+    let ((resolved, weapon), items) = resolve_kit(roots, kit, |def, lookup| {
+        def.resolve(lookup)
+            .map(|resolved| (resolved, def.weapon.clone()))
+    })?;
     Ok(Catalogue {
         kit: resolved,
-        weapon: def.weapon.clone(),
+        weapon,
         items,
     })
 }
@@ -116,7 +114,7 @@ pub fn load_catalogue(roots: &ContentRoots, kit: &str) -> Result<Catalogue, KitL
 /// [`KitLoadError::Content`] when a file or entry is malformed or `kit` is undefined;
 /// [`KitLoadError::Kit`] when the kit names an unknown or unsuitable item.
 pub fn load(roots: &ContentRoots, kit: &str) -> Result<Kit, KitLoadError> {
-    resolve_kit(roots, kit, |def, lookup| def.resolve(lookup))
+    resolve_kit(roots, kit, |def, lookup| def.resolve(lookup)).map(|(kit, _)| kit)
 }
 
 #[cfg(test)]

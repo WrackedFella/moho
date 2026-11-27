@@ -191,6 +191,32 @@ pub struct CarryConfig {
     pub weapon: ItemId,
 }
 
+/// The player's load and stat contributions at one moment, from [`SearchlightSim::carry_sheet`].
+#[derive(Clone, Debug)]
+pub struct CarrySheet {
+    /// Everything carried and worn, in kilograms.
+    pub load_kg: f32,
+    /// What the player can carry, in kilograms.
+    pub capacity: f32,
+    /// How far load has taken the player's capability.
+    pub state: LoadState,
+    /// Every contribution to the player's stats, from equipment, load and stance.
+    pub contributions: Vec<Contribution>,
+    player: PlayerDef,
+}
+
+impl CarrySheet {
+    /// The player's resolved `stat`.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        resolve(stat, self.player.baseline(stat), 0.0, &self.contributions)
+    }
+
+    /// Where load, as a fraction of capacity, changes the player's state.
+    pub fn thresholds(&self) -> &LoadThresholds {
+        &self.player.thresholds
+    }
+}
+
 /// Something the player should see, hear or read, in the order it happened.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Feedback {
@@ -696,7 +722,7 @@ impl SearchlightSim {
         let firing = self.move_enemies(dt);
         self.leaning_held = command.lean.is_some();
         let settings = MoveSettings {
-            max_speed: self.move_settings.max_speed * self.stat(Stat::MovementSpeed),
+            max_speed: self.move_settings.max_speed * self.carry_sheet().stat(Stat::MovementSpeed),
             ..self.move_settings
         };
         self.world
@@ -1482,38 +1508,16 @@ impl SearchlightSim {
         self.move_settings.max_speed
     }
 
-    /// Everything the player carries and wears, in kilograms, as it stands now.
+    /// What the player carries, can carry and is slowed by, worked out from the loadout and the
+    /// held lean in one pass. Derived on every call and never stored (ADR-0041); a caller
+    /// needing several of its values takes one sheet and reads them all from it.
     ///
     /// # Panics
     /// If the loadout holds an item the carry config has no definition of.
-    pub fn load_kg(&self) -> f32 {
+    pub fn carry_sheet(&self) -> CarrySheet {
         let carry = &self.config().carry;
-        load(&self.loadout, &carry.weapon, |id| carry.items.get(id))
-            .expect("every item the player holds is defined in the carry config")
-    }
-
-    /// The player's resolved `stat`, from what they wear, carry and hold now.
-    pub fn stat(&self, stat: Stat) -> f32 {
-        let player = &self.config().carry.player;
-        resolve(stat, player.baseline(stat), 0.0, &self.stat_contributions())
-    }
-
-    /// How far load has taken the player's capability.
-    pub fn load_state(&self) -> LoadState {
-        load_state(
-            self.load_kg(),
-            self.stat(Stat::CarryCapacity),
-            self.load_thresholds(),
-        )
-    }
-
-    /// Every contribution to the player's stats now, from equipment, load and stance. Derived
-    /// from the loadout and the held lean each call, never stored (ADR-0041).
-    ///
-    /// # Panics
-    /// If the loadout holds an item the carry config has no definition of.
-    pub fn stat_contributions(&self) -> Vec<Contribution> {
-        let carry = &self.config().carry;
+        let load_kg = load(&self.loadout, &carry.weapon, |id| carry.items.get(id))
+            .expect("every item the player holds is defined in the carry config");
         let mut contributions = equipment_contributions(&self.loadout, |id| carry.items.get(id))
             .expect("every worn item is defined in the carry config");
         let capacity = resolve(
@@ -1522,7 +1526,7 @@ impl SearchlightSim {
             0.0,
             &contributions,
         );
-        let state = load_state(self.load_kg(), capacity, &carry.player.thresholds);
+        let state = load_state(load_kg, capacity, &carry.player.thresholds);
         contributions.extend(load_contributions(state, carry.player.slowed_scale));
         if self.leaning_held {
             contributions.push(Contribution {
@@ -1531,7 +1535,39 @@ impl SearchlightSim {
                 verb: Verb::Scale(self.lean_tuning.speed_factor),
             });
         }
-        contributions
+        CarrySheet {
+            load_kg,
+            capacity,
+            state,
+            contributions,
+            player: carry.player.clone(),
+        }
+    }
+
+    /// Everything the player carries and wears, in kilograms, as it stands now.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn load_kg(&self) -> f32 {
+        self.carry_sheet().load_kg
+    }
+
+    /// The player's resolved `stat`, from what they wear, carry and hold now.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        self.carry_sheet().stat(stat)
+    }
+
+    /// How far load has taken the player's capability.
+    pub fn load_state(&self) -> LoadState {
+        self.carry_sheet().state
+    }
+
+    /// Every contribution to the player's stats now, from equipment, load and stance.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn stat_contributions(&self) -> Vec<Contribution> {
+        self.carry_sheet().contributions
     }
 
     /// Where load, as a fraction of carry capacity, changes the player's state.

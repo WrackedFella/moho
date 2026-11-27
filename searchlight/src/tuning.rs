@@ -4,9 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
-    AccuracyTuning, BodyPart, BodyProfile, Carried, ItemClass, ItemDef, ItemId, ItemKind, Kit,
-    LeanTuning, Lifecycle, LoadThresholds, Loadout, PlayerDef, Remains, RoundStats, Size,
-    loadout_items, remains_items,
+    AccuracyTuning, BodyPart, BodyProfile, Carried, ItemDef, ItemId, Kit, LeanTuning,
+    LoadThresholds, PlayerDef, Remains, RoundStats, loadout_items, remains_items,
 };
 
 use moho_core::content::ContentRoots;
@@ -75,13 +74,25 @@ pub const BODY_RADIUS: f32 = 0.8;
 /// holds, for configs built without content, so load is 0 here. The shipped game uses
 /// [`shipped`], whose definitions come from the item catalogue.
 pub fn tuning(kit: Kit) -> SimConfig {
+    let weapon = rifle_item();
+    let items = weightless(&distinct(loadout_items(&kit.loadout, &weapon)));
+    build(
+        kit,
+        CarryConfig {
+            player: SHIPPED_PLAYER,
+            items,
+            weapon,
+        },
+    )
+}
+
+/// The tuning around the starting `kit` with `carry` as its carry config.
+fn build(kit: Kit, carry: CarryConfig) -> SimConfig {
     let Kit {
         weapon,
         loadout,
         rounds,
     } = kit;
-    let weapon_item = rifle_item();
-    let loadout_ids = loadout_item_ids(&loadout, &weapon_item);
     SimConfig {
         move_settings: MoveSettings {
             max_speed: 6.0,
@@ -127,11 +138,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         search_reach: SEARCH_REACH,
         body_radius: BODY_RADIUS,
         enemy_remains: Remains::default(),
-        carry: CarryConfig {
-            player: SHIPPED_PLAYER,
-            items: weightless(&loadout_ids),
-            weapon: weapon_item,
-        },
+        carry,
     }
 }
 
@@ -140,16 +147,7 @@ fn rifle_item() -> ItemId {
     ItemId::new("rifle")
 }
 
-/// Every distinct item id `loadout` holds.
-fn loadout_item_ids(loadout: &Loadout, weapon: &ItemId) -> Vec<ItemId> {
-    distinct(loadout_items(loadout, weapon))
-}
-
-/// Every distinct item id `remains` holds.
-fn remains_item_ids(remains: &Remains, weapon: &ItemId) -> Vec<ItemId> {
-    distinct(remains_items(remains, weapon))
-}
-
+/// The distinct item ids among `carried`, in id order.
 fn distinct(carried: Vec<Carried>) -> Vec<ItemId> {
     let ids: BTreeSet<ItemId> = carried.into_iter().map(|(id, _)| id).collect();
     ids.into_iter().collect()
@@ -158,20 +156,7 @@ fn distinct(carried: Vec<Carried>) -> Vec<ItemId> {
 /// A weightless plain definition for each of `ids`.
 fn weightless(ids: &[ItemId]) -> BTreeMap<ItemId, ItemDef> {
     ids.iter()
-        .map(|id| {
-            let def = ItemDef {
-                class: ItemClass::Tool,
-                size: Size {
-                    width: 1,
-                    height: 1,
-                },
-                lifecycle: Lifecycle::Unchanging,
-                weight: 0.0,
-                kind: ItemKind::Plain,
-                stats: Vec::new(),
-            };
-            (id.clone(), def)
-        })
+        .map(|id| (id.clone(), ItemDef::plain(0.0)))
         .collect()
 }
 
@@ -209,17 +194,19 @@ fn assemble(
     let enemy = enemy_kit
         .map(|enemy_kit| crate::kit::load_enemy(roots, enemy_kit))
         .transpose()?;
-    let mut ids = loadout_item_ids(&catalogue.kit.loadout, &catalogue.weapon);
+    let mut carried = loadout_items(&catalogue.kit.loadout, &catalogue.weapon);
     if let Some((remains, _)) = &enemy {
-        ids.extend(remains_item_ids(remains, &catalogue.weapon));
+        carried.extend(remains_items(remains, &catalogue.weapon));
     }
-    let items = catalogue.define(&ids)?;
-    let mut config = tuning(catalogue.kit);
-    config.carry = CarryConfig {
-        player,
-        items,
-        weapon: catalogue.weapon,
-    };
+    let items = catalogue.define(&distinct(carried))?;
+    let config = build(
+        catalogue.kit,
+        CarryConfig {
+            player,
+            items,
+            weapon: catalogue.weapon,
+        },
+    );
     Ok(match enemy {
         Some((remains, rounds)) => with_enemy_kit(config, remains, rounds),
         None => config,
@@ -238,7 +225,7 @@ pub fn with_enemy_kit(
         config.rounds.entry(round).or_insert(stats);
     }
     let weapon = config.carry.weapon.clone();
-    for (id, def) in weightless(&remains_item_ids(&remains, &weapon)) {
+    for (id, def) in weightless(&distinct(remains_items(&remains, &weapon))) {
         config.carry.items.entry(id).or_insert(def);
     }
     config.enemy_remains = remains;

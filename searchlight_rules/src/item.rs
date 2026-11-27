@@ -268,7 +268,12 @@ impl TryFrom<RawItemStat> for ItemStat {
             (None, None, Some(x)) => (Verb::Cap(x), x, true),
             _ => return refused,
         };
-        if value.is_finite() && !(non_negative && value < 0.0) {
+        let valid = if non_negative {
+            finite_non_negative(value)
+        } else {
+            value.is_finite()
+        };
+        if valid {
             Ok(Self { stat, verb })
         } else {
             refused
@@ -292,6 +297,29 @@ pub struct ItemDef {
     pub kind: ItemKind,
     /// What wearing the item does to the player's stats.
     pub stats: Vec<ItemStat>,
+}
+
+impl ItemDef {
+    /// A 1 by 1 tool of `weight` kilograms with no wear, section or stats.
+    #[must_use]
+    pub fn plain(weight: f32) -> Self {
+        Self {
+            class: ItemClass::Tool,
+            size: Size {
+                width: 1,
+                height: 1,
+            },
+            lifecycle: Lifecycle::Unchanging,
+            weight,
+            kind: ItemKind::Plain,
+            stats: Vec::new(),
+        }
+    }
+}
+
+/// Whether `value` is a number that is 0 or more: not negative, `NaN` or infinite.
+pub(crate) fn finite_non_negative(value: f32) -> bool {
+    value.is_finite() && value >= 0.0
 }
 
 /// Why an item definition was refused.
@@ -369,7 +397,7 @@ impl TryFrom<RawItemDef> for ItemDef {
 
     fn try_from(raw: RawItemDef) -> Result<Self, Self::Error> {
         let lifecycle = raw.lifecycle()?;
-        if !(raw.weight.is_finite() && raw.weight >= 0.0) {
+        if !finite_non_negative(raw.weight) {
             return Err(ItemDefError::Weight(raw.weight));
         }
         let [width, height] = raw.size;

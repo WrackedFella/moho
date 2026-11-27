@@ -1,10 +1,10 @@
 //! The inventory screen's data: the lists the shell draws, built from what the sim holds. The
 //! screen only shows and asks; the sim owns the items and applies every move.
 
-use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
+use moho_ui_shell::{ItemList, ItemLists, ListId};
 use searchlight_rules::{Item, LoadThresholds, Loadout, Magazine, Place, Remains, Source};
 
-use crate::menu::MenuAction;
+use crate::menu::{MenuAction, item_row};
 
 /// The label of a magazine slot with no magazine in it.
 pub const EMPTY_SLOT: &str = "(empty)";
@@ -191,13 +191,7 @@ fn list(
     let rows = entries(id, loadout, body)
         .into_iter()
         .enumerate()
-        .map(|(row, entry)| ListRow {
-            label: entry.label,
-            count: entry.count,
-            tooltip: None,
-            item: MenuAction::Item(u32::try_from(row).expect("a list has fewer than 2^32 rows")),
-            actions: Vec::new(),
-        })
+        .map(|(row, entry)| item_row(row, entry.label, entry.count))
         .collect();
     ItemList {
         id,

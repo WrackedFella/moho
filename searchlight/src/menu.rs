@@ -2,7 +2,7 @@
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
 use moho_input::Action;
-use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, MenuItem, MenuScreen};
+use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, ListRow, MenuItem, MenuScreen};
 
 use crate::controls::{ControlsDraft, label};
 use crate::debug_settings::GameRows;
@@ -37,6 +37,20 @@ pub enum MenuAction {
     ItemAction(ItemAction),
     /// Opens a Settings page.
     Page(SettingsPage),
+}
+
+/// The row at `index` of an item list: `label` and `count`, with no tooltip or actions.
+///
+/// # Panics
+/// If `index` does not fit a `u32`, which no list reaches.
+pub fn item_row(index: usize, label: String, count: Option<u32>) -> ListRow<MenuAction> {
+    ListRow {
+        label,
+        count,
+        tooltip: None,
+        item: MenuAction::Item(u32::try_from(index).expect("a list has fewer than 2^32 rows")),
+        actions: Vec::new(),
+    }
 }
 
 /// A category of the Settings screen, in the order they are listed.

@@ -1,7 +1,7 @@
 //! The player's stat layer: sources declare contributions, one resolution turns them into a
 //! value, and the same contributions explain it.
 
-use crate::item::{ItemDef, ItemId};
+use crate::item::{ItemDef, ItemId, finite_non_negative};
 use crate::load::LoadThresholds;
 use crate::loadout::Loadout;
 use serde::Deserialize;
@@ -122,7 +122,7 @@ impl TryFrom<RawPlayerDef> for PlayerDef {
             ("slowed_scale", raw.slowed_scale),
         ];
         for (field, value) in checks {
-            if !(value.is_finite() && value >= 0.0) {
+            if !finite_non_negative(value) {
                 return Err(PlayerDefError::Value { field, value });
             }
         }
