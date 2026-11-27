@@ -384,6 +384,33 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_config_dresses_veterans_in_the_assault_rig() {
+        use searchlight_rules::Grade;
+        let roots = ContentRoots::base(&crate::content_root()).expect("the shipped content");
+
+        let config = shipped_with_enemy(&roots, crate::kit::START_KIT_ID, crate::kit::ENEMY_KIT_ID)
+            .expect("the shipped tuning loads");
+
+        let rig_of = |grade: Grade| {
+            let remains = config
+                .grade_remains
+                .get(&grade)
+                .unwrap_or(&config.enemy_remains);
+            remains.rig.as_ref().map(|rig| rig.item().clone())
+        };
+        assert_eq!(rig_of(Grade::Veteran), Some(ItemId::new("rig_assault")));
+        assert_eq!(rig_of(Grade::Rookie), Some(ItemId::new("rig_chest")));
+        for remains in config.grade_remains.values().chain([&config.enemy_remains]) {
+            for (item, _) in remains_items(remains, &config.carry.weapon) {
+                assert!(
+                    config.carry.items.contains_key(&item),
+                    "{item} is missing from the carry table"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_shipped_lean_is_0_35_m_and_12_degrees() {
         let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
         rig.stow(mag(17, 17)).unwrap();

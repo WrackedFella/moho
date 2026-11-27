@@ -6263,6 +6263,28 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_wear_mid_reload_changes_nothing_and_the_reload_finishes() {
+        let inventory = || vec![Item::Other(ItemId::new("bandage")), rig_item("rig_five")];
+        for from in [0, 5] {
+            let mut control = sim_wearing(vec![mag(30, 30)], inventory());
+            let mut sim = sim_wearing(vec![mag(30, 30)], inventory());
+            let mut wear_script = vec![reload(), idle(), wearing(from)];
+            wear_script.extend([idle(); 8]);
+            let mut control_script = vec![reload(), idle(), idle()];
+            control_script.extend([idle(); 8]);
+
+            let ticks = run(&mut sim, &wear_script);
+            run(&mut control, &control_script);
+
+            assert!(ticks[..10].iter().all(Vec::is_empty), "{from}: {ticks:?}");
+            assert_eq!(ticks[10], [Feedback::ReloadDone], "{from}");
+            assert_eq!(sim.rifle().magazine(), &mag(30, 30), "{from}");
+            assert_eq!(sim.loadout(), control.loadout(), "{from}");
+            assert_eq!(sim.loadout().inventory(), inventory(), "{from}");
+        }
+    }
+
+    #[test]
     fn a_wear_while_looting_is_ignored() {
         let config = with_gear_to_wear(
             loot_config(two_magazines()),

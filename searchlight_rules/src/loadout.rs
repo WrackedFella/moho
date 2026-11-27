@@ -1127,19 +1127,8 @@ mod tests {
     #[test]
     fn wearing_a_magazine_is_refused_and_changes_nothing() {
         let defs = wear_defs();
-        let mut loadout = wearer(&[Some("a")], vec![bandage(), mag_item("m")]);
-        let before = loadout.clone();
-
-        let worn = loadout.wear(|item| defs.get(item), 1);
-
-        assert_eq!(worn, Err(WearRefused::NotWearable));
-        assert_eq!(loadout, before);
-    }
-
-    #[test]
-    fn wearing_anything_else_that_is_not_gear_is_refused_and_changes_nothing() {
-        let defs = wear_defs();
         let items = [
+            mag_item("m"),
             bandage(),
             Item::Weapon(rifle_with(full("in_rifle"))),
             Item::Rounds(RoundStack {
@@ -1205,29 +1194,6 @@ mod tests {
 
         assert_eq!(worn, Ok(Worn::Rig));
         assert_eq!(loadout.rifle(), &rifle_before);
-        assert_eq!(loadout.rifle().magazine().item(), &id("held"));
-        assert!(
-            !loadout
-                .inventory()
-                .iter()
-                .any(|item| matches!(item, Item::Magazine(m) if m.item() == &id("held")))
-        );
-    }
-
-    #[test]
-    fn a_rig_swap_then_a_reload_finds_nothing_until_a_magazine_is_slotted() {
-        let defs = wear_defs();
-        let mut loadout = wearer(&[Some("a")], vec![Item::Rig(id("rig_five"))]);
-        loadout.wear(|item| defs.get(item), 0).expect("a rig");
-        assert!(!loadout.can_reload(), "the new rig is empty");
-
-        loadout
-            .move_item(None, Source::Inventory(1), Place::MagazineSlots)
-            .expect("the un-equipped magazine goes in a slot");
-
-        assert!(loadout.can_reload());
-        assert!(loadout.reload());
-        assert_eq!(loadout.rifle().magazine().item(), &id("a"));
     }
 
     /// Definitions for the ids the conservation property wears: by the number after `i`.

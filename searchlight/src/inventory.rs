@@ -649,6 +649,14 @@ mod tests {
             .collect()
     }
 
+    /// For each row of `list`, whether it offers the Wear action.
+    fn offering_wear(lists: &ItemLists<MenuAction>, list: ListId) -> Vec<bool> {
+        actions_of(lists, list)
+            .iter()
+            .map(|actions| actions.contains(&wear_action()))
+            .collect()
+    }
+
     /// A player whose inventory holds a bandage, a 5-slot rig, a large backpack and a rag.
     fn player_with_spare_gear() -> Loadout {
         player(3, 1).with_inventory(vec![
@@ -666,16 +674,15 @@ mod tests {
 
         let shown = gear_lists(&loadout, |id| defs.get(id));
 
+        assert_eq!(offering_wear(&shown, INVENTORY), [false, true, true, false]);
         assert_eq!(
-            actions_of(&shown, INVENTORY),
-            [vec![], vec![wear_action()], vec![wear_action()], vec![]]
-        );
-        assert!(
-            actions_of(&shown, EQUIPMENT).iter().all(Vec::is_empty),
+            offering_wear(&shown, EQUIPMENT),
+            [false, false],
             "worn gear offers no wear"
         );
-        assert!(
-            actions_of(&shown, MAGAZINE_SLOTS).iter().all(Vec::is_empty),
+        assert_eq!(
+            offering_wear(&shown, MAGAZINE_SLOTS),
+            [false, false, false],
             "a magazine slot offers no wear"
         );
         assert_eq!(list_ids(&shown), [EQUIPMENT, MAGAZINE_SLOTS, INVENTORY]);
@@ -707,27 +714,22 @@ mod tests {
 
         let shown = loot_lists(&loadout, &remains);
 
-        assert_eq!(
-            actions_of(&shown, INVENTORY),
-            vec![Vec::<moho_ui_shell::RowAction<MenuAction>>::new(); 4]
-        );
-        let body = actions_of(&shown, BODY);
-        assert_eq!(
-            body.len(),
-            6,
-            "the body's rig, two magazines, backpack, two items"
-        );
-        assert!(body.iter().all(Vec::is_empty), "{body:?}");
+        for list in [INVENTORY, BODY] {
+            let offers = offering_wear(&shown, list);
+            assert!(
+                offers.iter().all(|offered| !offered),
+                "{list:?}: {offers:?}"
+            );
+        }
     }
 
     #[test]
     fn the_slot_list_title_names_the_worn_rig_and_its_slots() {
         let defs = gear_defs();
-        let three = player(3, 0);
-        let five = Loadout::new(
-            rifle_from(mag(30, 30)),
-            Rig::new(ItemId::new("rig_assault"), &RigSpec { magazine_slots: 5 }),
-        );
+        let three = player(3, 2);
+        let mut rig = Rig::new(ItemId::new("rig_assault"), &RigSpec { magazine_slots: 5 });
+        rig.stow(mag(30, 30)).expect("the rig has a free slot");
+        let five = Loadout::new(rifle_from(mag(30, 30)), rig);
 
         let before = gear_lists(&three, |id| defs.get(id));
         let after = gear_lists(&five, |id| defs.get(id));
@@ -741,16 +743,27 @@ mod tests {
                 .title
                 .clone()
         };
+        let tokens = |text: &str| -> Vec<String> {
+            text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .filter(|token| !token.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
         let (before, after) = (title(&before), title(&after));
+        let (before_tokens, after_tokens) = (tokens(&before), tokens(&after));
         assert!(before.starts_with("Magazine slots"), "{before}");
+        assert!(before_tokens.contains(&"test_rig".to_owned()), "{before}");
+        assert!(before_tokens.contains(&"3".to_owned()), "{before}");
         assert!(
-            before.contains("test_rig") && before.contains('3'),
-            "{before}"
+            !before_tokens.contains(&"1".to_owned()),
+            "free count: {before}"
         );
         assert!(after.starts_with("Magazine slots"), "{after}");
+        assert!(after_tokens.contains(&"rig_assault".to_owned()), "{after}");
+        assert!(after_tokens.contains(&"5".to_owned()), "{after}");
         assert!(
-            after.contains("rig_assault") && after.contains('5'),
-            "{after}"
+            !after_tokens.contains(&"4".to_owned()),
+            "free count: {after}"
         );
         assert!(!after.contains("test_rig"), "{after}");
     }

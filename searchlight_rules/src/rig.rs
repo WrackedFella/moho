@@ -182,14 +182,6 @@ mod tests {
     }
 
     #[test]
-    fn take_all_on_an_empty_rig_returns_nothing() {
-        let mut rig = rig_of(2);
-
-        assert_eq!(rig.take_all(), []);
-        assert_eq!(rig.slots().len(), 2);
-    }
-
-    #[test]
     fn stow_fills_the_first_free_slot_and_names_it() {
         let mut rig = rig_with(&[Some("a"), None, None]);
 

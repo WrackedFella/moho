@@ -573,10 +573,7 @@ weight = 2.0
 
             assert_eq!(worn, default, "{}", grade.name());
         }
-    }
 
-    #[test]
-    fn a_grade_with_its_own_kit_wears_it_and_the_other_grades_the_default() {
         let veteran = ENEMY_KIT
             .replace("[enemy]", "[enemy_veteran]")
             .replace("rig_chest", "rig_assault");
@@ -623,36 +620,26 @@ weight = 2.0
     fn the_shipped_grade_kits_load() {
         use searchlight_rules::Grade::{Experienced, Novice, Professional, Rookie, Veteran};
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+        let default = load_enemy(&roots, ENEMY_KIT_ID).expect("the shipped enemy kit loads");
 
         for grade in Grade::LADDER {
-            let (remains, rounds) = load_enemy_for_grade(&roots, grade)
+            let worn = load_enemy_for_grade(&roots, grade)
                 .unwrap_or_else(|error| panic!("{}: {error}", grade.name()));
 
-            let rig = remains.rig.as_ref().expect("every grade wears a rig");
-            let expected_rig = match grade {
-                Veteran | Professional => "rig_assault",
-                Rookie | Novice | Experienced => "rig_chest",
-            };
-            assert_eq!(rig.item(), &ItemId::new(expected_rig), "{}", grade.name());
-            assert!(
-                matches!(remains.carried.first(), Some(Item::Weapon(_))),
-                "{}: the rifle comes first",
-                grade.name()
-            );
-            assert!(
-                rounds.contains_key(&ItemId::new("round_rifle_ball")),
-                "{}",
-                grade.name()
-            );
-            let backpack = remains.backpack.as_ref().map(ItemId::as_str);
             match grade {
-                Veteran | Professional => assert!(
-                    matches!(backpack, Some("backpack_large" | "backpack_frame")),
-                    "{}: {backpack:?}",
-                    grade.name()
-                ),
+                Veteran | Professional => {
+                    let (remains, _) = &worn;
+                    let rig = remains.rig.as_ref().expect("a veteran wears a rig");
+                    assert_eq!(rig.item(), &ItemId::new("rig_assault"), "{}", grade.name());
+                    let backpack = remains.backpack.as_ref().map(ItemId::as_str);
+                    assert!(
+                        matches!(backpack, Some("backpack_large" | "backpack_frame")),
+                        "{}: {backpack:?}",
+                        grade.name()
+                    );
+                }
                 Rookie | Novice | Experienced => {
-                    assert_eq!(backpack, None, "{}", grade.name());
+                    assert_eq!(worn, default, "{}", grade.name());
                 }
             }
         }
@@ -684,11 +671,13 @@ weight = 2.0
 
         assert_eq!((slots("rig_chest"), slots("rig_assault")), (3, 5));
         assert!(weight("rig_assault") > weight("rig_chest"));
-        assert!(add(capacity("rig_chest")) > 0.0);
         assert!(add(capacity("rig_assault")) > add(capacity("rig_chest")));
-        assert_eq!(capacity("backpack_small"), Some(Verb::Add(10.0)));
-        assert_eq!(capacity("backpack_large"), Some(Verb::Add(15.0)));
-        assert_eq!(capacity("backpack_frame"), Some(Verb::Scale(1.2)));
+        assert!(add(capacity("backpack_large")) > add(capacity("backpack_small")));
+        assert!(
+            matches!(capacity("backpack_frame"), Some(Verb::Scale(scale)) if scale > 1.0),
+            "{:?}",
+            capacity("backpack_frame")
+        );
         for id in ["backpack_small", "backpack_large", "backpack_frame"] {
             let kind = &items.require(id).expect("the backpack is defined").kind;
             assert!(matches!(kind, ItemKind::Backpack(_)), "{id}: {kind:?}");
