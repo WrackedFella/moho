@@ -1758,6 +1758,20 @@ impl SearchlightGame {
     /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
     /// feed's camera, or an empty world on a level without menu cameras; the shell paints the
     /// menu. The feed follows frame time: the sim is paused here.
+    /// Opens the inventory on a finished search and leaves it on death, before the frame reads
+    /// its view: both discard the pending look, so the listener and the draw share one view.
+    fn settle_screen(&mut self, feedback: &[Feedback]) {
+        let searched = feedback
+            .iter()
+            .any(|f| matches!(f, Feedback::SearchOpened { .. }));
+        if searched && self.screen == Screen::Playing {
+            self.open_inventory();
+        }
+        if self.screen == Screen::Inventory && self.mode.sim().player_body().is_dead() {
+            self.enter_play();
+        }
+    }
+
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
         self.stage.refresh_title("");
         self.stage.hide_hud();
@@ -1958,7 +1972,10 @@ impl Game for SearchlightGame {
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
         }
-        self.listener = moho_audio::Listener::from_view(self.frame_view(alpha).0);
+        let feedback = self.mode.drain_feedback();
+        self.settle_screen(&feedback);
+        let (view, eye) = self.frame_view(alpha);
+        self.listener = moho_audio::Listener::from_view(view);
         if let Some(audio) = ctx.audio() {
             audio.set_listener(self.listener);
         }
@@ -1986,7 +2003,7 @@ impl Game for SearchlightGame {
             });
             self.window_mode_applied(mode);
         }
-        for feedback in self.mode.drain_feedback() {
+        for feedback in feedback {
             if let Feedback::PlayerHit { from, .. } = feedback {
                 let player = self.mode.sim().player();
                 self.stage
@@ -1994,9 +2011,6 @@ impl Game for SearchlightGame {
             }
             if hud::shows_strip(&feedback) {
                 self.strip_ticks_left = STRIP_FADE_TICKS;
-            }
-            if matches!(feedback, Feedback::SearchOpened { .. }) && self.screen == Screen::Playing {
-                self.open_inventory();
             }
             self.stage.react(&feedback, ctx.audio());
         }
@@ -2006,12 +2020,8 @@ impl Game for SearchlightGame {
         }
         let dead = self.mode.sim().player_body().is_dead();
         if self.screen == Screen::Inventory {
-            if dead {
-                self.enter_play();
-            } else {
-                let lists = self.inventory_lists();
-                self.stage.shell().menu_mut().set_lists(lists);
-            }
+            let lists = self.inventory_lists();
+            self.stage.shell().menu_mut().set_lists(lists);
         }
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
@@ -2028,7 +2038,6 @@ impl Game for SearchlightGame {
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
-            let (view, eye) = self.frame_view(alpha);
             let fov = self.play_fov_degrees();
             self.stage.draw_at(renderer, (view, eye), fov);
         }
@@ -7512,7 +7521,8 @@ mod tests {
     }
 
     #[test]
-    fn a_search_opening_in_a_frame_draws_the_view_without_the_look_it_discarded() {
+    fn a_search_opening_in_a_frame_is_heard_and_drawn_from_the_view_without_the_look_it_discarded()
+    {
         let (mut game, mut clock) = game_beside_a_body();
         game.input_mut()
             .set_look(moho_input::action_map::LookSettings {
@@ -7532,12 +7542,11 @@ mod tests {
         let drawn = draw_frame(&mut game, &mut renderer);
 
         assert_eq!(game.screen, Screen::Inventory);
-        assert_ne!(
-            game.frame_listener(),
-            moho_audio::Listener::from_view(without_look),
-            "the look was pending when the frame began"
-        );
         assert_eq!(drawn, without_look);
+        assert_eq!(
+            game.frame_listener(),
+            moho_audio::Listener::from_view(drawn)
+        );
     }
 
     #[test]
