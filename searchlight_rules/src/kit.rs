@@ -2,7 +2,7 @@
 
 use crate::ballistics::RoundStats;
 use crate::inventory::{Item, Remains, RoundStack};
-use crate::item::{ItemDef, ItemId, ItemKind};
+use crate::item::{ItemDef, ItemId, ItemKind, SlotKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
 use crate::rifle::Rifle;
@@ -93,14 +93,16 @@ pub enum KitError {
         /// The kind needed.
         expected: &'static str,
     },
-    /// More magazines than the rig has slots.
-    #[error("{magazines} magazines do not fit the {slots} slots of rig \"{rig}\"")]
+    /// More magazines of one kind than the rig has slots of that kind.
+    #[error("{magazines} {kind} magazines do not fit the {slots} {kind} slots of rig \"{rig}\"")]
     RigOverfilled {
         /// The rig item.
         rig: ItemId,
-        /// Its slots.
+        /// The kind of slot the magazines take.
+        kind: SlotKind,
+        /// The rig's slots of that kind; 0 when it has none.
         slots: u32,
-        /// Magazines listed.
+        /// Magazines of that kind the kit stows.
         magazines: usize,
     },
     /// The loaded magazine is for another well than the weapon's.
@@ -167,7 +169,7 @@ impl KitDef {
     ///
     /// A [`KitError`] naming the offending item: unknown, of the wrong kind, a round of
     /// another caliber, too many rounds, a loaded magazine the weapon cannot take, or more
-    /// magazines than the rig has slots. Rig magazines that do not fit the weapon are allowed.
+    /// magazines of a kind than the rig has slots of it. Rig magazines that do not fit the weapon are allowed.
     pub fn resolve<'a>(
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
@@ -249,10 +251,25 @@ impl KitDef {
         let mut rig = Rig::new(self.rig.clone(), rig_spec);
         for entry in &self.magazines {
             let spare = build(&mut rounds, &entry.magazine, &entry.round, entry.rounds)?;
-            rig.stow(spare).map_err(|_| KitError::RigOverfilled {
-                rig: self.rig.clone(),
-                slots: rig_spec.magazine_slots.values().sum(),
-                magazines: self.magazines.len(),
+            rig.stow(spare).map_err(|refused| {
+                let kind = refused.slot().clone();
+                let magazines = self
+                    .magazines
+                    .iter()
+                    .filter_map(
+                        |listed| match lookup(&listed.magazine).map(|def| &def.kind) {
+                            Some(ItemKind::Magazine(spec)) => Some(&spec.slot),
+                            _ => None,
+                        },
+                    )
+                    .filter(|listed_kind| **listed_kind == kind)
+                    .count();
+                KitError::RigOverfilled {
+                    rig: self.rig.clone(),
+                    slots: rig_spec.magazine_slots.get(&kind).copied().unwrap_or(0),
+                    kind,
+                    magazines,
+                }
             })?;
         }
 
@@ -525,7 +542,8 @@ mod tests {
         assert!(
             matches!(
                 &error,
-                KitError::RigOverfilled { rig, slots: 3, magazines: 4 } if *rig == id("rig_chest")
+                KitError::RigOverfilled { rig, kind, slots: 3, magazines: 4 }
+                    if *rig == id("rig_chest") && kind.as_str() == "rifle"
             ),
             "{error:?}"
         );
@@ -1031,6 +1049,55 @@ mod tests {
             "{error:?}"
         );
         assert!(error.to_string().contains("rig_chest"), "{error}");
+    }
+
+    #[test]
+    fn an_overfilled_kind_reports_that_kinds_slots_and_magazines() {
+        let def = start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_rifle", "round": "round_ball"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ]));
+
+        let error = resolve_kinded(&def).expect_err("one rifle slot cannot hold two magazines");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::RigOverfilled { rig, kind, slots: 1, magazines: 2 }
+                    if *rig == id("rig_chest") && kind.as_str() == "rifle"
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "2 rifle magazines do not fit the 1 rifle slots of rig \"rig_chest\""
+        );
+    }
+
+    #[test]
+    fn a_magazine_kind_the_rig_lacks_reports_zero_slots() {
+        let mut items = kinded_items();
+        let rifle_only = json!({"class": "gear", "size": [3, 2], "weight": 1.0,
+            "rig": {"magazine_slots": {"rifle": 1}}});
+        items.insert(
+            id("rig_chest"),
+            serde_json::from_value(rifle_only).expect("the fixture rig loads"),
+        );
+        let def = start(json!([{"magazine": "mag_pistol", "round": "round_9mm"}]));
+
+        let error = def
+            .resolve(|item| items.get(item))
+            .expect_err("the rig has no pistol slot");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::RigOverfilled { rig, kind, slots: 0, magazines: 1 }
+                    if *rig == id("rig_chest") && kind.as_str() == "pistol"
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]
