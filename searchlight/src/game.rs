@@ -32,6 +32,7 @@ use moho_ui_shell::{
 
 use crate::aim::{Magnification, aimed_fov_y, look_scale};
 use crate::arena::{box_mesh, control_mesh_id};
+use crate::character;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::control::ControlAction;
 use crate::controls::{Capture, ControlsDraft, label};
@@ -50,7 +51,9 @@ use crate::menu::{
 };
 use crate::menu_feed::{MenuCamera, MenuFeed};
 use crate::mode::ArenaMode;
-use crate::sim::{Feedback, RoundTrace, SearchlightSim, UseTarget, dummy_at, dummy_hit_volumes_of};
+use crate::sim::{
+    CarrySheet, Feedback, RoundTrace, SearchlightSim, UseTarget, dummy_at, dummy_hit_volumes_of,
+};
 use crate::tag::SurfaceTag;
 use crate::tuning::{SHIPPED_BODY, STRIP_FADE_TICKS};
 use crate::{TICK_HZ, hud};
@@ -97,6 +100,25 @@ const PROMPT_COLOR: [u8; 4] = [255, 255, 255, 230];
 const STRIP_OFFSET_Y: f32 = -96.0;
 const STRIP_SIZE: f32 = 20.0;
 const STRIP_COLOR: [u8; 4] = [220, 220, 220, 230];
+/// The load icon's distance from the bottom left corner, in logical points. It is drawn at the
+/// strip's size.
+const LOAD_ICON_OFFSET: [f32; 2] = [24.0, -24.0];
+/// The inventory's load header's distance below the top edge, in logical points.
+const LOAD_HEADER_OFFSET_Y: f32 = 32.0;
+
+/// The colour the load icon is drawn in.
+fn load_icon_color(icon: hud::LoadIcon) -> [u8; 4] {
+    match icon {
+        hud::LoadIcon::White => [255, 255, 255, 230],
+        hud::LoadIcon::Yellow => [255, 214, 51, 230],
+        hud::LoadIcon::Red => [230, 51, 51, 230],
+    }
+}
+
+/// The load line the inventory screen shows for `sheet`.
+fn header_of(sheet: &CarrySheet) -> inventory::LoadHeader {
+    inventory::load_header(sheet.load_kg, sheet.capacity, sheet.thresholds())
+}
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
 fn aspect_ratio(width: u32, height: u32) -> f32 {
@@ -976,6 +998,17 @@ enum Screen {
     Paused,
     /// The inventory: takes input like a menu while the loop keeps running.
     Inventory,
+    /// The character screen: the player's stats and what contributes to them; takes input like
+    /// a menu while the loop keeps running.
+    Character,
+}
+
+impl Screen {
+    /// Whether this is a screen over play that takes input like a menu while the loop keeps
+    /// running: the inventory or the character screen.
+    fn is_overlay(self) -> bool {
+        matches!(self, Self::Inventory | Self::Character)
+    }
 }
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
@@ -1037,8 +1070,6 @@ pub struct SearchlightGame {
     controls: Option<ControlsDraft>,
     /// Ticks the rig strip stays up after the last trigger.
     strip_ticks_left: u32,
-    /// The check-gear key was held on the last tick, which keeps the strip up.
-    check_gear_held: bool,
     /// Outlines of every character's hit volumes are drawn; session state, off at every launch.
     hit_volumes: bool,
 }
@@ -1073,7 +1104,6 @@ impl SearchlightGame {
             queued_inventory: None,
             controls: None,
             strip_ticks_left: 0,
-            check_gear_held: false,
             hit_volumes: false,
         }
     }
@@ -1101,16 +1131,10 @@ impl SearchlightGame {
         self.screen = Screen::Playing;
         self.stage.shell().menu_mut().clear();
         // Whatever was pressed or moved over the menu must not act in the arena.
-        self.release_held_input();
+        self.input.release_all();
         self.input.discard_edges();
         self.input.reset_look();
         self.stage.capture_cursor();
-    }
-
-    /// Lets go of every held input and the check-gear hold that mirrors it.
-    fn release_held_input(&mut self) {
-        self.input.release_all();
-        self.check_gear_held = false;
     }
 
     fn pause(&mut self) {
@@ -1119,19 +1143,19 @@ impl SearchlightGame {
         self.hand_input_to_screen();
     }
 
-    /// Whether `input` is bound to the inventory action.
-    fn is_inventory_key(&self, input: Input) -> bool {
+    /// Whether `input` is bound to `action`.
+    fn is_bound(&self, action: SearchlightAction, input: Input) -> bool {
         self.input
             .bindings()
-            .get(SearchlightAction::Inventory)
+            .get(action)
             .iter()
             .any(|binding| binding.input == input)
     }
 
     /// Whether the loop stands still: on the main menu or the pause menu, or with the console
-    /// open. The inventory screen takes input but leaves the world running.
+    /// open. The inventory and character screens take input but leave the world running.
     fn loop_paused(&self) -> bool {
-        !matches!(self.screen, Screen::Playing | Screen::Inventory)
+        !(self.screen == Screen::Playing || self.screen.is_overlay())
             || self.stage.shell().console_mut().is_open()
     }
 
@@ -1143,6 +1167,24 @@ impl SearchlightGame {
             Some(remains) => inventory::loot_lists(sim.loadout(), remains),
             None => inventory::gear_lists(sim.loadout()),
         }
+    }
+
+    /// The colour of the HUD's load icon, from the sim's load state.
+    pub fn load_icon(&self) -> hud::LoadIcon {
+        hud::load_icon(self.mode.sim().carry_sheet().state)
+    }
+
+    /// The load line the open inventory screen shows; `None` while it is closed.
+    pub fn inventory_header(&self) -> Option<inventory::LoadHeader> {
+        (self.screen == Screen::Inventory).then(|| header_of(&self.mode.sim().carry_sheet()))
+    }
+
+    /// Opens the character screen over play, the world still running behind it.
+    fn open_character(&mut self) {
+        self.screen = Screen::Character;
+        let lists = character::character_lists(self.mode.sim());
+        self.stage.shell().menu_mut().push_lists(lists);
+        self.hand_input_to_screen();
     }
 
     /// `command` with the host's levels and the inventory command the screen queued, the parts
@@ -1177,7 +1219,7 @@ impl SearchlightGame {
 
     /// Drops what play held or looked at and frees the cursor for a screen to use.
     fn hand_input_to_screen(&mut self) {
-        self.release_held_input();
+        self.input.release_all();
         self.input.discard_edges();
         self.input.reset_look();
         self.stage.release_cursor();
@@ -1258,6 +1300,9 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
                 MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Inventory => {
                     self.close_inventory();
+                }
+                MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Character => {
+                    self.enter_play();
                 }
                 MenuEvent::Chosen(MenuAction::Back) => {
                     self.controls = None;
@@ -1664,6 +1709,33 @@ impl SearchlightGame {
             })
             .into_iter()
             .collect();
+        let sheet = (live || self.screen == Screen::Inventory).then(|| sim.carry_sheet());
+        if let Some(sheet) = sheet.as_ref().filter(|_| live) {
+            texts.push(ScreenText {
+                text: "LOAD".to_owned(),
+                anchor: Anchor::BottomLeft,
+                offset: LOAD_ICON_OFFSET,
+                size: STRIP_SIZE,
+                color: load_icon_color(hud::load_icon(sheet.state)),
+            });
+        }
+        let header = sheet
+            .as_ref()
+            .filter(|_| self.screen == Screen::Inventory && !dead)
+            .map(header_of);
+        if let Some(header) = header {
+            let [slowed, no_sprint, cannot_move] = header.marks;
+            texts.push(ScreenText {
+                text: format!(
+                    "{}  (slowed {slowed:.1}, no sprint {no_sprint:.1}, cannot move {cannot_move:.1})",
+                    header.text
+                ),
+                anchor: Anchor::Top,
+                offset: [0.0, LOAD_HEADER_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: PROMPT_COLOR,
+            });
+        }
         if let Some(marks) = self.strip_marks().filter(|_| !dead) {
             texts.push(ScreenText {
                 text: hud::strip_text(&marks),
@@ -1679,9 +1751,9 @@ impl SearchlightGame {
     }
 
     /// The marks the rig strip shows, or `None` while it is hidden: shown for the fade ticks
-    /// after a trigger and while check gear is held, and never off the playing screen.
+    /// after a trigger, and never off the playing screen.
     fn strip_marks(&self) -> Option<Vec<hud::SlotMark>> {
-        let up = self.strip_ticks_left > 0 || self.check_gear_held;
+        let up = self.strip_ticks_left > 0;
         (self.screen == Screen::Playing && up).then(|| hud::rig_strip(self.mode.sim().rig()))
     }
 
@@ -1742,15 +1814,23 @@ impl SearchlightGame {
         match routing {
             // A key held as the console opened would otherwise stay held: its release goes to
             // the console.
-            Routing::Opened => self.release_held_input(),
+            Routing::Opened => self.input.release_all(),
             Routing::Console | Routing::Closed => {}
             Routing::Menu
                 if self.screen == Screen::Inventory
                     && pressed
                     && !repeat
-                    && self.is_inventory_key(input) =>
+                    && self.is_bound(SearchlightAction::Inventory, input) =>
             {
                 self.close_inventory();
+            }
+            Routing::Menu
+                if self.screen == Screen::Character
+                    && pressed
+                    && !repeat
+                    && self.is_bound(SearchlightAction::Character, input) =>
+            {
+                self.enter_play();
             }
             Routing::Menu => self.answer_menu(ctx),
             Routing::Game if self.screen != Screen::Playing => {}
@@ -1761,10 +1841,18 @@ impl SearchlightGame {
                 }
                 if pressed
                     && !repeat
-                    && self.is_inventory_key(input)
+                    && self.is_bound(SearchlightAction::Inventory, input)
                     && !self.mode.sim().player_body().is_dead()
                 {
                     self.open_inventory();
+                    return routing;
+                }
+                if pressed
+                    && !repeat
+                    && self.is_bound(SearchlightAction::Character, input)
+                    && !self.mode.sim().player_body().is_dead()
+                {
+                    self.open_character();
                     return routing;
                 }
                 match input {
@@ -1804,7 +1892,7 @@ impl Game for SearchlightGame {
             self.aiming = false;
             // The inventory screen leaves the world running: it keeps the host levels and sends
             // what the player asked of it, and nothing the player's hands would do.
-            return if self.screen == Screen::Inventory && !self.loop_paused() {
+            return if self.screen.is_overlay() && !self.loop_paused() {
                 self.with_host_levels(SearchlightCommand::default())
             } else {
                 SearchlightCommand::default()
@@ -1833,7 +1921,6 @@ impl Game for SearchlightGame {
         self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
         self.strip_ticks_left = self.strip_ticks_left.saturating_sub(1);
-        self.check_gear_held = command.check_gear;
         let dt = ctx.tick_length.as_secs_f32();
         self.mode.tick(command, dt);
         self.previous_bob = self.bob;
@@ -1963,6 +2050,14 @@ impl Game for SearchlightGame {
                 self.enter_play();
             } else {
                 let lists = self.inventory_lists();
+                self.stage.shell().menu_mut().set_lists(lists);
+            }
+        }
+        if self.screen == Screen::Character {
+            if dead {
+                self.enter_play();
+            } else {
+                let lists = character::character_lists(self.mode.sim());
                 self.stage.shell().menu_mut().set_lists(lists);
             }
         }
@@ -3545,9 +3640,45 @@ mod tests {
         frame.map(|frame| frame.meshes)
     }
 
-    /// Whether one more frame of `game` paints a prompt.
+    /// The load icon's screen text in the colour of `icon`.
+    fn load_text(icon: hud::LoadIcon) -> ScreenText {
+        ScreenText {
+            text: "LOAD".to_owned(),
+            anchor: Anchor::BottomLeft,
+            offset: LOAD_ICON_OFFSET,
+            size: STRIP_SIZE,
+            color: load_icon_color(icon),
+        }
+    }
+
+    /// What a fresh shell paints for `texts`, drawn on a twin game's shell so the glyph atlas
+    /// history matches a game that painted nothing before.
+    fn painted_texts(texts: Vec<ScreenText>) -> Option<Vec<UiMesh>> {
+        let twin = game_with_controls(&[]);
+        twin.stage
+            .shell()
+            .set_texts(texts)
+            .expect("valid screen texts");
+        let frame = twin.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    /// Whether one more frame of `game` paints anything beyond the load icon a living player
+    /// in play always has.
     fn prompt_shows(game: &mut SearchlightGame) -> bool {
-        painted(game).is_some_and(|meshes| !meshes.is_empty())
+        let live = game.screen == Screen::Playing && !game.sim().player_body().is_dead();
+        let icon = game.load_icon();
+        let paint = painted(game);
+        if live {
+            game.stage
+                .shell()
+                .set_texts(vec![load_text(icon)])
+                .expect("a valid load icon");
+            let load_only = game.stage.shell().ui_frame([800, 600]);
+            paint != load_only.map(|frame| frame.meshes)
+        } else {
+            paint.is_some_and(|meshes| !meshes.is_empty())
+        }
     }
 
     fn turn_around() -> SearchlightCommand {
@@ -3637,19 +3768,16 @@ mod tests {
     /// What a fresh shell paints for the use prompt reading `text`, drawn on a twin game's
     /// shell so the glyph atlas history matches a game that painted nothing before.
     fn painted_prompt_reading(text: &str) -> Option<Vec<UiMesh>> {
-        let twin = game_with_controls(&[]);
-        twin.stage
-            .shell()
-            .set_texts(vec![ScreenText {
+        painted_texts(vec![
+            ScreenText {
                 text: text.to_owned(),
                 anchor: Anchor::Center,
                 offset: [0.0, PROMPT_OFFSET_Y],
                 size: PROMPT_SIZE,
                 color: PROMPT_COLOR,
-            }])
-            .expect("a valid prompt");
-        let frame = twin.stage.shell().ui_frame([800, 600]);
-        frame.map(|frame| frame.meshes)
+            },
+            load_text(hud::LoadIcon::White),
+        ])
     }
 
     #[test]
@@ -3746,47 +3874,18 @@ mod tests {
         assert_eq!(long_after, None);
     }
 
-    #[test]
-    fn holding_check_gear_keeps_the_strip_until_release() {
-        let mut game = game_with_a_full_rig();
-        let mut clock = GameClock::new(0.0, 1.0, 1.0);
-        let hold = SearchlightCommand {
-            check_gear: true,
-            ..SearchlightCommand::default()
-        };
-        let before = game.strip_marks();
-
-        let mut while_held = Vec::new();
-        for _ in 0..crate::tuning::STRIP_FADE_TICKS + 30 {
-            tick_with(&mut game, &mut clock, &hold);
-            while_held.push(game.strip_marks().is_some());
-        }
-        idle_ticks(&mut game, &mut clock, 1);
-        let after_release = game.strip_marks();
-
-        assert_eq!(before, None, "the strip starts hidden");
-        assert!(
-            while_held.iter().all(|&showing| showing),
-            "hidden while held: {while_held:?}"
-        );
-        assert_eq!(after_release, None, "still showing after the release");
-    }
-
     /// What a fresh shell paints for the rig strip reading `text`, on a twin game's shell.
     fn painted_strip_reading(text: &str) -> Option<Vec<UiMesh>> {
-        let twin = game_with_controls(&[]);
-        twin.stage
-            .shell()
-            .set_texts(vec![ScreenText {
+        painted_texts(vec![
+            load_text(hud::LoadIcon::White),
+            ScreenText {
                 text: text.to_owned(),
                 anchor: Anchor::Bottom,
                 offset: [0.0, STRIP_OFFSET_Y],
                 size: STRIP_SIZE,
                 color: STRIP_COLOR,
-            }])
-            .expect("a valid strip");
-        let frame = twin.stage.shell().ui_frame([800, 600]);
-        frame.map(|frame| frame.meshes)
+            },
+        ])
     }
 
     #[test]
@@ -3808,25 +3907,16 @@ mod tests {
     #[test]
     fn the_strip_is_not_painted_for_a_dead_player() {
         let mut reloaded = game_with_a_full_rig();
-        let mut checking = game_with_a_full_rig();
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         finish_a_reload(&mut reloaded, &mut clock);
         let alive = prompt_shows(&mut reloaded);
-        let hold = SearchlightCommand {
-            check_gear: true,
-            ..SearchlightCommand::default()
-        };
 
         reloaded.mode.sim_mut().kill_player();
         idle_ticks(&mut reloaded, &mut clock, 1);
-        checking.mode.sim_mut().kill_player();
-        tick_with(&mut checking, &mut clock, &hold);
 
         assert!(alive, "no strip to take away");
         assert!(reloaded.sim().player_body().is_dead());
-        assert!(checking.sim().player_body().is_dead());
         assert!(!prompt_shows(&mut reloaded), "painted after a reload");
-        assert!(!prompt_shows(&mut checking), "painted for held check gear");
     }
 
     #[test]
@@ -3870,28 +3960,6 @@ mod tests {
             "the second reload did not renew the fade"
         );
         assert_eq!(at_the_fade, None, "the fades added up");
-    }
-
-    #[test]
-    fn check_gear_held_into_a_menu_does_not_show_the_strip_on_return() {
-        let mut paused = game_with_a_full_rig();
-        let mut console = game_with_a_full_rig();
-        let mut clock = GameClock::new(0.0, 1.0, 1.0);
-        let hold = SearchlightCommand {
-            check_gear: true,
-            ..SearchlightCommand::default()
-        };
-        tick_with(&mut paused, &mut clock, &hold);
-        tick_with(&mut console, &mut clock, &hold);
-        let held = paused.strip_marks().is_some();
-
-        paused.pause();
-        paused.enter_play();
-        open_the_console(&mut console, &clock);
-
-        assert!(held, "no strip to take away");
-        assert_eq!(paused.strip_marks(), None, "pause leaked the hold");
-        assert_eq!(console.strip_marks(), None, "the console leaked the hold");
     }
 
     #[test]
@@ -4100,7 +4168,7 @@ mod tests {
     fn a_press_made_as_the_console_opens_does_not_act_on_close() {
         for press_binding in [
             Input::Mouse(moho_input::key::MouseButton::Left),
-            Input::Key(Key::C),
+            Input::Key(Key::Q),
             // Reload taps on R's release, so the release after close must not tap either.
             Input::Key(Key::R),
         ] {
@@ -7474,6 +7542,356 @@ mod tests {
         assert_eq!(
             list_ids_on_top(&game),
             Some(vec![EQUIPMENT, MAGAZINE_SLOTS, INVENTORY])
+        );
+    }
+
+    /// A game whose player carries `kg` of ballast against 30 kg of capacity, ticked once.
+    fn game_carrying(kg: f32) -> SearchlightGame {
+        let config = crate::test_support::carrying(test_config(rifle_from(mag(30, 5)), vec![]), kg);
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        game
+    }
+
+    /// The titles of the lists on the top screen and the row labels of each.
+    fn character_screen(game: &mut SearchlightGame) -> Vec<(String, Vec<String>)> {
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::K), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::K), false, false);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(game, Duration::ZERO);
+        let mut shell = game.stage.shell();
+        shell
+            .menu_mut()
+            .top_lists()
+            .map(|screen| {
+                screen
+                    .lists
+                    .iter()
+                    .map(|list| {
+                        let rows = list.rows.iter().map(|row| row.label.clone()).collect();
+                        (list.title.clone(), rows)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn character_screen_lists_load_under_movement_speed() {
+        let mut game = game_carrying(20.0);
+
+        let screen = character_screen(&mut game);
+
+        let titles: Vec<&str> = screen.iter().map(|(title, _)| title.as_str()).collect();
+        assert_eq!(titles, ["Carry capacity", "Movement speed", "Stamina"]);
+        let speed = &screen[1].1;
+        assert!(
+            speed.contains(&"Load: speed ×0.70".to_owned()),
+            "movement speed lists {speed:?}"
+        );
+    }
+
+    #[test]
+    fn the_hud_load_icon_follows_the_sims_load_state() {
+        let expected = [
+            (15.0, hud::LoadIcon::White),
+            (20.0, hud::LoadIcon::Yellow),
+            (25.0, hud::LoadIcon::Yellow),
+            (30.0, hud::LoadIcon::Red),
+        ];
+
+        for (kg, icon) in expected {
+            let game = game_carrying(kg);
+
+            assert_eq!(game.load_icon(), icon, "{kg} of 30 kg");
+        }
+    }
+
+    #[test]
+    fn the_hud_paints_the_load_icon_in_the_colour_of_the_load_state() {
+        let expected = [
+            (15.0, hud::LoadIcon::White),
+            (20.0, hud::LoadIcon::Yellow),
+            (30.0, hud::LoadIcon::Red),
+        ];
+        let mut paints = Vec::new();
+
+        for (kg, icon) in expected {
+            let mut game = game_carrying(kg);
+
+            let paint = painted(&mut game);
+
+            assert!(paint.is_some(), "{kg} kg: nothing painted");
+            assert_eq!(paint, painted_texts(vec![load_text(icon)]), "{kg} kg");
+            paints.push(paint);
+        }
+        assert_ne!(paints[0], paints[1], "white and yellow paint alike");
+        assert_ne!(paints[1], paints[2], "yellow and red paint alike");
+        assert_ne!(paints[0], paints[2], "white and red paint alike");
+    }
+
+    #[test]
+    fn the_hud_paints_the_load_icon_white_for_a_player_carrying_nothing() {
+        let mut game = game_carrying(0.0);
+
+        let paint = painted(&mut game);
+
+        assert_eq!(game.sim().load_kg(), 0.0);
+        assert_eq!(paint, painted_texts(vec![load_text(hud::LoadIcon::White)]));
+    }
+
+    #[test]
+    fn the_open_inventory_paints_the_load_header_with_the_threshold_marks() {
+        let mut game = game_carrying(20.0);
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        let header = |text: &str| ScreenText {
+            text: text.to_owned(),
+            anchor: Anchor::Top,
+            offset: [0.0, LOAD_HEADER_OFFSET_Y],
+            size: PROMPT_SIZE,
+            color: PROMPT_COLOR,
+        };
+        let paint_with = |game: &mut SearchlightGame, text: &str| {
+            game.stage
+                .shell()
+                .set_texts(vec![header(text)])
+                .expect("valid screen texts");
+            let frame = game.stage.shell().ui_frame([800, 600]);
+            frame.map(|frame| frame.meshes)
+        };
+
+        let paint = painted(&mut game);
+
+        let expected = paint_with(
+            &mut game,
+            "20.0 of 30.0 kg  (slowed 18.0, no sprint 24.0, cannot move 30.0)",
+        );
+        let without_marks = paint_with(&mut game, "20.0 of 30.0 kg");
+        assert_eq!(game.screen, Screen::Inventory);
+        assert_eq!(paint, expected);
+        assert_ne!(paint, without_marks);
+    }
+
+    #[test]
+    fn the_open_inventory_shows_the_load_header_and_the_closed_one_none() {
+        let mut game = game_carrying(20.0);
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let closed = game.screen;
+
+        game.route_input(&mut ctx, TAB, true, false);
+        let header = game.inventory_header();
+
+        assert_eq!(closed, Screen::Playing);
+        assert_eq!(game.screen, Screen::Inventory);
+        let header = header.expect("the open inventory shows a header");
+        assert_eq!(header.text, "20.0 of 30.0 kg");
+        assert_eq!(header.marks, [18.0, 24.0, 30.0]);
+    }
+
+    #[test]
+    fn character_screen_lists_no_load_under_movement_speed_for_a_fine_player() {
+        let mut game = game_carrying(15.0);
+
+        let screen = character_screen(&mut game);
+
+        let speed: Vec<&String> = screen
+            .iter()
+            .filter(|(title, _)| title == "Movement speed")
+            .flat_map(|(_, rows)| rows)
+            .collect();
+        assert!(!screen.is_empty(), "the character screen did not open");
+        assert!(
+            speed.iter().all(|row| !row.starts_with("Load")),
+            "{speed:?}"
+        );
+    }
+
+    fn key_press(game: &mut SearchlightGame, key: Key) -> Routing {
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        let routing = game.route_input(&mut ctx, Input::Key(key), true, false);
+        game.route_input(&mut ctx, Input::Key(key), false, false);
+        routing
+    }
+
+    fn advance_a_frame(game: &mut SearchlightGame) {
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(game, Duration::ZERO);
+    }
+
+    /// The row labels of the list titled `title` on the top screen.
+    fn rows_of(game: &SearchlightGame, title: &str) -> Vec<String> {
+        let mut shell = game.stage.shell();
+        shell
+            .menu_mut()
+            .top_lists()
+            .and_then(|screen| screen.lists.iter().find(|list| list.title == title))
+            .map(|list| list.rows.iter().map(|row| row.label.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn typing_k_into_the_console_does_not_open_the_character_screen() {
+        let mut game = game();
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+
+        let routing = key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+
+        assert_eq!(routing, Routing::Console);
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(game.stage.shell().menu_mut().top_lists().is_none());
+    }
+
+    #[test]
+    fn the_character_key_does_nothing_while_paused() {
+        let mut game = game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+
+        assert_eq!(game.screen, Screen::Paused);
+        assert!(game.stage.shell().menu_mut().top_lists().is_none());
+    }
+
+    #[test]
+    fn the_character_key_does_nothing_while_dead() {
+        let (mut game, mut clock) = game_beside_a_body();
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        assert!(game.sim().player_body().is_dead());
+
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!game.stage.shell().menu_mut().is_open());
+    }
+
+    #[test]
+    fn dying_with_the_character_screen_open_closes_it() {
+        let (mut game, mut clock) = game_beside_a_body();
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+        assert_eq!(game.screen, Screen::Character);
+
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        advance_a_frame(&mut game);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!game.stage.shell().menu_mut().is_open());
+    }
+
+    #[test]
+    fn an_open_character_screen_sends_no_movement_fire_or_look_but_keeps_the_host_levels() {
+        let mut game = game();
+        game.god_mode = true;
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::K), true, false);
+        assert_eq!(game.screen, Screen::Character);
+
+        press(game.input_mut(), SearchlightAction::Fire);
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 0.0);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert!(!command.fire);
+        assert!(command.god_mode);
+    }
+
+    /// Like [`game_beside_a_body`], with the player carrying `kg` of ballast.
+    fn game_beside_a_body_carrying(kg: f32) -> (SearchlightGame, GameClock) {
+        let mut config =
+            crate::test_support::carrying(test_config(rifle_from(mag(30, 30)), vec![]), kg);
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_remains = Remains::default();
+        let body_at = Vec3::new(0.0, 0.0, 1.5);
+        let arena = arena_with(&[], Vec3::ZERO, &[body_at], &[Vec3::new(0.0, 0.0, 10.0)]);
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        game.mode.sim_mut().kill_enemy(0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let pitch = (game.sim().eye_height() - 0.3).atan2(body_at.z);
+        let look = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                pitch_delta: -pitch,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &look);
+        game.mode.drain_feedback();
+        (game, clock)
+    }
+
+    #[test]
+    fn the_character_screen_drops_the_load_row_when_the_sim_lightens_the_player() {
+        let (mut game, mut clock) = game_beside_a_body_carrying(20.0);
+        key_press(&mut game, Key::K);
+        advance_a_frame(&mut game);
+        let before = rows_of(&game, "Movement speed");
+        let using = SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &using);
+        for _ in 0..30 {
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        }
+        assert_eq!(game.sim().looting(), Some(0), "the search never finished");
+        assert_eq!(game.screen, Screen::Character);
+        let unchanged = rows_of(&game, "Movement speed");
+
+        let unload = SearchlightCommand {
+            inventory: Some(InventoryCommand::Move {
+                from: Source::Inventory(0),
+                to: Place::Body,
+            }),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &unload);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        advance_a_frame(&mut game);
+        let after = rows_of(&game, "Movement speed");
+
+        assert!(
+            before.contains(&"Load: speed ×0.70".to_owned()),
+            "{before:?}"
+        );
+        assert_eq!(unchanged, before);
+        assert!(
+            after.iter().all(|row| !row.starts_with("Load")),
+            "{after:?}"
         );
     }
 

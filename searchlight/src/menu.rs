@@ -2,7 +2,7 @@
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
 use moho_input::Action;
-use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, MenuItem, MenuScreen};
+use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, ListRow, MenuItem, MenuScreen};
 
 use crate::controls::{ControlsDraft, label};
 use crate::debug_settings::GameRows;
@@ -37,6 +37,20 @@ pub enum MenuAction {
     ItemAction(ItemAction),
     /// Opens a Settings page.
     Page(SettingsPage),
+}
+
+/// The row at `index` of an item list: `label` and `count`, with no tooltip or actions.
+///
+/// # Panics
+/// If `index` does not fit a `u32`, which no list reaches.
+pub fn item_row(index: usize, label: String, count: Option<u32>) -> ListRow<MenuAction> {
+    ListRow {
+        label,
+        count,
+        tooltip: None,
+        item: MenuAction::Item(u32::try_from(index).expect("a list has fewer than 2^32 rows")),
+        actions: Vec::new(),
+    }
 }
 
 /// A category of the Settings screen, in the order they are listed.
@@ -636,13 +650,13 @@ mod tests {
             "Spacebar",
             "Mouse Left",
             "R",
-            "C",
-            "Hold C",
+            "Hold R",
             "F8",
             "Q",
             "E",
             "F",
             "Tab",
+            "K",
             "Mouse Right",
         ]
         .map(|text| Some(text.to_owned()))
@@ -692,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn check_magazine_shows_hold_r_as_its_secondary() {
+    fn check_magazine_shows_hold_r_and_no_c() {
         let draft = ControlsDraft::new(&default_bindings());
 
         let rows = control_rows(&controls_screen(&draft));
@@ -701,12 +715,11 @@ mod tests {
             .iter()
             .position(|&a| a == SearchlightAction::CheckMagazine)
             .expect("the action is listed");
-        assert_eq!(
-            rows[at].1,
-            [
-                Some(Binding::key(Key::C)),
-                Some(Binding::key(Key::R).held())
-            ]
+        assert_eq!(rows[at].1, [Some(Binding::key(Key::R).held()), None]);
+        assert!(
+            rows.iter()
+                .all(|(_, slots)| !slots.contains(&Some(Binding::key(Key::C)))),
+            "no row shows C"
         );
     }
 
@@ -736,10 +749,7 @@ mod tests {
         );
         assert_eq!(
             slots(SearchlightAction::CheckMagazine),
-            [
-                Some(Binding::key(Key::C)),
-                Some(Binding::key(Key::R).held())
-            ]
+            [Some(Binding::key(Key::R).held()), None]
         );
     }
 }

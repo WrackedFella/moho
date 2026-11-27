@@ -1,6 +1,7 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
 use crate::ballistics::{Ballistics, MIN_SPEED, RoundStats};
+use crate::stats::{Stat, Verb};
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -236,6 +237,50 @@ impl ItemKind {
     }
 }
 
+/// One change a worn item makes to a stat.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemStat {
+    /// The stat it changes.
+    pub stat: Stat,
+    /// How it changes it.
+    pub verb: Verb,
+}
+
+/// Unvalidated wire form of an [`ItemStat`]: the stat and exactly one of `add`, `scale`, `cap`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawItemStat {
+    stat: Stat,
+    add: Option<f32>,
+    scale: Option<f32>,
+    cap: Option<f32>,
+}
+
+impl TryFrom<RawItemStat> for ItemStat {
+    type Error = ItemDefError;
+
+    fn try_from(raw: RawItemStat) -> Result<Self, Self::Error> {
+        let stat = raw.stat;
+        let refused = Err(ItemDefError::StatEntry { stat });
+        let (verb, value, non_negative) = match (raw.add, raw.scale, raw.cap) {
+            (Some(x), None, None) => (Verb::Add(x), x, false),
+            (None, Some(x), None) => (Verb::Scale(x), x, true),
+            (None, None, Some(x)) => (Verb::Cap(x), x, true),
+            _ => return refused,
+        };
+        let valid = if non_negative {
+            finite_non_negative(value)
+        } else {
+            value.is_finite()
+        };
+        if valid {
+            Ok(Self { stat, verb })
+        } else {
+            refused
+        }
+    }
+}
+
 /// An item as defined in data.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(try_from = "RawItemDef")]
@@ -250,6 +295,13 @@ pub struct ItemDef {
     pub weight: f32,
     /// What the item does.
     pub kind: ItemKind,
+    /// What wearing the item does to the player's stats.
+    pub stats: Vec<ItemStat>,
+}
+
+/// Whether `value` is a number that is 0 or more: not negative, `NaN` or infinite.
+pub(crate) fn finite_non_negative(value: f32) -> bool {
+    value.is_finite() && value >= 0.0
 }
 
 /// Why an item definition was refused.
@@ -282,6 +334,12 @@ pub enum ItemDefError {
     /// More than one section was given.
     #[error("an item takes at most one section")]
     TwoSections,
+    /// A stats entry that is not a stat with exactly one finite add, scale or cap.
+    #[error("stats entry for {stat:?} is not exactly one finite add, scale or cap")]
+    StatEntry {
+        /// The entry's stat.
+        stat: Stat,
+    },
 }
 
 /// Unvalidated wire form of an [`ItemDef`].
@@ -298,6 +356,8 @@ struct RawItemDef {
     round: Option<RoundSpec>,
     rig: Option<RigSpec>,
     backpack: Option<BackpackSpec>,
+    #[serde(default)]
+    stats: Vec<RawItemStat>,
 }
 
 impl RawItemDef {
@@ -319,13 +379,18 @@ impl TryFrom<RawItemDef> for ItemDef {
 
     fn try_from(raw: RawItemDef) -> Result<Self, Self::Error> {
         let lifecycle = raw.lifecycle()?;
-        if !(raw.weight.is_finite() && raw.weight >= 0.0) {
+        if !finite_non_negative(raw.weight) {
             return Err(ItemDefError::Weight(raw.weight));
         }
         let [width, height] = raw.size;
         if width == 0 || height == 0 {
             return Err(ItemDefError::ZeroSize);
         }
+        let stats = raw
+            .stats
+            .into_iter()
+            .map(ItemStat::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
         let class = raw.class;
         let mut sections = [
             raw.weapon.map(ItemKind::Weapon),
@@ -351,6 +416,7 @@ impl TryFrom<RawItemDef> for ItemDef {
             lifecycle,
             weight: raw.weight,
             kind,
+            stats,
         })
     }
 }
@@ -375,6 +441,9 @@ mod tests {
         Text(&'static str),
         Size([u8; 2]),
         Float(f32),
+        List(Vec<Field>),
+        /// A stats entry: its stat and one verb key with a float value.
+        Entry(&'static str, &'static str, f32),
     }
 
     impl<'de> serde::Deserializer<'de> for Field {
@@ -391,7 +460,23 @@ mod tests {
                         size.into_iter(),
                     )),
                 Field::Float(float) => visitor.visit_f32(float),
+                Field::List(items) => visitor
+                    .visit_seq(serde::de::value::SeqDeserializer::<_, Self::Error>::new(
+                        items.into_iter(),
+                    )),
+                Field::Entry(stat, key, value) => {
+                    visitor.visit_map(serde::de::value::MapDeserializer::<_, Self::Error>::new(
+                        [("stat", Field::Text(stat)), (key, Field::Float(value))].into_iter(),
+                    ))
+                }
             }
+        }
+
+        fn deserialize_option<V: serde::de::Visitor<'de>>(
+            self,
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            visitor.visit_some(self)
         }
 
         fn deserialize_enum<V: serde::de::Visitor<'de>>(
@@ -410,7 +495,7 @@ mod tests {
 
         serde::forward_to_deserialize_any! {
             bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
-            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map
+            byte_buf unit unit_struct newtype_struct seq tuple tuple_struct map
             struct identifier ignored_any
         }
     }
@@ -436,6 +521,25 @@ mod tests {
 
         ItemDef::deserialize(definition)
             .expect_err("the weight should be refused")
+            .to_string()
+            .to_lowercase()
+    }
+
+    /// The error text of a gear definition whose one stats entry gives `key` the float `value`
+    /// on `stat`, which JSON cannot always say.
+    fn stat_error_text(stat: &'static str, key: &'static str, value: f32) -> String {
+        let fields = [
+            ("class", Field::Text("gear")),
+            ("size", Field::Size([1, 1])),
+            ("weight", Field::Float(1.0)),
+            ("stats", Field::List(vec![Field::Entry(stat, key, value)])),
+        ];
+        let definition = serde::de::value::MapDeserializer::<_, serde::de::value::Error>::new(
+            fields.into_iter(),
+        );
+
+        ItemDef::deserialize(definition)
+            .expect_err("the non-finite verb should be refused")
             .to_string()
             .to_lowercase()
     }
@@ -835,5 +939,93 @@ mod tests {
         }));
 
         assert!(text.contains("slots"), "{text}");
+    }
+
+    fn pack_with_stats(stats: Value) -> Value {
+        json!({"class": "gear", "size": [3, 3], "backpack": {}, "stats": stats})
+    }
+
+    #[test]
+    fn a_stats_entry_loads_its_stat_and_verb() {
+        let item = parse(pack_with_stats(json!([
+            {"stat": "carry_capacity", "add": 10.0},
+            {"stat": "carry_capacity", "scale": 1.2},
+            {"stat": "movement_speed", "cap": 0.5},
+        ])))
+        .expect("each entry names a stat and one verb");
+
+        assert_eq!(
+            item.stats,
+            [
+                ItemStat {
+                    stat: Stat::CarryCapacity,
+                    verb: Verb::Add(10.0)
+                },
+                ItemStat {
+                    stat: Stat::CarryCapacity,
+                    verb: Verb::Scale(1.2)
+                },
+                ItemStat {
+                    stat: Stat::MovementSpeed,
+                    verb: Verb::Cap(0.5)
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_entry_with_no_verb_or_two_verbs_is_refused_naming_the_stat() {
+        let entries = [
+            (json!({"stat": "carry_capacity"}), "carry"),
+            (
+                json!({"stat": "stamina", "add": 1.0, "scale": 2.0}),
+                "stamina",
+            ),
+        ];
+        for (entry, named) in entries {
+            let text = error_text(pack_with_stats(json!([entry])));
+
+            assert!(text.contains(named), "{entry}: {text}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_add_scale_or_cap_is_refused_naming_the_stat() {
+        for key in ["add", "scale", "cap"] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let text = stat_error_text("movement_speed", key, value);
+
+                assert!(text.contains("movement"), "{key} {value}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_negative_scale_or_cap_is_refused_and_a_negative_add_is_kept() {
+        for entry in [
+            json!({"stat": "movement_speed", "scale": -0.5}),
+            json!({"stat": "movement_speed", "cap": -1.0}),
+        ] {
+            let result = parse(pack_with_stats(json!([entry])));
+
+            assert!(result.is_err(), "{entry} was accepted");
+        }
+        let item = parse(pack_with_stats(json!([
+            {"stat": "movement_speed", "add": -0.1}
+        ])))
+        .expect("a penalty is a negative add");
+
+        assert_eq!(item.stats[0].verb, Verb::Add(-0.1));
+    }
+
+    #[test]
+    fn an_unknown_stat_or_key_in_an_entry_is_refused() {
+        let stat = error_text(pack_with_stats(json!([{"stat": "luck", "add": 1.0}])));
+        let key = error_text(pack_with_stats(json!([
+            {"stat": "stamina", "add": 1.0, "mul": 2.0}
+        ])));
+
+        assert!(stat.contains("luck"), "{stat}");
+        assert!(key.contains("mul"), "{key}");
     }
 }

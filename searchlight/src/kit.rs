@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use moho_core::content::{ContentError, ContentRoots, load_kind};
+use moho_core::content::{ContentError, ContentRoots, Definitions, load_kind};
 use searchlight_rules::{
     ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats, check_launch,
 };
@@ -42,7 +42,7 @@ pub fn load_enemy(
     roots: &ContentRoots,
     kit: &str,
 ) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup))
+    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup)).map(|(enemy, _)| enemy)
 }
 
 /// Loads `items` and `kits` through `roots` once and resolves the kit `start` as the player's
@@ -55,7 +55,7 @@ pub fn load_enemy(
 ///
 /// # Errors
 ///
-/// As [`load`] and [`load_enemy`]; also [`KitLoadError::Kit`] for `enemy` with
+/// As [`load_catalogue`] and [`load_enemy`]; also [`KitLoadError::Kit`] for `enemy` with
 /// [`KitError::TooSlowFromWeapon`] or [`KitError::NotFiniteFromWeapon`], naming the player's
 /// weapon and the round, when the player's barrel launches an enemy round too slowly or at a
 /// speed that is not finite.
@@ -63,27 +63,22 @@ pub fn load_start_and_enemy(
     roots: &ContentRoots,
     start: &str,
     enemy: &str,
-) -> Result<(Kit, Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    let items = load_kind::<ItemDef>(roots, "items")?;
-    let kits = load_kind::<KitDef>(roots, "kits")?;
-    let lookup = |id: &ItemId| items.get(id.as_str());
-    let kit_error = |kit: &str| {
-        let kit = kit.to_owned();
-        move |source| KitLoadError::Kit { kit, source }
-    };
-    let start_def = kits.require(start)?;
-    let enemy_def = kits.require(enemy)?;
-    let kit = start_def.resolve(lookup).map_err(kit_error(start))?;
-    let (remains, rounds) = enemy_def
-        .resolve_remains(lookup)
-        .map_err(kit_error(enemy))?;
+) -> Result<(Catalogue, Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
+    let catalogue = load_catalogue(roots, start)?;
+    let (remains, rounds) = load_enemy(roots, enemy)?;
     for (round, stats) in &rounds {
-        check_launch(&start_def.weapon, &kit.weapon, round, stats).map_err(kit_error(enemy))?;
+        check_launch(&catalogue.weapon, &catalogue.kit.weapon, round, stats).map_err(|source| {
+            KitLoadError::Kit {
+                kit: enemy.to_owned(),
+                source,
+            }
+        })?;
     }
-    Ok((kit, remains, rounds))
+    Ok((catalogue, remains, rounds))
 }
 
-/// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`.
+/// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`,
+/// returning the result with the item definitions it resolved against.
 fn resolve_kit<T>(
     roots: &ContentRoots,
     kit: &str,
@@ -91,14 +86,58 @@ fn resolve_kit<T>(
         &'d KitDef,
         &dyn Fn(&ItemId) -> Option<&'d ItemDef>,
     ) -> Result<T, KitError>,
-) -> Result<T, KitLoadError> {
+) -> Result<(T, Definitions<ItemDef>), KitLoadError> {
     let items = load_kind::<ItemDef>(roots, "items")?;
     let kits = load_kind::<KitDef>(roots, "kits")?;
-    resolve(kits.require(kit)?, &|id: &ItemId| items.get(id.as_str())).map_err(|source| {
-        KitLoadError::Kit {
-            kit: kit.to_owned(),
-            source,
-        }
+    let resolved =
+        resolve(kits.require(kit)?, &|id: &ItemId| items.get(id.as_str())).map_err(|source| {
+            KitLoadError::Kit {
+                kit: kit.to_owned(),
+                source,
+            }
+        })?;
+    Ok((resolved, items))
+}
+
+/// A resolved kit with the item definitions it was resolved against and the id of its weapon.
+#[derive(Debug)]
+pub struct Catalogue {
+    /// The resolved kit.
+    pub kit: Kit,
+    /// The item id of the kit's weapon.
+    pub weapon: ItemId,
+    items: Definitions<ItemDef>,
+}
+
+impl Catalogue {
+    /// The definition of each of `ids`, by id.
+    ///
+    /// # Errors
+    ///
+    /// [`KitLoadError::Content`] naming the first id the catalogue does not define. An id a
+    /// resolved kit holds is always defined, so this means `ids` came from somewhere else.
+    pub fn define(&self, ids: &[ItemId]) -> Result<BTreeMap<ItemId, ItemDef>, KitLoadError> {
+        ids.iter()
+            .map(|id| Ok((id.clone(), self.items.require(id.as_str())?.clone())))
+            .collect()
+    }
+}
+
+/// Loads `items` and `kits` through `roots` and resolves the kit `kit`, keeping the item
+/// definitions for [`Catalogue::define`].
+///
+/// # Errors
+///
+/// As [`load`].
+pub fn load_catalogue(roots: &ContentRoots, kit: &str) -> Result<Catalogue, KitLoadError> {
+    let ((resolved, weapon), items) = resolve_kit(roots, kit, |def, lookup| {
+        def.resolve(lookup)
+            .map(|resolved| (resolved, def.weapon.clone()))
+    })?;
+    Ok(Catalogue {
+        kit: resolved,
+        weapon,
+        items,
     })
 }
 
@@ -109,7 +148,7 @@ fn resolve_kit<T>(
 /// [`KitLoadError::Content`] when a file or entry is malformed or `kit` is undefined;
 /// [`KitLoadError::Kit`] when the kit names an unknown or unsuitable item.
 pub fn load(roots: &ContentRoots, kit: &str) -> Result<Kit, KitLoadError> {
-    resolve_kit(roots, kit, |def, lookup| def.resolve(lookup))
+    resolve_kit(roots, kit, |def, lookup| def.resolve(lookup)).map(|(kit, _)| kit)
 }
 
 #[cfg(test)]
@@ -665,10 +704,10 @@ round = { caliber = "5.56x45", muzzle_velocity = 150.0, drag = 1.0, damage = 20 
     fn a_looted_round_fast_enough_for_the_players_barrel_is_accepted() {
         let (_dir, roots) = looting_content("round_ball");
 
-        let (start, remains, rounds) =
+        let (catalogue, remains, rounds) =
             load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID).expect("both kits load");
 
-        assert_eq!(start.weapon.muzzle_velocity_factor.get(), 0.5);
+        assert_eq!(catalogue.kit.weapon.muzzle_velocity_factor.get(), 0.5);
         assert!(matches!(remains.carried.first(), Some(Item::Weapon(_))));
         assert!(rounds.contains_key(&ItemId::new("round_ball")));
     }

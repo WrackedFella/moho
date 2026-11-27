@@ -13,9 +13,11 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport,
-    ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Place, Remains, Rifle,
-    Rig, RoundStats, Shot, Source, VelocityFactor, arrival_damage, disc_offset, leaned_parts,
+    Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Contribution, Flight, FlightBounds,
+    Grade, HitReport, ItemDef, ItemId, Lean, LeanReach, LeanSide, LeanTuning, LoadState,
+    LoadThresholds, Loadout, MagazineLevel, Place, PlayerDef, Remains, Rifle, Rig, RoundStats,
+    Shot, Source, SourceLabel, Stat, VelocityFactor, Verb, arrival_damage, disc_offset,
+    equipment_contributions, leaned_parts, load, load_contributions, load_state, resolve,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -176,6 +178,45 @@ pub struct SimConfig {
     pub body_radius: f32,
     /// What every enemy carried and wore, which it leaves as a body when it dies.
     pub enemy_remains: Remains,
+    /// What the player's load is priced and resolved from.
+    pub carry: CarryConfig,
+}
+
+/// The data the player's load and stats resolve from.
+#[derive(Clone, Debug)]
+pub struct CarryConfig {
+    /// The attribute sheet, thresholds and baselines.
+    pub player: PlayerDef,
+    /// Every item the player can carry, by id, for its weight and stats.
+    pub items: BTreeMap<ItemId, ItemDef>,
+    /// The item id of the rifle in hand.
+    pub weapon: ItemId,
+}
+
+/// The player's load and stat contributions at one moment, from [`SearchlightSim::carry_sheet`].
+#[derive(Clone, Debug)]
+pub struct CarrySheet {
+    /// Everything carried and worn, in kilograms.
+    pub load_kg: f32,
+    /// What the player can carry, in kilograms.
+    pub capacity: f32,
+    /// How far load has taken the player's capability.
+    pub state: LoadState,
+    /// Every contribution to the player's stats, from equipment, load and stance.
+    pub contributions: Vec<Contribution>,
+    player: PlayerDef,
+}
+
+impl CarrySheet {
+    /// The player's resolved `stat`.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        resolve(stat, self.player.baseline(stat), 0.0, &self.contributions)
+    }
+
+    /// Where load, as a fraction of capacity, changes the player's state.
+    pub fn thresholds(&self) -> &LoadThresholds {
+        &self.player.thresholds
+    }
 }
 
 /// Something the player should see, hear or read, in the order it happened.
@@ -490,6 +531,9 @@ pub struct SearchlightSim {
     weapon: Weapon,
     lean: Lean,
     lean_tuning: LeanTuning,
+    /// Whether the last tick's command held a lean, which the stance source reads. Simulation
+    /// state; every stat contribution is derived from it and the loadout.
+    leaning_held: bool,
     accuracy: Accuracy,
     /// Whether the player has touched ground since spawning: a fresh spawn reads airborne until
     /// its first move, and that is not a jump.
@@ -648,6 +692,7 @@ impl SearchlightSim {
             weapon: Weapon::Ready,
             lean: Lean::default(),
             lean_tuning: config.lean,
+            leaning_held: false,
             accuracy: Accuracy::default(),
             landed: false,
             accuracy_tuning: config.accuracy,
@@ -679,13 +724,9 @@ impl SearchlightSim {
             return;
         }
         let firing = self.move_enemies(dt);
-        let factor = if command.lean.is_some() {
-            self.lean_tuning.speed_factor
-        } else {
-            1.0
-        };
+        self.leaning_held = command.lean.is_some();
         let settings = MoveSettings {
-            max_speed: self.move_settings.max_speed * factor,
+            max_speed: self.move_settings.max_speed * self.carry_sheet().stat(Stat::MovementSpeed),
             ..self.move_settings
         };
         self.world
@@ -1468,9 +1509,71 @@ impl SearchlightSim {
         &self.loadout
     }
 
-    /// The player's walking speed in m/s, before a lean slows it.
+    /// The player's walking speed in m/s, before a lean or load slows it.
     pub fn max_speed(&self) -> f32 {
         self.move_settings.max_speed
+    }
+
+    /// What the player carries, can carry and is slowed by, worked out from the loadout and the
+    /// held lean in one pass. Derived on every call and never stored (ADR-0041); a caller
+    /// needing several of its values takes one sheet and reads them all from it.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn carry_sheet(&self) -> CarrySheet {
+        let carry = &self.config().carry;
+        let load_kg = load(&self.loadout, &carry.weapon, |id| carry.items.get(id))
+            .expect("every item the player holds is defined in the carry config");
+        let mut contributions = equipment_contributions(&self.loadout, |id| carry.items.get(id))
+            .expect("every worn item is defined in the carry config");
+        let capacity = resolve(
+            Stat::CarryCapacity,
+            carry.player.baseline(Stat::CarryCapacity),
+            0.0,
+            &contributions,
+        );
+        let state = load_state(load_kg, capacity, &carry.player.thresholds);
+        contributions.extend(load_contributions(state, carry.player.slowed_scale));
+        if self.leaning_held {
+            contributions.push(Contribution {
+                source: SourceLabel::Stance,
+                stat: Stat::MovementSpeed,
+                verb: Verb::Scale(self.lean_tuning.speed_factor),
+            });
+        }
+        CarrySheet {
+            load_kg,
+            capacity,
+            state,
+            contributions,
+            player: carry.player.clone(),
+        }
+    }
+
+    /// Everything the player carries and wears, in kilograms, as it stands now.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn load_kg(&self) -> f32 {
+        self.carry_sheet().load_kg
+    }
+
+    /// The player's resolved `stat`, from what they wear, carry and hold now.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        self.carry_sheet().stat(stat)
+    }
+
+    /// How far load has taken the player's capability.
+    pub fn load_state(&self) -> LoadState {
+        self.carry_sheet().state
+    }
+
+    /// Every contribution to the player's stats now, from equipment, load and stance.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn stat_contributions(&self) -> Vec<Contribution> {
+        self.carry_sheet().contributions
     }
 
     /// The half-angle in radians of the cone the player's next shot leaves in.
@@ -5092,6 +5195,260 @@ mod tests {
         assert!(done.is_some(), "the search never finished");
         assert_eq!(sim.looting(), Some(0));
         sim
+    }
+
+    use crate::test_support::{carrying, weighing};
+    use searchlight_rules::{Contribution, LoadState, SourceLabel, Stat, Verb, explain};
+
+    /// A sim on open ground whose player carries `kg` against 30 kg of capacity.
+    fn load_sim(kg: f32) -> SearchlightSim {
+        let config = carrying(test_config(rifle_with(5), vec![]), kg);
+        SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config)
+    }
+
+    /// How far `sim`'s player gets over the next 60 ticks of walking forward.
+    fn walked(sim: &mut SearchlightSim) -> f32 {
+        let start = sim.player().position;
+        hold(sim, &walking(None), 60);
+        let end = sim.player().position;
+        Vec3::new(end.x - start.x, 0.0, end.z - start.z).length()
+    }
+
+    fn movement_speed(sim: &SearchlightSim, source: SourceLabel) -> Vec<Verb> {
+        explain(Stat::MovementSpeed, &sim.stat_contributions())
+            .into_iter()
+            .filter(|c| c.source == source)
+            .map(|c| c.verb)
+            .collect()
+    }
+
+    #[test]
+    fn the_sim_reports_the_load_state_for_each_outline_row() {
+        let expected = [
+            (15.0, LoadState::Fine),
+            (20.0, LoadState::Slowed),
+            (25.0, LoadState::NoSprint),
+            (30.0, LoadState::CannotMove),
+        ];
+
+        for (kg, state) in expected {
+            let mut sim = load_sim(kg);
+            sim.tick(&idle(), DT);
+
+            assert_eq!(sim.load_kg(), kg);
+            assert_eq!(sim.stat(Stat::CarryCapacity), 30.0);
+            assert_eq!(sim.load_state(), state, "{kg} kg of 30");
+        }
+    }
+
+    #[test]
+    fn a_slowed_player_covers_less_ground() {
+        let mut free = load_sim(0.0);
+        let fine = walked(&mut free);
+        for kg in [20.0, 25.0] {
+            let mut sim = load_sim(kg);
+
+            let slowed = walked(&mut sim);
+
+            assert!(fine > 1.0, "the unloaded player barely moved: {fine}");
+            assert!(slowed < fine * 0.8, "{kg} kg: {slowed} m vs {fine} m");
+            assert!(slowed > fine * 0.6, "{kg} kg: {slowed} m vs {fine} m");
+            assert_eq!(
+                sim.max_speed(),
+                4.0,
+                "the walking speed itself is unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn a_player_below_the_slowed_threshold_walks_at_full_speed() {
+        let mut free = load_sim(0.0);
+        let mut light = load_sim(15.0);
+
+        let fine = walked(&mut free);
+        let loaded = walked(&mut light);
+
+        assert!((fine - loaded).abs() < 1e-3, "{loaded} m vs {fine} m");
+    }
+
+    #[test]
+    fn a_red_player_does_not_move() {
+        let mut sim = load_sim(30.0);
+
+        let moved = walked(&mut sim);
+
+        assert!(moved < 0.01, "a player at 30 of 30 kg moved {moved} m");
+    }
+
+    #[test]
+    fn a_slowed_player_lists_load_among_the_movement_speed_contributions() {
+        let mut slowed = load_sim(20.0);
+        let mut fine = load_sim(15.0);
+        slowed.tick(&idle(), DT);
+        fine.tick(&idle(), DT);
+
+        assert_eq!(
+            movement_speed(&slowed, SourceLabel::Load),
+            [Verb::Scale(0.7)]
+        );
+        assert_eq!(movement_speed(&fine, SourceLabel::Load), []);
+        assert!((slowed.stat(Stat::MovementSpeed) - 0.7).abs() < 1e-5);
+        assert_eq!(fine.stat(Stat::MovementSpeed), 1.0);
+    }
+
+    #[test]
+    fn a_held_lean_is_a_stance_scale_on_movement_speed() {
+        let mut leaning_sim = load_sim(0.0);
+        let mut upright = load_sim(0.0);
+        leaning_sim.tick(&walking(Some(LeanSide::Left)), DT);
+        upright.tick(&walking(None), DT);
+
+        assert_eq!(
+            movement_speed(&leaning_sim, SourceLabel::Stance),
+            [Verb::Scale(0.5)]
+        );
+        assert_eq!(movement_speed(&upright, SourceLabel::Stance), []);
+    }
+
+    #[test]
+    fn a_slowed_leaning_player_moves_at_both_scales_multiplied() {
+        let mut sim = load_sim(20.0);
+
+        sim.tick(&walking(Some(LeanSide::Left)), DT);
+
+        assert!((sim.stat(Stat::MovementSpeed) - 0.35).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_red_player_has_zero_movement_speed_and_no_stamina() {
+        let mut sim = load_sim(30.0);
+        sim.tick(&idle(), DT);
+
+        assert_eq!(sim.stat(Stat::MovementSpeed), 0.0);
+        assert_eq!(sim.stat(Stat::Stamina), 0.0);
+        let speed = movement_speed(&sim, SourceLabel::Load);
+        assert_eq!(speed, [Verb::Cap(0.0)]);
+        let stamina: Vec<Contribution> = explain(Stat::Stamina, &sim.stat_contributions());
+        assert_eq!(stamina.len(), 1, "{stamina:?}");
+    }
+
+    #[test]
+    fn moving_items_off_the_player_below_slowed_restores_full_speed() {
+        let heavy = |kg_a: f32, kg_b: f32| {
+            let mut config = carrying(loot_config(Remains::default()), 0.0);
+            config
+                .carry
+                .items
+                .insert(ItemId::new("crate_a"), weighing(kg_a));
+            config
+                .carry
+                .items
+                .insert(ItemId::new("crate_b"), weighing(kg_b));
+            config.loadout = config.loadout.with_inventory(vec![
+                Item::Other(ItemId::new("crate_a")),
+                Item::Other(ItemId::new("crate_b")),
+            ]);
+            looting_sim(config)
+        };
+        let walked_back = |sim: &mut SearchlightSim| {
+            let start = sim.player().position;
+            hold(sim, &backing_away(), 60);
+            let end = sim.player().position;
+            Vec3::new(end.x - start.x, 0.0, end.z - start.z).length()
+        };
+        let into_the_body = asking(InventoryCommand::Move {
+            from: Source::Inventory(0),
+            to: Place::Body,
+        });
+        let mut lightened = heavy(15.0, 10.0);
+        let mut still_loaded = heavy(15.0, 10.0);
+        let mut unloaded = heavy(0.0, 0.0);
+
+        lightened.tick(&into_the_body, DT);
+        lightened.tick(&idle(), DT);
+        still_loaded.tick(&idle(), DT);
+        unloaded.tick(&idle(), DT);
+        let state_before = still_loaded.load_state();
+        let state_after = lightened.load_state();
+        let after = walked_back(&mut lightened);
+        let before = walked_back(&mut still_loaded);
+        let free = walked_back(&mut unloaded);
+
+        assert_eq!(state_before, LoadState::NoSprint);
+        assert_eq!(state_after, LoadState::Fine);
+        assert!(before < free * 0.8, "{before} m vs {free} m");
+        assert!((after - free).abs() < 1e-3, "{after} m vs {free} m");
+    }
+
+    #[test]
+    fn taking_a_heavy_item_from_a_body_slows_the_player() {
+        let mut config = loot_config(Remains {
+            carried: vec![Item::Other(ItemId::new("loot"))],
+            ..Remains::default()
+        });
+        config
+            .carry
+            .items
+            .insert(ItemId::new("loot"), weighing(20.0));
+        let mut sim = looting_sim(config);
+        sim.tick(&idle(), DT);
+        let before = sim.load_state();
+
+        sim.tick(&taking_the_first_item(), DT);
+        sim.tick(&idle(), DT);
+
+        assert_eq!(before, LoadState::Fine);
+        assert_eq!(sim.load_kg(), 20.0);
+        assert_eq!(sim.load_state(), LoadState::Slowed);
+    }
+
+    #[test]
+    fn a_red_player_holding_a_lean_covers_no_ground_and_lists_both_scales() {
+        let mut sim = load_sim(30.0);
+        let start = sim.player().position;
+
+        hold(&mut sim, &walking(Some(LeanSide::Left)), 60);
+
+        let end = sim.player().position;
+        let moved = Vec3::new(end.x - start.x, 0.0, end.z - start.z).length();
+        assert!(moved < 0.01, "a red, leaning player moved {moved} m");
+        assert_eq!(
+            movement_speed(&sim, SourceLabel::Load),
+            [Verb::Cap(0.0)],
+            "the load cap is listed"
+        );
+        assert_eq!(
+            movement_speed(&sim, SourceLabel::Stance),
+            [Verb::Scale(0.5)],
+            "the stance scale is listed"
+        );
+        assert_eq!(sim.stat(Stat::MovementSpeed), 0.0);
+    }
+
+    #[test]
+    fn a_player_who_looted_a_heavy_item_restarts_at_the_start_kit_load() {
+        let mut config = loot_config(Remains {
+            carried: vec![Item::Other(ItemId::new("loot"))],
+            ..Remains::default()
+        });
+        config
+            .carry
+            .items
+            .insert(ItemId::new("loot"), weighing(20.0));
+        let mut sim = looting_sim(config);
+        sim.tick(&taking_the_first_item(), DT);
+        sim.tick(&idle(), DT);
+        let slowed = sim.load_state();
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+        sim.tick(&restart_now(), DT);
+
+        assert_eq!(slowed, LoadState::Slowed);
+        assert_eq!(sim.load_kg(), 0.0);
+        assert_eq!(sim.load_state(), LoadState::Fine);
+        assert_eq!(movement_speed(&sim, SourceLabel::Load), []);
     }
 
     #[test]

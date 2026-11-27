@@ -13,9 +13,10 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId,
-    LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Remains, Rifle, Rig, RigSpec,
-    RoundStats, VelocityFactor,
+    AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, Item, ItemClass,
+    ItemDef, ItemId, ItemKind, LeanTuning, Lifecycle, LoadThresholds, Loadout, Magazine,
+    MagazineSpec, MagazineWell, PlayerDef, Remains, Rifle, Rig, RigSpec, RoundStats, Size,
+    VelocityFactor,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -24,7 +25,7 @@ use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
 use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::{Feedback, SearchlightSim, SimConfig};
+use crate::sim::{CarryConfig, Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -213,7 +214,76 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         search_reach: SEARCH_REACH,
         body_radius: BODY_RADIUS,
         enemy_remains: Remains::default(),
+        carry: CarryConfig {
+            player: test_player(),
+            items: test_items(),
+            weapon: ItemId::new("test_rifle"),
+        },
     }
+}
+
+/// The test player: 30 kg of carry capacity (10 strength at 3 kg each), slowed to 0.7 of walking
+/// speed from 60% of capacity, unable to sprint from 80% and to move at 100%.
+pub(crate) fn test_player() -> PlayerDef {
+    PlayerDef {
+        strength: 10.0,
+        carry_capacity_per_strength: 3.0,
+        movement_speed: 1.0,
+        stamina_pool: 5.0,
+        slowed_scale: 0.7,
+        thresholds: LoadThresholds {
+            slowed: 0.6,
+            no_sprint: 0.8,
+            cannot_move: 1.0,
+        },
+    }
+}
+
+/// A plain item weighing `kg`.
+pub(crate) fn weighing(kg: f32) -> ItemDef {
+    ItemDef {
+        class: ItemClass::Tool,
+        size: Size {
+            width: 1,
+            height: 1,
+        },
+        lifecycle: Lifecycle::Unchanging,
+        weight: kg,
+        kind: ItemKind::Plain,
+        stats: Vec::new(),
+    }
+}
+
+/// Weightless definitions of every item id the tests carry, plus `ballast`, which `carrying`
+/// weighs.
+pub(crate) fn test_items() -> BTreeMap<ItemId, ItemDef> {
+    [
+        "test_rifle",
+        "test_mag",
+        "foreign_mag",
+        "test_round",
+        "test_rig",
+        "body_rig",
+        "backpack_small",
+        "bandage",
+        "rag",
+        "ballast",
+    ]
+    .into_iter()
+    .map(|name| (ItemId::new(name), weighing(0.0)))
+    .collect()
+}
+
+/// `config` with the player carrying `kg` of ballast in the inventory, against 30 kg of capacity.
+pub(crate) fn carrying(mut config: SimConfig, kg: f32) -> SimConfig {
+    config
+        .carry
+        .items
+        .insert(ItemId::new("ballast"), weighing(kg));
+    config.loadout = config
+        .loadout
+        .with_inventory(vec![Item::Other(ItemId::new("ballast"))]);
+    config
 }
 
 /// Ticks a search takes in the test config.
