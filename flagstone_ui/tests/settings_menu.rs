@@ -877,6 +877,61 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.has_unsaved_changes());
 }
 
+/// Pressing the contested key again while its prompt is open neither rebinds nor replaces the prompt.
+#[test]
+fn repressing_the_contested_key_while_prompt_open_keeps_one_prompt() {
+    use flagstone_ui::screens::Screen;
+
+    let ctx = egui::Context::default();
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::SHIFT);
+    let before = all_staged(&menu);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::NONE);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::SHIFT);
+
+    assert_eq!(all_staged(&menu), before);
+    assert!(!menu.is_listening());
+    let mut modal = Screen::take_pending_modal(&mut menu).expect("the prompt is still open");
+    let text = modal_text(modal.as_mut());
+    assert!(text.contains("'Shift'"), "in:\n{text}");
+    assert!(text.lines().any(|l| l == "Sprint"), "in:\n{text}");
+    assert!(
+        Screen::take_pending_modal(&mut menu).is_none(),
+        "only one prompt"
+    );
+    Screen::on_modal_confirm(&mut menu);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::pad(PadInput::Button(PadButton::LeftThumb))]
+    );
+}
+
+/// A cancelled prompt leaves no stale modifier state behind: the next listen binds a free modifier.
+#[test]
+fn listening_again_after_cancelled_prompt_binds_a_free_modifier() {
+    use flagstone_ui::screens::Screen;
+
+    let ctx = egui::Context::default();
+    let mut menu = menu_with_shift_prompt_open(&ctx);
+    Screen::on_modal_cancel(&mut menu);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::NONE);
+
+    menu.start_listening(0);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::NONE);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Runs one frame and clears its texture delta; egui asserts in debug builds
 /// that a non-empty delta is not dropped, and these tests never paint it.
 fn run_ui(
