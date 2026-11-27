@@ -9,6 +9,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # "<generator> <directory its outputs are committed in>"
 generators=(
   "searchlight/assets/tools/make_arena.py searchlight/assets"
+  "searchlight/assets/tools/make_mannequin.py searchlight/assets/characters/mannequin"
   "flagstone/assets/tools/make_pickup.py flagstone/assets"
   "flagstone/assets/tools/make_dig.py flagstone/assets"
 )
