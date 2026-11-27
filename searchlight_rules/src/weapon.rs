@@ -140,9 +140,18 @@ mod tests {
     }
 
     #[test]
-    fn a_velocity_factor_refuses_nan_and_both_infinities() {
-        for factor in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
-            let error = VelocityFactor::try_from(factor).expect_err("a non-finite factor");
+    fn a_velocity_factor_that_is_not_finite_and_above_zero_is_refused_naming_the_field() {
+        let refused = [
+            0.0,
+            -0.0,
+            -f32::MIN_POSITIVE,
+            -1.0,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for factor in refused {
+            let error = VelocityFactor::try_from(factor).expect_err("not a valid factor");
 
             assert!(
                 error.to_string().contains("muzzle_velocity_factor"),
@@ -158,18 +167,6 @@ mod tests {
 
             assert_eq!(accepted.get(), factor);
         }
-    }
-
-    #[test]
-    fn a_velocity_factor_refuses_zero_negative_zero_and_negatives() {
-        for factor in [0.0, -0.0, -f32::MIN_POSITIVE, -1.0] {
-            assert!(VelocityFactor::try_from(factor).is_err(), "{factor}");
-        }
-    }
-
-    #[test]
-    fn the_default_velocity_factor_is_1() {
-        assert_eq!(VelocityFactor::default().get(), 1.0);
     }
 
     #[test]

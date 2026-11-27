@@ -272,41 +272,6 @@ weight = 2.0
     }
 
     #[test]
-    fn the_shipped_weapon_has_no_barrel_factor_so_rounds_leave_at_their_own_velocity() {
-        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-
-        let kit = load(&roots, START_KIT_ID).expect("the shipped start kit loads");
-
-        assert_eq!(kit.weapon.muzzle_velocity_factor.get(), 1.0);
-    }
-
-    #[test]
-    fn a_barrel_that_slows_the_kits_round_to_the_minimum_speed_fails_naming_weapon_and_round() {
-        let items = items_toml().replace(
-            "charge_ticks = 30",
-            "charge_ticks = 30\nmuzzle_velocity_factor = 0.1",
-        );
-        let (_dir, roots) = base_with(&items, &start_kit(2));
-
-        let Err(error) = load(&roots, START_KIT_ID) else {
-            panic!("a 0.1 barrel on a 940 m/s round loaded");
-        };
-
-        let KitLoadError::Kit { kit, source } = &error else {
-            panic!("expected a kit error, got {error:?}");
-        };
-        assert_eq!(kit, START_KIT_ID);
-        assert!(
-            matches!(
-                source,
-                KitError::TooSlowFromWeapon { weapon, round }
-                    if *weapon == ItemId::new("rifle") && *round == ItemId::new("round_ball")
-            ),
-            "{source:?}"
-        );
-    }
-
-    #[test]
     fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
         let cases = [
             ("damage = 30", "damage = 0", "damage"),

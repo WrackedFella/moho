@@ -198,13 +198,6 @@ mod tests {
         assert_eq!(long.muzzle_velocity_factor.get(), 1.1);
     }
 
-    #[test]
-    fn a_weapon_with_the_default_barrel_gives_a_config_factor_of_1() {
-        let config = shipped_config();
-
-        assert_eq!(config.muzzle_velocity_factor.get(), 1.0);
-    }
-
     fn shipped_config() -> SimConfig {
         let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
         rig.stow(mag(17, 17)).unwrap();

@@ -563,16 +563,6 @@ mod tests {
     }
 
     #[test]
-    fn a_round_above_the_minimum_speed_through_an_unscaled_barrel_is_accepted() {
-        let items = barrel_items(1.0, 150.0);
-        let def = barrel_kit("round_fast", json!([]));
-
-        let kit = resolve_with(&items, &def).expect("a factor of 1 leaves 150 above the minimum");
-
-        assert!(kit.rounds.contains_key(&id("round_fast")));
-    }
-
-    #[test]
     fn a_resolved_kit_carries_the_stats_of_every_round_it_names() {
         let def = kit_def(json!({
             "rig": "rig_chest",

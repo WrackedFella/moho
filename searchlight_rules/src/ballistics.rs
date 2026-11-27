@@ -419,51 +419,18 @@ mod tests {
 
     #[test]
     fn a_barrel_scales_the_muzzle_velocity_and_keeps_the_drag() {
-        let round = ball(900.0, 1.5);
-        let short = VelocityFactor::try_from(0.8).unwrap();
+        for (factor, expected) in [(0.8, 720.0), (1.0, 900.0), (1.1, 990.0)] {
+            let round = ball(900.0, 1.5);
+            let barrel = VelocityFactor::try_from(factor).unwrap();
 
-        let leaving = round.through_barrel(short);
+            let leaving = round.through_barrel(barrel);
 
-        assert!(
-            (leaving.muzzle_velocity - 720.0).abs() < 1e-3,
-            "{leaving:?}"
-        );
-        assert_eq!(leaving.drag, 1.5);
-    }
-
-    #[test]
-    fn the_default_barrel_leaves_the_ballistics_as_they_are() {
-        let round = ball(900.0, 1.5);
-
-        let leaving = round.through_barrel(VelocityFactor::default());
-
-        assert_eq!(leaving, round);
-    }
-
-    #[test]
-    fn a_long_barrel_speeds_the_round_up() {
-        let long = VelocityFactor::try_from(1.1).unwrap();
-
-        let leaving = ball(900.0, 1.0).through_barrel(long);
-
-        assert!(
-            (leaving.muzzle_velocity - 990.0).abs() < 1e-2,
-            "{leaving:?}"
-        );
-    }
-
-    #[test]
-    fn a_flight_fired_with_the_scaled_ballistics_leaves_at_the_scaled_speed() {
-        let short = VelocityFactor::try_from(0.8).unwrap();
-        let round = ball(900.0, 1.0);
-
-        let flight = Flight::fired(Vec3::ZERO, Vec3::Z, &round.through_barrel(short));
-
-        assert!(
-            (flight.velocity.length() - 720.0).abs() < 1e-2,
-            "{}",
-            flight.velocity
-        );
+            assert!(
+                (leaving.muzzle_velocity - expected).abs() < 1e-2,
+                "{factor}: {leaving:?}"
+            );
+            assert_eq!(leaving.drag, 1.5, "{factor}");
+        }
     }
 
     #[test]

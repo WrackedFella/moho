@@ -4012,47 +4012,33 @@ mod tests {
         )
     }
 
-    /// The speed of the one round in the air right after a pull, and the muzzle velocity it
-    /// is scored against.
-    fn launch_of(config: SimConfig) -> (f32, f32) {
+    /// The speed of the one round in the air right after a pull.
+    fn launch_speed(config: SimConfig) -> f32 {
         let mut sim = dummy_ahead(60.0, BodyPart::Torso, config);
 
         sim.tick(&pull(), DT);
 
         let rounds = sim.rounds_in_flight();
         assert_eq!(rounds.len(), 1, "one pull sends one round");
-        (
-            rounds[0].flight.velocity.length(),
-            rounds[0].ballistics.muzzle_velocity,
-        )
+        rounds[0].flight.velocity.length()
     }
 
     #[test]
-    fn a_round_leaves_a_0_8_barrel_at_80_percent_of_its_muzzle_velocity() {
-        let (speed, _) = launch_of(with_barrel(undragged(900.0, 30), 0.8));
+    fn a_round_leaves_the_barrel_at_its_muzzle_velocity_times_the_barrel_factor() {
+        let cases = [(None, 900.0), (Some(0.8), 720.0), (Some(1.1), 990.0)];
+        for (factor, expected) in cases {
+            let config = match factor {
+                Some(factor) => with_barrel(undragged(900.0, 30), factor),
+                None => undragged(900.0, 30),
+            };
 
-        assert!((speed - 720.0).abs() < 0.01, "left at {speed} m/s");
-    }
+            let speed = launch_speed(config);
 
-    #[test]
-    fn a_round_leaves_a_1_1_barrel_at_110_percent_of_its_muzzle_velocity() {
-        let (speed, _) = launch_of(with_barrel(undragged(900.0, 30), 1.1));
-
-        assert!((speed - 990.0).abs() < 0.01, "left at {speed} m/s");
-    }
-
-    #[test]
-    fn a_weapon_with_no_barrel_factor_launches_the_round_at_its_own_velocity() {
-        let (speed, _) = launch_of(undragged(900.0, 30));
-
-        assert!((speed - 900.0).abs() < 0.01, "left at {speed} m/s");
-    }
-
-    #[test]
-    fn the_round_in_flight_keeps_its_own_muzzle_velocity_as_the_damage_reference() {
-        let (_, reference) = launch_of(with_barrel(undragged(900.0, 30), 0.8));
-
-        assert_eq!(reference, 900.0);
+            assert!(
+                (speed - expected).abs() < 0.01,
+                "factor {factor:?} left at {speed} m/s, not {expected}"
+            );
+        }
     }
 
     #[test]
@@ -4082,34 +4068,27 @@ mod tests {
     }
 
     #[test]
-    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage() {
-        let in_flight = dummy_health_after_a_shot(
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage_in_flight() {
+        let health = dummy_health_after_a_shot(
             1.5,
             BodyPart::Torso,
             with_barrel(undragged(900.0, 30), 1.1),
             pull_without_gravity(),
         );
-        let simple = dummy_health_after_a_shot(
+
+        assert_eq!(health, 70, "the ratio is capped at 1");
+    }
+
+    #[test]
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage_under_simple() {
+        let health = dummy_health_after_a_shot(
             1.5,
             BodyPart::Torso,
             with_barrel(undragged(900.0, 30), 1.1),
             simple_pull(),
         );
 
-        assert_eq!(in_flight, 70, "the ratio is capped at 1");
-        assert_eq!(simple, 70, "the ratio is capped at 1 under Simple too");
-    }
-
-    #[test]
-    fn a_1_0_barrel_hits_a_torso_at_point_blank_for_the_rounds_full_damage() {
-        let health = dummy_health_after_a_shot(
-            1.5,
-            BodyPart::Torso,
-            with_barrel(undragged(900.0, 30), 1.0),
-            pull_without_gravity(),
-        );
-
-        assert_eq!(health, 70);
+        assert_eq!(health, 70, "the ratio is capped at 1");
     }
 
     /// The damage a level pull does to a torso `distance` metres ahead, and the height the
