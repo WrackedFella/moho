@@ -285,7 +285,9 @@ Flow per tick:
    head centre sits `lean * shift` to the player's right (`BODY_RIGHT`, `-X` in the body frame, which faces
    +Z at yaw 0); the legs stay. The sim keeps the upright volumes and a leaned copy, and when the lean
    changes lays the offsets over the upright set (`lean_volumes`) and replaces the player's hit volumes in
-   the physics world, so shots from enemies hit the leaned body.
+   the physics world, so shots from enemies hit the leaned body. While the lean is not upright a seventh
+   volume (`hip_piece`), tagged torso, spans the hip band that the shifted torso and arms leave open above
+   the legs, so a shot cannot pass through the gap.
 5. Enemy aim and sight use the leaned body: the aim point is the centre of the configured aim part
    (`leaned_centre`), and an enemy sees the player when a ray from its eye toward the player's leaned eye,
    leaned head centre or leaned torso centre first strikes the player.
