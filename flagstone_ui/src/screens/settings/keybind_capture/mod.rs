@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conflict_detection() {
+    fn key_conflict_ends_listening() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry(); // Move Forward holds W
         let mut bindings_changed = vec![];
@@ -297,6 +297,23 @@ mod tests {
             handler.take_conflict_modal(),
             Some(("Move Left".to_string(), "Ctrl".to_string()))
         );
+    }
+
+    #[test]
+    fn lone_modifier_conflict_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(2, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+
+        assert!(applied);
+        assert!(changed.is_empty());
+        assert!(handler.has_pending_binding());
+        assert!(!handler.is_listening());
     }
 
     #[test]
