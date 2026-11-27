@@ -541,4 +541,23 @@ mod tests {
         assert_eq!(titles(&shown), ["Inventory", "Body"]);
         assert!(labels(&shown, BODY).is_empty());
     }
+
+    #[test]
+    fn a_free_slot_row_reads_its_kind() {
+        let roots = moho_core::content::ContentRoots::base(&crate::content_root())
+            .expect("the shipped content folder");
+        let mut loadout = crate::kit::load(&roots, crate::kit::START_KIT_ID)
+            .expect("the shipped start kit loads")
+            .loadout;
+        loadout
+            .move_item(None, Source::MagazineSlot(1), Place::Inventory)
+            .expect("the slot holds a magazine");
+
+        let shown = gear_lists(&loadout);
+
+        assert_eq!(
+            labels(&shown, MAGAZINE_SLOTS),
+            ["mag_rifle", "Rifle slot · Empty", "mag_rifle"]
+        );
+    }
 }

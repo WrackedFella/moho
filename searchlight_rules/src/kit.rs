@@ -981,4 +981,80 @@ mod tests {
         );
         assert_eq!(rounds.len(), 3);
     }
+
+    /// The fixture items with a rig of one rifle slot and two pistol slots, and magazines
+    /// that name the kind of slot they take.
+    fn kinded_items() -> HashMap<ItemId, ItemDef> {
+        let mut items = items();
+        for (name, def) in [
+            (
+                "rig_chest",
+                json!({"class": "gear", "size": [3, 2], "weight": 1.0,
+                    "rig": {"magazine_slots": {"rifle": 1, "pistol": 2}}}),
+            ),
+            (
+                "mag_rifle",
+                json!({"class": "gear", "size": [1, 2], "weight": 1.0,
+                    "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30,
+                        "slot": "rifle"}}),
+            ),
+            (
+                "mag_pistol",
+                json!({"class": "gear", "size": [1, 1], "weight": 1.0,
+                    "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15,
+                        "slot": "pistol"}}),
+            ),
+        ] {
+            let def = serde_json::from_value(def)
+                .unwrap_or_else(|e| panic!("fixture item {name} should load: {e}"));
+            items.insert(ItemId::new(name), def);
+        }
+        items
+    }
+
+    fn resolve_kinded(def: &KitDef) -> Result<Kit, KitError> {
+        let items = kinded_items();
+        def.resolve(|item| items.get(item))
+    }
+
+    #[test]
+    fn a_kit_stowing_more_magazines_than_their_kinds_slots_is_refused() {
+        let def = start(json!([
+            {"magazine": "mag_rifle", "round": "round_ball"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ]));
+
+        let error = resolve_kinded(&def).expect_err("one rifle slot cannot hold two magazines");
+
+        assert!(
+            matches!(&error, KitError::RigOverfilled { rig, .. } if *rig == id("rig_chest")),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("rig_chest"), "{error}");
+    }
+
+    #[test]
+    fn a_kit_stowing_each_kind_within_its_slots_is_accepted_in_slot_order() {
+        let def = start(json!([
+            {"magazine": "mag_rifle", "round": "round_ball"},
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_pistol", "round": "round_9mm", "rounds": 5}
+        ]));
+
+        let kit = resolve_kinded(&def).expect("each kind fits its slots");
+
+        let held: Vec<Option<&str>> = kit
+            .loadout
+            .rig()
+            .slots()
+            .iter()
+            .map(|slot| slot.as_ref().map(|m| m.item().as_str()))
+            .collect();
+        assert_eq!(
+            held,
+            [Some("mag_pistol"), Some("mag_pistol"), Some("mag_rifle")],
+            "pistol slots sort before the rifle slot"
+        );
+        assert_eq!(kit.loadout.rig().free_slots(), 0);
+    }
 }

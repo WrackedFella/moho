@@ -898,4 +898,83 @@ mod tests {
             }
         }
     }
+
+    /// A loadout holding a rifle magazine in the rifle, with a rig of `slots` by kind and
+    /// `inventory` in the pack.
+    fn kinded_player(slots: &[(&str, u32)], inventory: Vec<Item>) -> Loadout {
+        use crate::test_support::{mag_in_slot, rig_spec};
+
+        let rig = Rig::new(id("rig"), &rig_spec(slots));
+        Loadout::new(rifle_with(mag_in_slot("held", "rifle", "rifle")), rig)
+            .with_inventory(inventory)
+    }
+
+    #[test]
+    fn a_rifle_magazine_with_only_a_pistol_slot_free_is_refused_and_unchanged() {
+        let rifle_mag = Item::Magazine(crate::test_support::mag_in_slot("m", "rifle", "rifle"));
+        let mut loadout = kinded_player(&[("pistol", 1)], vec![rifle_mag]);
+        let before = loadout.clone();
+
+        let moved = loadout.move_item(None, Source::Inventory(0), Place::MagazineSlots);
+
+        assert_eq!(moved, Err(MoveRefused::NoFreeSlot));
+        assert_eq!(loadout, before);
+    }
+
+    #[test]
+    fn a_magazine_goes_to_a_free_slot_of_its_kind_past_a_free_slot_of_another() {
+        let pistol_mag = Item::Magazine(crate::test_support::mag_in_slot("p", "pistol", "pistol"));
+        let rifle_mag = Item::Magazine(crate::test_support::mag_in_slot("r", "rifle", "rifle"));
+        let mut loadout =
+            kinded_player(&[("pistol", 1), ("rifle", 1)], vec![rifle_mag, pistol_mag]);
+
+        let rifle_moved = loadout.move_item(None, Source::Inventory(0), Place::MagazineSlots);
+        let pistol_moved = loadout.move_item(None, Source::Inventory(0), Place::MagazineSlots);
+
+        assert_eq!(rifle_moved, Ok(()));
+        assert_eq!(pistol_moved, Ok(()));
+        assert_eq!(
+            slot_items(&loadout),
+            [Some("p".to_owned()), Some("r".to_owned())],
+            "the pistol slot is first, and the rifle magazine did not take it"
+        );
+        assert_eq!(loadout.inventory(), []);
+    }
+
+    #[test]
+    fn a_magazine_moved_between_slots_keeps_to_its_kind() {
+        let mut loadout = kinded_player(&[("pistol", 1), ("rifle", 2)], vec![]);
+        let rifle = |name| crate::test_support::mag_in_slot(name, "rifle", "rifle");
+        loadout.rig.stow(rifle("a")).expect("a rifle slot is free");
+        loadout.rig.stow(rifle("b")).expect("a rifle slot is free");
+        let before = loadout.clone();
+
+        let moved = loadout.move_item(None, Source::MagazineSlot(1), Place::MagazineSlots);
+
+        assert_eq!(moved, Ok(()));
+        assert_eq!(loadout, before, "it goes back to the first free rifle slot");
+    }
+
+    #[test]
+    fn reload_takes_a_fitting_magazine_from_any_kind_of_slot() {
+        use crate::test_support::mag_in_slot;
+
+        let mut loadout = kinded_player(&[("pistol", 1), ("rifle", 1)], vec![]);
+        loadout
+            .rig
+            .stow(mag_in_slot("pistol_slot_fresh", "rifle", "pistol"))
+            .expect("the pistol slot is free");
+
+        let can = loadout.can_reload();
+        let reloaded = loadout.reload();
+
+        assert!(can);
+        assert!(reloaded);
+        assert_eq!(rifle_item(&loadout), "pistol_slot_fresh");
+        assert_eq!(
+            loadout.rig().magazines().count(),
+            1,
+            "the spent one took the slot"
+        );
+    }
 }

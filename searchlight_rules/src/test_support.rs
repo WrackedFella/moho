@@ -29,3 +29,23 @@ pub(crate) fn mag(capacity: u32, rounds: u32) -> Magazine {
 pub(crate) fn rifle_well() -> MagazineWell {
     MagazineWell::new("rifle")
 }
+
+/// A rig section with `count` magazine slots of each `(kind, count)`, written as data is.
+pub(crate) fn rig_spec(slots: &[(&str, u32)]) -> crate::item::RigSpec {
+    let table: serde_json::Map<String, serde_json::Value> = slots
+        .iter()
+        .map(|&(kind, count)| (kind.to_owned(), serde_json::json!(count)))
+        .collect();
+    serde_json::from_value(serde_json::json!({ "magazine_slots": table }))
+        .expect("a rig section lists its slots by kind")
+}
+
+/// A 30-round magazine item `item` for `well` that takes a slot of kind `slot`, holding
+/// 30 rounds of `ball`, written as data is.
+pub(crate) fn mag_in_slot(item: &str, well: &str, slot: &str) -> Magazine {
+    let spec: MagazineSpec = serde_json::from_value(serde_json::json!({
+        "well": well, "caliber": "5.56x45", "capacity": 30, "slot": slot
+    }))
+    .expect("a magazine section names the kind of slot it takes");
+    Magazine::filled(id(item), &spec, &id("ball"), 30).expect("test rounds fit the capacity")
+}

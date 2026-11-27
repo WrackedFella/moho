@@ -835,4 +835,84 @@ mod tests {
 
         assert!(text.contains("slots"), "{text}");
     }
+
+    fn rig_spec_of(slots: Value) -> RigSpec {
+        let item = parse(json!({
+            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": slots}
+        }))
+        .expect("gear with a rig section loads");
+        let ItemKind::Rig(spec) = item.kind else {
+            panic!("expected a rig kind, got {:?}", item.kind);
+        };
+        spec
+    }
+
+    #[test]
+    fn a_rig_lists_slots_by_kind() {
+        let spec = rig_spec_of(json!({"rifle": 3, "pistol": 1}));
+
+        let mut rig = crate::rig::Rig::new(ItemId::new("rig"), &spec);
+
+        assert_eq!(rig.slots().len(), 4);
+        let pistol = crate::test_support::mag_in_slot("p", "pistol", "pistol");
+        let rifle = |name| crate::test_support::mag_in_slot(name, "rifle", "rifle");
+        assert_eq!(rig.stow(pistol.clone()), Ok(0), "pistol sorts before rifle");
+        assert_eq!(
+            rig.stow(pistol),
+            Err(crate::test_support::mag_in_slot("p", "pistol", "pistol"))
+        );
+        assert_eq!(rig.stow(rifle("a")), Ok(1));
+        assert_eq!(rig.stow(rifle("b")), Ok(2));
+        assert_eq!(rig.stow(rifle("c")), Ok(3));
+    }
+
+    #[test]
+    fn a_kind_left_out_of_the_rig_has_no_slots() {
+        let spec = rig_spec_of(json!({"rifle": 2}));
+
+        let mut rig = crate::rig::Rig::new(ItemId::new("rig"), &spec);
+
+        assert_eq!(rig.slots().len(), 2);
+        let pistol = crate::test_support::mag_in_slot("p", "pistol", "pistol");
+        assert_eq!(rig.stow(pistol.clone()), Err(pistol));
+    }
+
+    #[test]
+    fn a_rig_with_a_bare_slot_count_is_refused() {
+        let result = parse(json!({
+            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}
+        }));
+
+        assert!(result.is_err(), "{result:?}");
+    }
+
+    #[test]
+    fn a_magazine_section_loads_the_kind_of_slot_it_takes() {
+        let item = parse(json!({
+            "class": "gear", "size": [1, 2],
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "belt"}
+        }))
+        .expect("a magazine naming a kind no rig defines still loads");
+        let ItemKind::Magazine(spec) = item.kind else {
+            panic!("expected a magazine kind, got {:?}", item.kind);
+        };
+
+        let magazine = crate::magazine::Magazine::empty(ItemId::new("m"), &spec);
+        let mut rig = crate::rig::Rig::new(
+            ItemId::new("rig"),
+            &rig_spec_of(json!({"rifle": 1, "pistol": 1})),
+        );
+
+        assert_eq!(rig.stow(magazine.clone()), Err(magazine), "it fits no slot");
+    }
+
+    #[test]
+    fn a_magazine_without_a_slot_kind_is_refused() {
+        let text = error_text(json!({
+            "class": "gear", "size": [1, 2],
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30}
+        }));
+
+        assert!(text.contains("slot"), "{text}");
+    }
 }

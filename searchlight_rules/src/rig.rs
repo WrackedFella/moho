@@ -306,4 +306,55 @@ mod tests {
 
         rig.put(0, named("b"));
     }
+
+    /// Slots run in the order of their kinds' names, as the table is sorted: `pistol` first.
+    fn kinded_rig(slots: &[(&str, u32)]) -> Rig {
+        Rig::new(id("rig_chest"), &crate::test_support::rig_spec(slots))
+    }
+
+    #[test]
+    fn a_magazine_takes_the_first_free_slot_of_its_kind() {
+        let cases = [("rifle", 1), ("pistol", 0)];
+        for (kind, expected) in cases {
+            let mut rig = kinded_rig(&[("rifle", 1), ("pistol", 1)]);
+
+            let slot = rig.stow(crate::test_support::mag_in_slot("m", "rifle", kind));
+
+            assert_eq!(slot, Ok(expected), "{kind}");
+            assert_eq!(rig.free_slots(), 1, "{kind}");
+            assert!(rig.slots()[expected].is_some(), "{kind}");
+        }
+
+        let mut rig = kinded_rig(&[("pistol", 1), ("rifle", 2)]);
+        let first = rig.stow(crate::test_support::mag_in_slot("a", "rifle", "rifle"));
+        let second = rig.stow(crate::test_support::mag_in_slot("b", "rifle", "rifle"));
+        assert_eq!(first, Ok(1));
+        assert_eq!(second, Ok(2));
+    }
+
+    #[test]
+    fn a_magazine_with_no_free_slot_of_its_kind_is_given_back_and_the_rig_is_unchanged() {
+        let mut rig = kinded_rig(&[("pistol", 1), ("rifle", 1)]);
+        rig.stow(crate::test_support::mag_in_slot("a", "rifle", "rifle"))
+            .expect("the rifle slot is free");
+        let before = rig.clone();
+        let another = crate::test_support::mag_in_slot("b", "rifle", "rifle");
+
+        let result = rig.stow(another.clone());
+
+        assert_eq!(result, Err(another));
+        assert_eq!(rig, before);
+        assert_eq!(rig.free_slots(), 1, "the pistol slot stays free");
+    }
+
+    #[test]
+    fn a_magazine_of_a_kind_no_slot_has_fits_no_slot() {
+        let mut rig = kinded_rig(&[("rifle", 2)]);
+        let odd = crate::test_support::mag_in_slot("m", "rifle", "belt");
+
+        let result = rig.stow(odd.clone());
+
+        assert_eq!(result, Err(odd));
+        assert_eq!(rig.free_slots(), 2);
+    }
 }
