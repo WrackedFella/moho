@@ -7206,6 +7206,11 @@ mod tests {
         headless.advance(&mut game, Duration::ZERO);
 
         assert_eq!(game.screen, Screen::Inventory);
+        assert_eq!(
+            list_ids_on_top(&game),
+            Some(vec![crate::inventory::INVENTORY, crate::inventory::BODY]),
+            "the loot screen is the inventory beside the body"
+        );
         let mut shell = game.stage.shell();
         let lists = shell
             .menu_mut()
@@ -7270,7 +7275,9 @@ mod tests {
     }
 
     #[test]
-    fn a_search_finishing_with_the_inventory_open_adds_the_body_list() {
+    fn a_search_finishing_with_the_gear_screen_open_turns_it_into_the_loot_screen() {
+        use crate::inventory::{BODY, INVENTORY};
+
         let (mut game, mut clock) = game_beside_a_body();
         let clock_for_ctx = GameClock::default();
         let mut ctx = EventContext::new(&clock_for_ctx, None, None);
@@ -7290,10 +7297,12 @@ mod tests {
         let mut headless = HeadlessLoop::new(LoopConfig::new(60));
         headless.advance(&mut game, Duration::ZERO);
         let after = lists_on_top(&game);
+        let after_ids = list_ids_on_top(&game);
         game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
 
-        assert_eq!(before, Some(3), "no body list while none is open");
-        assert_eq!(after, Some(4), "the body list joined the one screen");
+        assert_eq!(before, Some(3), "the gear screen while no body is open");
+        assert_eq!(after, Some(2), "the one screen became the loot screen");
+        assert_eq!(after_ids, Some(vec![INVENTORY, BODY]));
         assert_eq!(game.screen, Screen::Playing);
         assert!(!game.stage.shell().menu_mut().is_open(), "no screen left");
     }
@@ -7302,6 +7311,35 @@ mod tests {
     fn lists_on_top(game: &SearchlightGame) -> Option<usize> {
         let mut shell = game.stage.shell();
         shell.menu_mut().top_lists().map(|lists| lists.lists.len())
+    }
+
+    /// The ids of the lists the screen on top shows, left to right.
+    fn list_ids_on_top(game: &SearchlightGame) -> Option<Vec<ListId>> {
+        let mut shell = game.stage.shell();
+        shell
+            .menu_mut()
+            .top_lists()
+            .map(|lists| lists.lists.iter().map(|list| list.id).collect())
+    }
+
+    #[test]
+    fn the_inventory_key_opens_the_gear_screen_even_beside_a_body() {
+        use crate::inventory::{EQUIPMENT, INVENTORY, MAGAZINE_SLOTS};
+
+        let (mut game, _clock) = game_beside_a_body();
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+
+        game.route_input(&mut ctx, TAB, true, false);
+        game.route_input(&mut ctx, TAB, false, false);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+
+        assert_eq!(game.screen, Screen::Inventory);
+        assert_eq!(
+            list_ids_on_top(&game),
+            Some(vec![EQUIPMENT, MAGAZINE_SLOTS, INVENTORY])
+        );
     }
 
     /// The inventory screen open on a body that carried a magazine and then a rag, and the
@@ -7655,14 +7693,14 @@ mod tests {
 
     #[test]
     fn a_second_move_before_the_command_is_taken_is_dropped() {
-        use crate::inventory::{BODY, INVENTORY, MAGAZINE_SLOTS};
+        use crate::inventory::{BODY, INVENTORY};
 
         let mut game = open_body_screen();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
 
         let focus = move_first_row(&mut game, &mut ctx, 0, BODY, INVENTORY);
-        move_first_row(&mut game, &mut ctx, focus, BODY, MAGAZINE_SLOTS);
+        move_first_row(&mut game, &mut ctx, focus, BODY, INVENTORY);
         let first = game.command();
         let second = game.command();
 

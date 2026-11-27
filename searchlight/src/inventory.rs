@@ -183,6 +183,16 @@ mod tests {
     use super::*;
     use crate::test_support::{mag, rifle_from};
 
+    // TEMPORARY test-side stand-ins for the production `gear_lists` and `loot_lists` the
+    // implement step adds; delete them then so the tests reach the real functions.
+    fn gear_lists(loadout: &Loadout) -> ItemLists<MenuAction> {
+        lists(loadout, None)
+    }
+
+    fn loot_lists(loadout: &Loadout, container: &Remains) -> ItemLists<MenuAction> {
+        lists(loadout, Some(container))
+    }
+
     fn bandage() -> Item {
         Item::Other(ItemId::new("bandage"))
     }
@@ -232,25 +242,81 @@ mod tests {
     }
 
     #[test]
-    fn a_looted_body_lists_its_two_magazines_beside_slots_and_inventory() {
+    fn a_looted_body_lists_its_two_magazines_beside_the_inventory() {
         let loadout = player(3, 2);
         let remains = two_magazines();
 
-        let shown = lists(&loadout, Some(&remains));
+        let shown = loot_lists(&loadout, &remains);
 
-        assert_eq!(
-            titles(&shown),
-            ["Equipment", "Magazine slots", "Inventory", "Body"]
-        );
-        let ids: Vec<ListId> = shown.lists.iter().map(|list| list.id).collect();
-        assert_eq!(ids, [EQUIPMENT, MAGAZINE_SLOTS, INVENTORY, BODY]);
+        assert_eq!(titles(&shown), ["Inventory", "Body"]);
+        assert_eq!(list_ids(&shown), [INVENTORY, BODY]);
         assert_eq!(labels(&shown, BODY), ["test_mag", "test_mag"]);
-        assert_eq!(
-            labels(&shown, MAGAZINE_SLOTS),
-            ["test_mag", "test_mag", EMPTY_SLOT]
-        );
         assert_eq!(labels(&shown, INVENTORY), ["bandage"]);
         assert_eq!(shown.back, Some(MenuAction::Back));
+    }
+
+    fn list_ids(lists: &ItemLists<MenuAction>) -> Vec<ListId> {
+        lists.lists.iter().map(|list| list.id).collect()
+    }
+
+    #[test]
+    fn the_loot_screen_has_exactly_the_inventory_then_the_body() {
+        let loadout = player(3, 2);
+
+        let shown = loot_lists(&loadout, &full_body());
+
+        assert_eq!(list_ids(&shown), [INVENTORY, BODY]);
+        assert_eq!(titles(&shown), ["Inventory", "Body"]);
+    }
+
+    #[test]
+    fn the_gear_screen_still_has_equipment_magazine_slots_and_inventory() {
+        let loadout = player(3, 2);
+
+        let shown = gear_lists(&loadout);
+
+        assert_eq!(list_ids(&shown), [EQUIPMENT, MAGAZINE_SLOTS, INVENTORY]);
+        assert_eq!(titles(&shown), ["Equipment", "Magazine slots", "Inventory"]);
+        assert_eq!(shown.back, Some(MenuAction::Back));
+    }
+
+    #[test]
+    fn the_loot_screens_inventory_list_is_the_one_the_gear_screen_shows() {
+        let loadout = sparse_player();
+
+        let gear = gear_lists(&loadout);
+        let loot = loot_lists(&loadout, &full_body());
+
+        assert_eq!(labels(&loot, INVENTORY), labels(&gear, INVENTORY));
+        assert_eq!(labels(&loot, INVENTORY), ["bandage", "rag"]);
+    }
+
+    #[test]
+    fn the_loot_screens_rows_map_to_the_sources_they_show() {
+        let loadout = sparse_player();
+        let remains = full_body();
+
+        let shown = loot_lists(&loadout, &remains);
+
+        assert_eq!(
+            sources(&shown, INVENTORY, &loadout, Some(&remains)),
+            [Some(Source::Inventory(0)), Some(Source::Inventory(1))]
+        );
+        assert_eq!(
+            sources(&shown, BODY, &loadout, Some(&remains)),
+            [
+                Some(Source::BodyRig),
+                Some(Source::BodyMagazineSlot(0)),
+                Some(Source::BodyMagazineSlot(2)),
+                Some(Source::BodyBackpack),
+                Some(Source::BodyCarried(0)),
+                Some(Source::BodyCarried(1)),
+            ]
+        );
+        assert_eq!(
+            [place_of(INVENTORY), place_of(BODY)],
+            [Some(Place::Inventory), Some(Place::Body)]
+        );
     }
 
     #[test]
@@ -261,24 +327,30 @@ mod tests {
             ..Remains::default()
         };
 
-        let shown = lists(&loadout, Some(&remains));
+        let loot = loot_lists(&loadout, &remains);
+        let gear = gear_lists(&loadout);
 
-        let count_of = |list: ListId| {
+        let count_of = |shown: &ItemLists<MenuAction>, list: ListId| {
             shown
                 .lists
                 .iter()
                 .find(|candidate| candidate.id == list)
                 .map(|list| list.rows.iter().map(|row| row.count).collect::<Vec<_>>())
         };
-        assert_eq!(count_of(BODY), Some(vec![Some(12)]));
-        assert_eq!(count_of(MAGAZINE_SLOTS), Some(vec![Some(30), None]));
+        assert_eq!(count_of(&loot, BODY), Some(vec![Some(12)]));
+        assert_eq!(count_of(&gear, MAGAZINE_SLOTS), Some(vec![Some(30), None]));
+        assert_eq!(
+            count_of(&loot, MAGAZINE_SLOTS),
+            None,
+            "no slots on the loot screen"
+        );
     }
 
     #[test]
     fn without_a_body_the_screen_lists_only_the_players_side() {
         let loadout = player(3, 1);
 
-        let shown = lists(&loadout, None);
+        let shown = gear_lists(&loadout);
 
         assert_eq!(titles(&shown), ["Equipment", "Magazine slots", "Inventory"]);
     }
@@ -287,7 +359,7 @@ mod tests {
     fn the_equipment_list_shows_the_worn_rig_and_backpack() {
         let loadout = player(3, 0);
 
-        let shown = lists(&loadout, None);
+        let shown = gear_lists(&loadout);
 
         assert_eq!(labels(&shown, EQUIPMENT), ["test_rig", "backpack_small"]);
     }
@@ -296,7 +368,7 @@ mod tests {
     fn free_magazine_slots_show_as_empty_rows() {
         let loadout = player(4, 1);
 
-        let shown = lists(&loadout, None);
+        let shown = gear_lists(&loadout);
 
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
@@ -354,7 +426,8 @@ mod tests {
         let loadout = sparse_player();
         let remains = full_body();
 
-        let shown = lists(&loadout, Some(&remains));
+        let shown = gear_lists(&loadout);
+        let loot = loot_lists(&loadout, &remains);
 
         assert_eq!(
             sources(&shown, EQUIPMENT, &loadout, Some(&remains)),
@@ -379,7 +452,7 @@ mod tests {
             [Some(Source::Inventory(0)), Some(Source::Inventory(1))]
         );
         assert_eq!(
-            labels(&shown, BODY),
+            labels(&loot, BODY),
             [
                 "body_rig",
                 "test_mag",
@@ -390,7 +463,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            sources(&shown, BODY, &loadout, Some(&remains)),
+            sources(&loot, BODY, &loadout, Some(&remains)),
             [
                 Some(Source::BodyRig),
                 Some(Source::BodyMagazineSlot(0)),
@@ -452,7 +525,7 @@ mod tests {
             carried: vec![bandage()],
         };
 
-        let shown = lists(&loadout, Some(&remains));
+        let shown = loot_lists(&loadout, &remains);
 
         assert_eq!(
             labels(&shown, BODY),
@@ -465,9 +538,9 @@ mod tests {
         let loadout = player(3, 0);
         let remains = Remains::default();
 
-        let shown = lists(&loadout, Some(&remains));
+        let shown = loot_lists(&loadout, &remains);
 
-        assert_eq!(titles(&shown).last(), Some(&"Body"));
+        assert_eq!(titles(&shown), ["Inventory", "Body"]);
         assert!(labels(&shown, BODY).is_empty());
     }
 }
