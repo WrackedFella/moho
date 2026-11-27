@@ -114,6 +114,11 @@ impl Rig {
         }
     }
 
+    /// Empties every slot and returns the magazines that were in them, in slot order.
+    pub fn take_all(&mut self) -> Vec<Magazine> {
+        self.slots.iter_mut().filter_map(Option::take).collect()
+    }
+
     /// Takes the first magazine satisfying `fits`, scanning from the cursor and wrapping,
     /// and moves the cursor past its slot. Nothing changes when none qualifies.
     pub(crate) fn take_next(
@@ -193,6 +198,17 @@ mod tests {
         assert_eq!(rig.free_slots(), 3);
         assert_eq!(rig.magazines().count(), 0);
         assert!(rig.slots().iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn take_all_returns_the_magazines_in_slot_order_and_leaves_every_slot_free() {
+        let mut rig = rig_with(&[Some("a"), None, Some("c"), Some("d")]);
+
+        let taken = rig.take_all();
+
+        assert_eq!(taken, [named("a"), named("c"), named("d")]);
+        assert_eq!(items(&rig), [None, None, None, None]);
+        assert_eq!(rig.free_slots(), 4);
     }
 
     #[test]

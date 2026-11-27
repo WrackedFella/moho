@@ -218,6 +218,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         search_reach: SEARCH_REACH,
         body_radius: BODY_RADIUS,
         enemy_remains: Remains::default(),
+        grade_remains: BTreeMap::new(),
         carry: CarryConfig {
             player: test_player(),
             items: test_items(),

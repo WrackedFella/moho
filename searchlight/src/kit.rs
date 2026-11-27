@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use moho_core::content::{ContentError, ContentRoots, Definitions, load_kind};
 use searchlight_rules::{
-    ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats, check_launch,
+    Grade, ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats, check_launch,
 };
 use thiserror::Error;
 
@@ -32,17 +32,94 @@ pub enum KitLoadError {
 /// The id of the kit every enemy carries and wears.
 pub const ENEMY_KIT_ID: &str = "enemy";
 
+/// An enemy kit resolved: what it leaves, and the stats of the rounds it names.
+pub type ResolvedEnemy = (Remains, BTreeMap<ItemId, RoundStats>);
+
+/// The items and kits of the content `roots`, loaded once, for resolving any number of enemy
+/// kits from them.
+#[derive(Debug)]
+pub struct EnemyKits {
+    items: Definitions<ItemDef>,
+    kits: Definitions<KitDef>,
+}
+
+impl EnemyKits {
+    /// Loads `items` and `kits` through `roots`.
+    ///
+    /// # Errors
+    ///
+    /// [`KitLoadError::Content`] when a file or entry is malformed.
+    pub fn load(roots: &ContentRoots) -> Result<Self, KitLoadError> {
+        Ok(Self {
+            items: load_kind::<ItemDef>(roots, "items")?,
+            kits: load_kind::<KitDef>(roots, "kits")?,
+        })
+    }
+
+    /// The kit `kit` as the gear of a dead enemy, with the ballistics and damage of every round
+    /// it names.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`].
+    pub fn resolve(&self, kit: &str) -> Result<ResolvedEnemy, KitLoadError> {
+        self.kits
+            .require(kit)?
+            .resolve_remains(|id: &ItemId| self.items.get(id.as_str()))
+            .map_err(|source| KitLoadError::Kit {
+                kit: kit.to_owned(),
+                source,
+            })
+    }
+
+    /// [`Self::resolve`] for an enemy of `grade`: the kit `{base}_{grade}` (the grade's
+    /// lower-case name) when the kits define one, else `base`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::resolve`], for the kit that was chosen.
+    pub fn resolve_for_grade(
+        &self,
+        base: &str,
+        grade: Grade,
+    ) -> Result<ResolvedEnemy, KitLoadError> {
+        self.resolve(&self.kit_for_grade(base, grade))
+    }
+
+    /// The id of the kit an enemy of `grade` wears: `{base}_{grade}` when the kits define it,
+    /// else `base`.
+    #[must_use]
+    pub fn kit_for_grade(&self, base: &str, grade: Grade) -> String {
+        let own = format!("{base}_{}", grade.name());
+        if self.kits.get(&own).is_some() {
+            own
+        } else {
+            base.to_owned()
+        }
+    }
+}
+
 /// Loads `items` and `kits` through `roots` and resolves the kit `kit` as the gear of a dead
 /// enemy, with the ballistics and damage of every round it names.
 ///
 /// # Errors
 ///
 /// As [`load`].
-pub fn load_enemy(
+pub fn load_enemy(roots: &ContentRoots, kit: &str) -> Result<ResolvedEnemy, KitLoadError> {
+    EnemyKits::load(roots)?.resolve(kit)
+}
+
+/// [`load_enemy`] for an enemy of `grade`: the kit `enemy_<grade>` (the grade's lower-case name)
+/// when the kits define one, else [`ENEMY_KIT_ID`].
+///
+/// # Errors
+///
+/// As [`load_enemy`], for the kit that was chosen.
+pub fn load_enemy_for_grade(
     roots: &ContentRoots,
-    kit: &str,
-) -> Result<(Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
-    resolve_kit(roots, kit, |def, lookup| def.resolve_remains(lookup)).map(|(enemy, _)| enemy)
+    grade: Grade,
+) -> Result<ResolvedEnemy, KitLoadError> {
+    EnemyKits::load(roots)?.resolve_for_grade(ENEMY_KIT_ID, grade)
 }
 
 /// Loads `items` and `kits` through `roots` once and resolves the kit `start` as the player's
@@ -66,7 +143,22 @@ pub fn load_start_and_enemy(
 ) -> Result<(Catalogue, Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
     let catalogue = load_catalogue(roots, start)?;
     let (remains, rounds) = load_enemy(roots, enemy)?;
-    for (round, stats) in &rounds {
+    check_enemy_launch(&catalogue, enemy, &rounds)?;
+    Ok((catalogue, remains, rounds))
+}
+
+/// Checks every round of the enemy kit `enemy` against the player's barrel in `catalogue`, as
+/// [`load_start_and_enemy`] does.
+///
+/// # Errors
+///
+/// [`KitLoadError::Kit`] for `enemy`, as [`load_start_and_enemy`].
+pub fn check_enemy_launch(
+    catalogue: &Catalogue,
+    enemy: &str,
+    rounds: &BTreeMap<ItemId, RoundStats>,
+) -> Result<(), KitLoadError> {
+    for (round, stats) in rounds {
         check_launch(&catalogue.weapon, &catalogue.kit.weapon, round, stats).map_err(|source| {
             KitLoadError::Kit {
                 kit: enemy.to_owned(),
@@ -74,7 +166,7 @@ pub fn load_start_and_enemy(
             }
         })?;
     }
-    Ok((catalogue, remains, rounds))
+    Ok(())
 }
 
 /// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`,
@@ -611,6 +703,135 @@ carried = [{ item = "bandage" }]
         assert_eq!(ball.damage, 30);
     }
 
+    const ASSAULT_RIG: &str = r#"
+[rig_assault]
+class = "gear"
+size = [3, 3]
+rig = { magazine_slots = { rifle = 5 } }
+weight = 2.0
+"#;
+
+    #[test]
+    fn a_grade_without_its_own_kit_wears_the_default() {
+        let (_dir, roots) = loot_content(&format!("{}{ENEMY_KIT}", start_kit(2)));
+        let default = load_enemy(&roots, ENEMY_KIT_ID).expect("the default enemy kit loads");
+
+        for grade in Grade::LADDER {
+            let worn = load_enemy_for_grade(&roots, grade).expect("the default kit loads");
+
+            assert_eq!(worn, default, "{}", grade.name());
+        }
+
+        let veteran = ENEMY_KIT
+            .replace("[enemy]", "[enemy_veteran]")
+            .replace("rig_chest", "rig_assault");
+        let kits = format!("{}{ENEMY_KIT}{veteran}", start_kit(2));
+        let (_dir, roots) = base_with(&format!("{}{LOOT_ITEMS}{ASSAULT_RIG}", items_toml()), &kits);
+
+        let worn = load_enemy_for_grade(&roots, Grade::Veteran).expect("the veteran kit loads");
+        let others: Vec<_> = Grade::LADDER
+            .into_iter()
+            .filter(|grade| *grade != Grade::Veteran)
+            .map(|grade| load_enemy_for_grade(&roots, grade).expect("the default kit loads"))
+            .collect();
+
+        assert_eq!(
+            worn,
+            load_enemy(&roots, "enemy_veteran").expect("the veteran kit loads")
+        );
+        assert_eq!(
+            worn.0.rig.as_ref().map(|rig| rig.item().clone()),
+            Some(ItemId::new("rig_assault"))
+        );
+        let default = load_enemy(&roots, ENEMY_KIT_ID).expect("the default enemy kit loads");
+        assert_eq!(others.len(), 4);
+        assert!(others.iter().all(|other| *other == default), "{others:?}");
+    }
+
+    #[test]
+    fn a_grade_kit_naming_an_undefined_item_fails_naming_that_kit() {
+        let veteran = ENEMY_KIT
+            .replace("[enemy]", "[enemy_veteran]")
+            .replace("rig_chest", "rig_missing");
+        let (_dir, roots) = loot_content(&format!("{}{ENEMY_KIT}{veteran}", start_kit(2)));
+
+        let Err(error) = load_enemy_for_grade(&roots, Grade::Veteran) else {
+            panic!("a grade kit with an undefined rig loaded");
+        };
+
+        let text = error.to_string();
+        assert!(text.starts_with("kit \"enemy_veteran\": "), "{text}");
+        assert!(text.contains("rig_missing"), "{text}");
+    }
+
+    #[test]
+    fn the_shipped_grade_kits_load() {
+        use searchlight_rules::Grade::{Experienced, Novice, Professional, Rookie, Veteran};
+        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+        let default = load_enemy(&roots, ENEMY_KIT_ID).expect("the shipped enemy kit loads");
+
+        for grade in Grade::LADDER {
+            let worn = load_enemy_for_grade(&roots, grade)
+                .unwrap_or_else(|error| panic!("{}: {error}", grade.name()));
+
+            match grade {
+                Veteran | Professional => {
+                    let (remains, _) = &worn;
+                    let rig = remains.rig.as_ref().expect("a veteran wears a rig");
+                    assert_eq!(rig.item(), &ItemId::new("rig_assault"), "{}", grade.name());
+                    let backpack = remains.backpack.as_ref().map(ItemId::as_str);
+                    assert!(
+                        matches!(backpack, Some("backpack_large" | "backpack_frame")),
+                        "{}: {backpack:?}",
+                        grade.name()
+                    );
+                }
+                Rookie | Novice | Experienced => {
+                    assert_eq!(worn, default, "{}", grade.name());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_shipped_rigs_and_backpacks_differ_in_slots_and_carry_capacity() {
+        use searchlight_rules::{Stat, Verb};
+        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+        let items = load_kind::<ItemDef>(&roots, "items").expect("the shipped items.toml loads");
+        let capacity = |id: &str| {
+            items
+                .require(id)
+                .unwrap_or_else(|error| panic!("{id}: {error}"))
+                .stats
+                .iter()
+                .find(|entry| entry.stat == Stat::CarryCapacity)
+                .map(|entry| entry.verb)
+        };
+        let slots = |id: &str| match &items.require(id).expect("the rig is defined").kind {
+            ItemKind::Rig(spec) => spec.magazine_slots.values().sum::<u32>(),
+            other => panic!("{id} is not a rig: {other:?}"),
+        };
+        let weight = |id: &str| items.require(id).expect("the item is defined").weight;
+        let add = |verb: Option<Verb>| match verb {
+            Some(Verb::Add(kg)) => kg,
+            other => panic!("expected a carry capacity add, got {other:?}"),
+        };
+
+        assert_eq!((slots("rig_chest"), slots("rig_assault")), (3, 5));
+        assert!(weight("rig_assault") > weight("rig_chest"));
+        assert!(add(capacity("rig_assault")) > add(capacity("rig_chest")));
+        assert!(add(capacity("backpack_large")) > add(capacity("backpack_small")));
+        assert!(
+            matches!(capacity("backpack_frame"), Some(Verb::Scale(scale)) if scale > 1.0),
+            "{:?}",
+            capacity("backpack_frame")
+        );
+        for id in ["backpack_small", "backpack_large", "backpack_frame"] {
+            let kind = &items.require(id).expect("the backpack is defined").kind;
+            assert!(matches!(kind, ItemKind::Backpack(_)), "{id}: {kind:?}");
+        }
+    }
+
     const CARBINE_AND_SLOW_ROUND: &str = r#"
 [carbine]
 class = "weapon"
@@ -645,6 +866,34 @@ round = { caliber = "5.56x45", muzzle_velocity = 150.0, drag = 1.0, damage = 20 
             &format!("{items}{CARBINE_AND_SLOW_ROUND}"),
             &format!("{}{enemy}", start_kit(2)),
         )
+    }
+
+    #[test]
+    fn a_grade_kit_with_a_round_the_players_barrel_slows_too_far_is_refused_when_assembled() {
+        let (dir, roots) = looting_content("round_ball");
+        let items = std::fs::read_to_string(dir.path().join("kits.toml")).expect("kits.toml");
+        let veteran = "[enemy_veteran]\nrig = \"rig_chest\"\nweapon = \"carbine\"\nloaded = { magazine = \"mag_rifle\", round = \"round_slow\" }\n";
+        std::fs::write(dir.path().join("kits.toml"), format!("{items}{veteran}"))
+            .expect("kits.toml is writable");
+        std::fs::copy(
+            content_root().join("player.toml"),
+            dir.path().join("player.toml"),
+        )
+        .expect("the shipped player sheet copies");
+
+        let Err(error) = crate::tuning::shipped_with_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID)
+        else {
+            panic!("a grade kit with a round the player's barrel slows too far loaded");
+        };
+
+        let KitLoadError::Kit { kit, source } = &error else {
+            panic!("expected a kit error, got {error:?}");
+        };
+        assert_eq!(kit, "enemy_veteran");
+        assert!(
+            matches!(source, KitError::TooSlowFromWeapon { .. }),
+            "{source:?}"
+        );
     }
 
     #[test]

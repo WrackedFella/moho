@@ -1,11 +1,53 @@
 //! One player's carried state: the rifle in hand, the rig that feeds it, the backpack worn and
 //! the inventory of everything else.
 
-use crate::inventory::{Item, MoveRefused, Place, Remains, Source};
-use crate::item::{ItemId, SlotKind};
+use crate::inventory::{Item, MoveRefused, Place, Remains, Source, WearRefused};
+use crate::item::{ItemDef, ItemId, ItemKind, RigSpec, SlotKind};
 use crate::magazine::Magazine;
 use crate::rifle::{Rifle, Shot};
 use crate::rig::Rig;
+
+/// What a successful wear changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Worn {
+    /// The rig was swapped.
+    Rig,
+    /// The backpack was swapped or put on.
+    Backpack,
+}
+
+impl Worn {
+    /// What wearing `item` would swap, or `None` when it is not a rig or backpack by its
+    /// definition through `lookup`. [`Loadout::wear`] wears exactly the items this names.
+    pub fn of<'a>(item: &Item, lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>) -> Option<Self> {
+        Gear::of(item, lookup).map(|gear| match gear {
+            Gear::Rig(..) => Self::Rig,
+            Gear::Backpack(_) => Self::Backpack,
+        })
+    }
+}
+
+/// An inventory item that can be worn, with what wearing it needs.
+enum Gear<'i, 'd> {
+    Rig(&'i ItemId, &'d RigSpec),
+    Backpack(&'i ItemId),
+}
+
+impl<'i, 'd> Gear<'i, 'd> {
+    fn of(item: &'i Item, lookup: impl Fn(&ItemId) -> Option<&'d ItemDef>) -> Option<Self> {
+        match item {
+            Item::Rig(id) => match &lookup(id)?.kind {
+                ItemKind::Rig(spec) => Some(Self::Rig(id, spec)),
+                _ => None,
+            },
+            Item::Other(id) => match &lookup(id)?.kind {
+                ItemKind::Backpack(_) => Some(Self::Backpack(id)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
 
 /// What a move's source holds.
 enum Held {
@@ -114,6 +156,44 @@ impl Loadout {
         Ok(())
     }
 
+    /// Wears the rig or backpack at `from` in the inventory, looking definitions up through
+    /// `lookup`. The worn one of its kind goes to `from`; a replaced rig's magazines leave its
+    /// slots, in slot order, for the end of the inventory, and the new rig starts empty. With
+    /// no backpack worn, the inventory entry is removed and nothing goes back.
+    ///
+    /// # Errors
+    ///
+    /// A [`WearRefused`] when `from` holds nothing or holds something that is not a rig or
+    /// backpack. A refused wear changes nothing.
+    pub fn wear<'a>(
+        &mut self,
+        lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+        from: usize,
+    ) -> Result<Worn, WearRefused> {
+        let item = self.inventory.get(from).ok_or(WearRefused::NoSuchItem)?;
+        match Gear::of(item, lookup).ok_or(WearRefused::NotWearable)? {
+            Gear::Rig(id, spec) => {
+                let new_rig = Rig::new(id.clone(), spec);
+                let mut old_rig = std::mem::replace(&mut self.rig, new_rig);
+                let magazines = old_rig.take_all();
+                self.inventory[from] = Item::Rig(old_rig.item().clone());
+                self.inventory
+                    .extend(magazines.into_iter().map(Item::Magazine));
+                Ok(Worn::Rig)
+            }
+            Gear::Backpack(id) => {
+                let id = id.clone();
+                match self.backpack.replace(id) {
+                    Some(old) => self.inventory[from] = Item::Other(old),
+                    None => {
+                        self.inventory.remove(from);
+                    }
+                }
+                Ok(Worn::Backpack)
+            }
+        }
+    }
+
     /// What `from` holds, if anything.
     fn held(&self, body: Option<&Remains>, from: Source) -> Option<Held> {
         let in_slot = |slots: &[Option<Magazine>], index: usize| {
@@ -207,6 +287,7 @@ mod tests {
     use crate::magazine::Magazine;
     use crate::rifle::{Rifle, Shot};
     use crate::rig::Rig;
+    use crate::stats::{Stat, equipment_contributions, resolve};
     use crate::test_support::{id, mag_of, rifle_well};
     use proptest::prelude::*;
 
@@ -896,6 +977,378 @@ mod tests {
                 );
 
                 if result.is_err() {
+                    prop_assert_eq!(&loadout, &loadout_before);
+                    prop_assert_eq!(&remains, &remains_before);
+                }
+                prop_assert_eq!(leaves(&loadout, &remains), expected.clone());
+            }
+        }
+    }
+
+    fn def(value: serde_json::Value) -> ItemDef {
+        serde_json::from_value(value).expect("the test definition is valid")
+    }
+
+    fn rig_def(slots: u32) -> ItemDef {
+        def(serde_json::json!({
+            "class": "gear", "size": [3, 3], "weight": 0.0, "rig": {"magazine_slots": {"rifle": slots}}
+        }))
+    }
+
+    fn pack_def(stats: serde_json::Value) -> ItemDef {
+        def(serde_json::json!({
+            "class": "gear", "size": [3, 3], "weight": 0.0, "backpack": {}, "stats": stats
+        }))
+    }
+
+    fn weighing(kg: f32) -> ItemDef {
+        def(serde_json::json!({"class": "tool", "size": [1, 1], "weight": kg}))
+    }
+
+    /// Definitions for the ids a wear test names; any id not listed has none.
+    fn defs(listed: &[(&str, ItemDef)]) -> std::collections::BTreeMap<ItemId, ItemDef> {
+        listed
+            .iter()
+            .map(|(name, def)| (id(name), def.clone()))
+            .collect()
+    }
+
+    fn wear_defs() -> std::collections::BTreeMap<ItemId, ItemDef> {
+        defs(&[
+            ("rig", rig_def(3)),
+            ("rig_five", rig_def(5)),
+            ("rig_two", rig_def(2)),
+            ("pack", pack_def(serde_json::json!([]))),
+            ("bandage", weighing(0.1)),
+        ])
+    }
+
+    /// A player wearing the 3-slot `rig` and the backpack `pack`, holding `inventory`.
+    fn wearer(slots: &[Option<&str>], inventory: Vec<Item>) -> Loadout {
+        player(slots, inventory)
+    }
+
+    #[test]
+    fn wearing_a_five_slot_rig_puts_the_three_slot_in_its_inventory_place() {
+        let defs = wear_defs();
+        let mut loadout = wearer(
+            &[None, None, None],
+            vec![bandage(), Item::Rig(id("rig_five")), bandage()],
+        );
+
+        let worn = loadout.wear(|item| defs.get(item), 1);
+
+        assert_eq!(worn, Ok(Worn::Rig));
+        assert_eq!(loadout.rig().item(), &id("rig_five"));
+        assert_eq!(loadout.rig().slots().len(), 5);
+        assert_eq!(
+            loadout.inventory(),
+            [bandage(), Item::Rig(id("rig")), bandage()]
+        );
+    }
+
+    #[test]
+    fn a_rig_swap_appends_the_old_rigs_magazines_in_slot_order_and_leaves_the_new_rig_empty() {
+        let defs = wear_defs();
+        let mut loadout = wearer(
+            &[Some("a"), None, Some("b")],
+            vec![bandage(), Item::Rig(id("rig_five")), Item::Other(id("rag"))],
+        );
+
+        let worn = loadout.wear(|item| defs.get(item), 1);
+
+        assert_eq!(worn, Ok(Worn::Rig));
+        assert_eq!(
+            loadout.inventory(),
+            [
+                bandage(),
+                Item::Rig(id("rig")),
+                Item::Other(id("rag")),
+                mag_item("a"),
+                mag_item("b"),
+            ]
+        );
+        assert_eq!(slot_items(&loadout), [None, None, None, None, None]);
+        assert_eq!(loadout.rig().free_slots(), 5);
+    }
+
+    #[test]
+    fn a_rig_swap_over_capacity_still_un_equips_every_magazine() {
+        let mut defs = wear_defs();
+        defs.insert(id("anvil"), weighing(500.0));
+        let lookup = |item: &ItemId| defs.get(item).or_else(|| defs.get(&id("bandage")));
+        let mut loadout = wearer(
+            &[Some("a"), Some("b"), None],
+            vec![Item::Other(id("anvil")), Item::Rig(id("rig_two"))],
+        );
+        let capacity = resolve(
+            Stat::CarryCapacity,
+            30.0,
+            0.0,
+            &equipment_contributions(&loadout, lookup).expect("worn gear is defined"),
+        );
+        assert!(
+            crate::load::load(&loadout, &id("rifle"), lookup).expect("all defined") > capacity,
+            "the player starts over capacity"
+        );
+
+        let worn = loadout.wear(lookup, 1);
+
+        assert_eq!(worn, Ok(Worn::Rig));
+        assert_eq!(
+            loadout.inventory(),
+            [
+                Item::Other(id("anvil")),
+                Item::Rig(id("rig")),
+                mag_item("a"),
+                mag_item("b"),
+            ]
+        );
+    }
+
+    #[test]
+    fn after_wearing_a_ten_kg_backpack_capacity_resolves_to_35() {
+        let defs = defs(&[
+            ("rig", rig_def(3)),
+            (
+                "pack5",
+                pack_def(serde_json::json!([{"stat": "carry_capacity", "add": 5.0}])),
+            ),
+            (
+                "pack10",
+                pack_def(serde_json::json!([{"stat": "carry_capacity", "add": 10.0}])),
+            ),
+        ]);
+        let mut loadout = wearer(&[None], vec![Item::Other(id("pack10"))]);
+        loadout = loadout.with_backpack(id("pack5"));
+        let capacity = |loadout: &Loadout| {
+            let worn = equipment_contributions(loadout, |item| defs.get(item))
+                .expect("worn gear is defined");
+            resolve(Stat::CarryCapacity, 25.0, 0.0, &worn)
+        };
+        assert_eq!(capacity(&loadout), 30.0);
+
+        let worn = loadout.wear(|item| defs.get(item), 0);
+
+        assert_eq!(worn, Ok(Worn::Backpack));
+        assert_eq!(capacity(&loadout), 35.0);
+    }
+
+    #[test]
+    fn wearing_a_twenty_percent_backpack_resolves_30_to_36() {
+        let defs = defs(&[
+            ("rig", rig_def(3)),
+            (
+                "frame",
+                pack_def(serde_json::json!([{"stat": "carry_capacity", "scale": 1.2}])),
+            ),
+        ]);
+        let mut loadout = Loadout::new(
+            rifle_with(mag_of("held", "rifle", 30, 10)),
+            Rig::new(id("rig"), &crate::test_support::rig_spec(&[("rifle", 3)])),
+        )
+        .with_inventory(vec![Item::Other(id("frame"))]);
+
+        let worn = loadout.wear(|item| defs.get(item), 0);
+
+        assert_eq!(worn, Ok(Worn::Backpack));
+        let contributions =
+            equipment_contributions(&loadout, |item| defs.get(item)).expect("worn gear is defined");
+        let capacity = resolve(Stat::CarryCapacity, 30.0, 0.0, &contributions);
+        assert!((capacity - 36.0).abs() < 1e-4, "{capacity}");
+    }
+
+    #[test]
+    fn a_backpack_swap_keeps_the_inventory_and_puts_the_old_pack_in_its_place() {
+        let defs = defs(&[
+            ("rig", rig_def(3)),
+            ("pack", pack_def(serde_json::json!([]))),
+            ("pack_big", pack_def(serde_json::json!([]))),
+        ]);
+        let mut loadout = wearer(
+            &[Some("a"), None, Some("b")],
+            vec![bandage(), Item::Other(id("pack_big")), bandage()],
+        );
+        let rifle_before = loadout.rifle().clone();
+        let rig_before = loadout.rig().clone();
+
+        let worn = loadout.wear(|item| defs.get(item), 1);
+
+        assert_eq!(worn, Ok(Worn::Backpack));
+        assert_eq!(loadout.backpack(), Some(&id("pack_big")));
+        assert_eq!(
+            loadout.inventory(),
+            [bandage(), Item::Other(id("pack")), bandage()]
+        );
+        assert_eq!(loadout.rig(), &rig_before);
+        assert_eq!(loadout.rifle(), &rifle_before);
+    }
+
+    #[test]
+    fn wearing_a_magazine_is_refused_and_changes_nothing() {
+        let defs = wear_defs();
+        let items = [
+            mag_item("m"),
+            bandage(),
+            Item::Weapon(rifle_with(full("in_rifle"))),
+            Item::Rounds(RoundStack {
+                round: id("ball"),
+                count: 30,
+            }),
+            Item::Other(id("no_such_definition")),
+            Item::Rig(id("no_such_rig_definition")),
+            Item::Rig(id("pack")),
+            Item::Other(id("rig_five")),
+        ];
+        for item in items {
+            let mut loadout = wearer(&[Some("a")], vec![item.clone()]);
+            let before = loadout.clone();
+
+            let worn = loadout.wear(|item| defs.get(item), 0);
+
+            assert_eq!(worn, Err(WearRefused::NotWearable), "{item:?}");
+            assert_eq!(loadout, before, "{item:?}");
+        }
+    }
+
+    #[test]
+    fn wearing_from_an_index_holding_nothing_is_refused_and_changes_nothing() {
+        let defs = wear_defs();
+        for index in [1, 7] {
+            let mut loadout = wearer(&[Some("a")], vec![Item::Rig(id("rig_five"))]);
+            let before = loadout.clone();
+
+            let worn = loadout.wear(|item| defs.get(item), index);
+
+            assert_eq!(worn, Err(WearRefused::NoSuchItem), "{index}");
+            assert_eq!(loadout, before, "{index}");
+        }
+    }
+
+    #[test]
+    fn wearing_a_backpack_with_none_worn_leaves_nothing_behind() {
+        let defs = wear_defs();
+        let mut loadout = Loadout::new(
+            rifle_with(mag_of("held", "rifle", 30, 10)),
+            Rig::new(id("rig"), &crate::test_support::rig_spec(&[("rifle", 3)])),
+        )
+        .with_inventory(vec![bandage(), Item::Other(id("pack"))]);
+
+        let worn = loadout.wear(|item| defs.get(item), 1);
+
+        assert_eq!(worn, Ok(Worn::Backpack));
+        assert_eq!(loadout.backpack(), Some(&id("pack")));
+        assert_eq!(loadout.inventory(), [bandage()]);
+    }
+
+    #[test]
+    fn a_rig_swap_leaves_the_rifles_magazine_in_the_rifle() {
+        let defs = wear_defs();
+        let mut loadout = wearer(
+            &[Some("a"), Some("b"), None],
+            vec![Item::Rig(id("rig_five"))],
+        );
+        let rifle_before = loadout.rifle().clone();
+
+        let worn = loadout.wear(|item| defs.get(item), 0);
+
+        assert_eq!(worn, Ok(Worn::Rig));
+        assert_eq!(loadout.rifle(), &rifle_before);
+    }
+
+    #[test]
+    fn worn_of_names_the_kind_of_a_rig_or_backpack_and_nothing_else() {
+        let defs = wear_defs();
+        let cases = [
+            (Item::Rig(id("rig_five")), Some(Worn::Rig)),
+            (Item::Other(id("pack")), Some(Worn::Backpack)),
+            (mag_item("m"), None),
+            (bandage(), None),
+            (Item::Weapon(rifle_with(full("in_rifle"))), None),
+            (Item::Rig(id("no_such_definition")), None),
+            (Item::Other(id("no_such_definition")), None),
+            (Item::Rig(id("pack")), None),
+            (Item::Other(id("rig_five")), None),
+        ];
+
+        for (item, expected) in cases {
+            let named = Worn::of(&item, |item| defs.get(item));
+
+            assert_eq!(named, expected, "{item:?}");
+        }
+    }
+
+    /// Definitions for the ids the conservation property wears: by the number after `i`.
+    struct ConservationDefs {
+        rigs: Vec<ItemDef>,
+        pack: ItemDef,
+        plain: ItemDef,
+    }
+
+    impl ConservationDefs {
+        fn new() -> Self {
+            Self {
+                rigs: (0..5).map(rig_def).collect(),
+                pack: pack_def(serde_json::json!([])),
+                plain: weighing(0.0),
+            }
+        }
+
+        fn lookup(&self, item: &ItemId) -> Option<&ItemDef> {
+            match item.as_str() {
+                "rig" => Some(&self.rigs[3]),
+                "pack" | "body_pack" => Some(&self.pack),
+                name => {
+                    let n: usize = name.strip_prefix('i')?.parse().ok()?;
+                    match n % 3 {
+                        0 => Some(&self.plain),
+                        1 => Some(&self.rigs[n % 5]),
+                        _ => Some(&self.pack),
+                    }
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn any_wear_and_move_sequence_keeps_every_item_exactly_once(
+            kinds in proptest::collection::vec(0u8..5, 0..6),
+            body_kinds in proptest::collection::vec(0u8..5, 0..4),
+            slots in proptest::collection::vec(any::<bool>(), 0..4),
+            ops in proptest::collection::vec((any::<bool>(), 0usize..7, 0u8..6, 0u8..3), 0..14),
+        ) {
+            let defs = ConservationDefs::new();
+            let names: Vec<String> = (0..slots.len()).map(|n| format!("s{n}")).collect();
+            let layout: Vec<Option<&str>> = slots
+                .iter()
+                .zip(&names)
+                .map(|(held, name)| held.then_some(name.as_str()))
+                .collect();
+            let inventory = kinds.iter().enumerate().map(|(n, k)| inventory_item(*k, n)).collect();
+            let mut loadout = player(&layout, inventory);
+            let mut remains = Remains {
+                rig: None,
+                backpack: Some(id("body_pack")),
+                carried: body_kinds
+                    .iter()
+                    .enumerate()
+                    .map(|(n, k)| inventory_item(*k, 100 + n))
+                    .collect(),
+            };
+            let expected = leaves(&loadout, &remains);
+
+            for (wear, index, kind, place) in ops {
+                let (loadout_before, remains_before) = (loadout.clone(), remains.clone());
+                let refused = if wear {
+                    loadout.wear(|item| defs.lookup(item), index).is_err()
+                } else {
+                    loadout
+                        .move_item(Some(&mut remains), source_of(kind, index), place_of(place))
+                        .is_err()
+                };
+
+                if refused {
                     prop_assert_eq!(&loadout, &loadout_before);
                     prop_assert_eq!(&remains, &remains_before);
                 }

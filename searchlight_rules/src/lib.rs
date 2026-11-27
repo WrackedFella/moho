@@ -29,7 +29,7 @@ pub use ballistics::{
 pub use body::{Body, BodyPart, BodyProfile, HitReport};
 pub use carried::{Carried, loadout_items, remains_items};
 pub use grade::{Grade, GradeDials, UnknownGrade};
-pub use inventory::{Item, MoveRefused, Place, Remains, RoundStack, Source};
+pub use inventory::{Item, MoveRefused, Place, Remains, RoundStack, Source, WearRefused};
 pub use item::{
     BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, ItemStat, Lifecycle,
     MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size, SlotKind,
@@ -39,7 +39,7 @@ pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};
 pub use load::{
     LoadState, LoadThresholds, LoadThresholdsError, load, load_contributions, load_state,
 };
-pub use loadout::Loadout;
+pub use loadout::{Loadout, Worn};
 pub use magazine::{Magazine, MagazineError, MagazineLevel};
 pub use mix::{GradeMix, GradeMixError, WaveGrades};
 pub use posture::{BODY_RIGHT, Lean, LeanReach, LeanSide, LeanTuning, PartOffset, leaned_parts};

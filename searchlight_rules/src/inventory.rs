@@ -81,6 +81,18 @@ pub enum Place {
     Body,
 }
 
+/// Why a wear was refused. A refused wear changes nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum WearRefused {
+    /// The item is neither a rig nor a backpack, or its definition is missing or not of that kind.
+    #[error("that cannot be worn")]
+    NotWearable,
+    /// The inventory holds nothing at that index.
+    #[error("nothing there to wear")]
+    NoSuchItem,
+}
+
 /// Why a move was refused. A refused move changes nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]

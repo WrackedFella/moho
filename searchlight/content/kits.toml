@@ -19,3 +19,27 @@ magazines = [
 carried = [
     { item = "bandage" },
 ]
+
+[enemy_veteran]
+rig = "rig_assault"
+weapon = "rifle"
+backpack = "backpack_large"
+loaded = { magazine = "mag_rifle", round = "round_rifle_ball" }
+magazines = [
+    { magazine = "mag_rifle", round = "round_rifle_ball", rounds = 12 },
+]
+carried = [
+    { item = "bandage" },
+]
+
+[enemy_professional]
+rig = "rig_assault"
+weapon = "rifle"
+backpack = "backpack_frame"
+loaded = { magazine = "mag_rifle", round = "round_rifle_ball" }
+magazines = [
+    { magazine = "mag_rifle", round = "round_rifle_ball", rounds = 12 },
+]
+carried = [
+    { item = "bandage" },
+]
