@@ -264,6 +264,8 @@ licence; `just assets` regenerates them and `just check` fails when they are sta
 
 Shipped files resolve one at a time through `moho_core::assets::AssetRoots` (`moho_core/src/assets.rs`): the placeholders folder (`assets/`) is the lowest layer, and `--assets <folder>` (parsed by `launch::parse`, turned into roots by `launch::asset_roots`) adds a layer above it. The highest layer holding a file supplies it, so a folder can replace `arena.glb` or `rifle_shot.wav` alone. A missing folder, a repeated `--assets` or a file no layer holds stops the start with an error; a level given as a path is loaded as given. Content definitions are not layered. Rationale: [ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md).
 
+The folder that holds `assets` and `content` is found by `moho_core::install::Install::locate` (`moho_core/src/install.rs`), called from `launch` at start: the executable's own folder when it holds either shipped folder (then it must hold both, else `InstallError::Incomplete`), otherwise the source checkout (`Origin::SourceCheckout`, the `cargo run` case); neither holding both is `InstallError::NotFound`. The chosen origin is logged. `just package searchlight` (`scripts/package.sh`) lays out a release executable with the git-tracked `assets` and `content` files, minus `tools/` and `*.md`, in `target/package/searchlight/`; `just package-test` self-tests it inside `just check`. Details: [`assets/README.md`](../../searchlight/assets/README.md).
+
 ## 8 Posture
 
 Lean is the one posture so far. `searchlight_rules::posture` owns the rules: `LeanSide`, `LeanTuning`
