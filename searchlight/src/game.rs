@@ -1958,8 +1958,7 @@ impl Game for SearchlightGame {
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
         }
-        let (view, eye) = self.frame_view(alpha);
-        self.listener = moho_audio::Listener::from_view(view);
+        self.listener = moho_audio::Listener::from_view(self.frame_view(alpha).0);
         if let Some(audio) = ctx.audio() {
             audio.set_listener(self.listener);
         }
@@ -2029,6 +2028,7 @@ impl Game for SearchlightGame {
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
+            let (view, eye) = self.frame_view(alpha);
             let fov = self.play_fov_degrees();
             self.stage.draw_at(renderer, (view, eye), fov);
         }
@@ -7509,6 +7509,35 @@ mod tests {
             tick_with(game, clock, &SearchlightCommand::default());
         }
         assert_eq!(game.sim().looting(), Some(0), "the search never finished");
+    }
+
+    #[test]
+    fn a_search_opening_in_a_frame_draws_the_view_without_the_look_it_discarded() {
+        let (mut game, mut clock) = game_beside_a_body();
+        game.input_mut()
+            .set_look(moho_input::action_map::LookSettings {
+                look_per_count: 0.002,
+                smoothing: false,
+                invert_y: false,
+                acceleration: 0.0,
+            });
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        search_the_body(&mut game, &mut clock);
+        let without_look = game.frame_view(ALPHA).0;
+        mouse(&mut game, 200.0, 0.0);
+        let mut renderer = SettingsRenderer::default();
+
+        let drawn = draw_frame(&mut game, &mut renderer);
+
+        assert_eq!(game.screen, Screen::Inventory);
+        assert_ne!(
+            game.frame_listener(),
+            moho_audio::Listener::from_view(without_look),
+            "the look was pending when the frame began"
+        );
+        assert_eq!(drawn, without_look);
     }
 
     #[test]
