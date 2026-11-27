@@ -655,6 +655,12 @@ fn confirm_after_stray_key_applies_only_prompted_key() {
     press_shift_then_alt(&mut menu);
 
     assert!(Screen::take_pending_modal(&mut menu).is_some());
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Shift");
     Screen::on_modal_confirm(&mut menu);
 
     assert_eq!(
