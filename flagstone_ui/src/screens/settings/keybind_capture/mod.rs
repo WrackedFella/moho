@@ -272,6 +272,94 @@ mod tests {
     }
 
     #[test]
+    fn lone_ctrl_conflict_raises_prompt_and_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend (Move Down) holds Ctrl
+        let mut calls = 0;
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(1, &bindings, |_, _| calls += 1);
+
+        assert!(applied);
+        assert_eq!(calls, 0);
+        assert_eq!(handler.listening_id(), None);
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Down".to_string(), "Ctrl".to_string()))
+        );
+    }
+
+    #[test]
+    fn lone_alt_conflict_raises_prompt_and_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let mut bindings = registry();
+        bindings.set_binding(StrategyAction::MoveLeft, vec![Binding::key(Key::Alt)]);
+        let mut calls = 0;
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(4, &bindings, |_, _| calls += 1);
+
+        assert!(applied);
+        assert_eq!(calls, 0);
+        assert_eq!(handler.listening_id(), None);
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Left".to_string(), "Alt".to_string()))
+        );
+    }
+
+    #[test]
+    fn keys_after_a_modifier_conflict_change_nothing_and_keep_the_prompt() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut calls = 0;
+        handler.start_listening(0);
+        assert!(handler.capture_modifier_if_listening(2, &bindings, |_, _| calls += 1));
+
+        let release = handler.capture_modifier_if_listening(0, &bindings, |_, _| calls += 1);
+        let alt = handler.capture_modifier_if_listening(4, &bindings, |_, _| calls += 1);
+        let key = handler.apply_key_while_listening(Key::S, &bindings, |_, _| calls += 1);
+
+        assert!(!release);
+        assert!(!alt);
+        assert!(!key);
+        assert_eq!(calls, 0);
+        assert_eq!(handler.listening_id(), None);
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
+    }
+
+    #[test]
+    fn escape_after_a_modifier_conflict_keeps_the_prompt_and_binds_nothing() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut calls = 0;
+        handler.start_listening(0);
+        assert!(handler.capture_modifier_if_listening(2, &bindings, |_, _| calls += 1));
+
+        let consumed = handler.apply_key_while_listening(Key::Escape, &bindings, |_, _| calls += 1);
+
+        assert!(!consumed);
+        assert_eq!(calls, 0);
+        assert!(handler.has_pending_binding());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
+        let mut applied = vec![];
+        handler.apply_pending(&bindings, |a, b| applied.push((a, b)));
+        assert!(applied.contains(&(
+            StrategyAction::MoveForward,
+            vec![
+                Binding::key(Key::Shift),
+                Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+            ]
+        )));
+    }
+
+    #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
