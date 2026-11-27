@@ -690,7 +690,7 @@ impl Stage {
         }
         match feedback {
             Feedback::Fired => self.play_shot(audio),
-            Feedback::EnemyFired { target } => {
+            Feedback::EnemyFired { target, .. } => {
                 self.enemy_rig(*target).gun_flash = FLASH_TICKS;
                 self.play_shot(audio);
             }
@@ -867,6 +867,10 @@ impl Stage {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .hidden = true;
+    }
+
+    fn shot_sound(&self, _feedback: &Feedback) -> Option<moho_audio::AudioSource> {
+        todo!("build the positioned shot sound")
     }
 
     fn play_shot(&self, audio: Option<&mut AudioSystem>) {
@@ -1696,6 +1700,12 @@ impl SearchlightGame {
         self.mode.sim()
     }
 
+    /// The listener the last frame set, read from the view it drew.
+    #[cfg(test)]
+    fn frame_listener(&self) -> moho_audio::Listener {
+        todo!("expose the listener the frame set")
+    }
+
     /// The input map, for feeding it device events.
     pub fn input_mut(&mut self) -> &mut ActionMap<SearchlightAction> {
         &mut self.input
@@ -2056,6 +2066,136 @@ mod tests {
         );
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    fn shot_file() -> &'static Path {
+        Path::new("rifle.wav")
+    }
+
+    fn enemy_shot_from(from: Vec3) -> Feedback {
+        Feedback::EnemyFired { target: 0, from }
+    }
+
+    #[test]
+    fn an_enemy_shot_is_louder_in_the_ear_on_its_side() {
+        let mut game = game().with_shot_sound(shot_file());
+        let mut renderer = SettingsRenderer::default();
+        let view = draw_frame(&mut game, &mut renderer);
+        let eye = moho_audio::Listener::from_view(view);
+        let listener = game.frame_listener();
+
+        for (side, louder_right) in [(1.0, true), (-1.0, false)] {
+            let from = eye.position + eye.right() * (10.0 * side);
+            let source = game
+                .stage
+                .shot_sound(&enemy_shot_from(from))
+                .expect("an enemy shot with a shot file has a sound");
+            let at = Vec3::from(source.position().expect("an enemy shot is positioned"));
+
+            let pan = moho_audio::spatial::stereo_pan(&listener, at);
+
+            assert_eq!(pan.right > pan.left, louder_right, "side {side}: {pan:?}");
+            assert_ne!(pan.right, pan.left, "side {side}: {pan:?}");
+        }
+    }
+
+    #[test]
+    fn a_far_enemy_shot_plays_quieter_than_a_near_one() {
+        let mut stage = Stage::new();
+        stage.shot_sound = Some(shot_file().to_owned());
+        let listener = moho_audio::Listener::default();
+        let heard = |distance: f32| {
+            let source = stage
+                .shot_sound(&enemy_shot_from(Vec3::new(0.0, 0.0, -distance)))
+                .expect("an enemy shot with a shot file has a sound");
+            let at = Vec3::from(source.position().expect("an enemy shot is positioned"));
+            let gain = moho_audio::spatial::distance_gain(listener.position.distance(at))
+                .expect("within audible range");
+            source.volume() * gain
+        };
+
+        let near = heard(5.0);
+        let far = heard(40.0);
+
+        assert!(far < near, "far {far}, near {near}");
+        assert!(far > 0.0, "far {far}");
+    }
+
+    #[test]
+    fn the_players_own_shot_plays_from_no_position() {
+        let mut stage = Stage::new();
+        stage.shot_sound = Some(shot_file().to_owned());
+
+        let source = stage
+            .shot_sound(&Feedback::Fired)
+            .expect("the player's shot has a sound");
+
+        assert_eq!(source.position(), None);
+        assert_eq!(source.volume(), SHOT_VOLUME);
+        assert_eq!(*source.category(), moho_audio::AudioCategory::SoundEffect);
+        assert_eq!(source.path(), shot_file().to_string_lossy());
+    }
+
+    #[test]
+    fn the_listener_is_the_eye_the_frame_draws() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_left = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &lean_left);
+        tick_with(&mut game, &mut clock, &lean_left);
+        let mut renderer = SettingsRenderer::default();
+
+        let view = draw_frame(&mut game, &mut renderer);
+
+        let standing = game.sim().player().eye_position();
+        let listener = game.frame_listener();
+        assert_eq!(listener, moho_audio::Listener::from_view(view));
+        assert!(
+            listener.position.distance(standing) > 0.05,
+            "the lean moved the eye off {standing:?}: {listener:?}"
+        );
+    }
+
+    #[test]
+    fn no_shot_file_plays_no_shot_sound() {
+        let stage = Stage::new();
+
+        let own = stage.shot_sound(&Feedback::Fired);
+        let enemy = stage.shot_sound(&enemy_shot_from(Vec3::new(0.0, 0.0, 10.0)));
+
+        assert!(own.is_none(), "{own:?}");
+        assert!(enemy.is_none(), "{enemy:?}");
+    }
+
+    #[test]
+    fn only_shots_have_a_shot_sound() {
+        let mut stage = Stage::new();
+        stage.shot_sound = Some(shot_file().to_owned());
+        let hit = Feedback::Hit {
+            target: 0,
+            part: searchlight_rules::BodyPart::Head,
+            report: searchlight_rules::Body::new(searchlight_rules::BodyProfile {
+                max_health: 10,
+                head_status: 10,
+                arm_status: 10,
+                leg_status: 10,
+            })
+            .hit(searchlight_rules::BodyPart::Head, 1),
+            point: Vec3::ZERO,
+        };
+        let impact = Feedback::Impact {
+            point: Vec3::ZERO,
+            normal: Vec3::Y,
+        };
+
+        for feedback in [Feedback::Dry, hit, impact] {
+            let sound = stage.shot_sound(&feedback);
+
+            assert!(sound.is_none(), "{feedback:?}: {sound:?}");
+        }
     }
 
     #[test]
@@ -10464,7 +10604,13 @@ mod enemy_and_hud_tests {
         stage.add_arena(Vec::new(), &sim_dummy_spawns());
         drawn_after_sync(&mut stage, &mut renderer, &sim);
 
-        stage.react(&Feedback::EnemyFired { target: 2 }, None);
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 2,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         let drawn = drawn_after_sync(&mut stage, &mut renderer, &sim);
 
         assert_eq!(stage.enemies[0].gun_flash, FLASH_TICKS);
@@ -10482,7 +10628,13 @@ mod enemy_and_hud_tests {
         let mut stage = Stage::new();
         let mut renderer = RecordingRenderer::default();
 
-        stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 0,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         let flashing = drawn_after_sync(&mut stage, &mut renderer, &sim);
         for _ in 0..FLASH_TICKS {
             stage.tick_flashes();
@@ -10502,8 +10654,20 @@ mod enemy_and_hud_tests {
     fn an_enemy_shot_starts_a_ten_tick_gun_flash_on_that_enemys_rig() {
         let mut stage = Stage::new();
 
-        stage.react(&Feedback::EnemyFired { target: 4 }, None);
-        stage.react(&Feedback::EnemyFired { target: 9 }, None);
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 4,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
+        stage.react(
+            &Feedback::EnemyFired {
+                target: 9,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
 
         let flashes: Vec<(u16, u32)> = stage
             .enemies
@@ -10643,7 +10807,13 @@ mod enemy_and_hud_tests {
         let mut renderer = RecordingRenderer::default();
         let (struck, plain) = (game.stage.struck_material, game.stage.enemy_material);
 
-        game.stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 0,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         play_frame(&mut game, &mut renderer);
         let flashing: Vec<u32> = renderer
             .unit_box_instances()
@@ -10862,7 +11032,13 @@ mod enemy_and_hud_tests {
         let mut game = lone_game();
         let mut renderer = RecordingRenderer::default();
         let plain = game.stage.enemy_material;
-        game.stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 0,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         play_frame(&mut game, &mut renderer);
         assert!(
             game.stage.enemies[0].gun_flash > 0,
@@ -10902,7 +11078,13 @@ mod enemy_and_hud_tests {
         );
         let mut renderer = RecordingRenderer::default();
         let plain = game.stage.enemy_material;
-        game.stage.react(&Feedback::EnemyFired { target: 1 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 1,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
         play_frame(&mut game, &mut renderer);
         assert!(
             game.stage.enemy_rig(1).gun_flash > 0,
@@ -10947,7 +11129,13 @@ mod enemy_and_hud_tests {
         );
         let mut renderer = RecordingRenderer::default();
         let (struck, plain) = (game.stage.struck_material, game.stage.enemy_material);
-        game.stage.react(&Feedback::EnemyFired { target: 1 }, None);
+        game.stage.react(
+            &Feedback::EnemyFired {
+                target: 1,
+                from: Vec3::ZERO,
+            },
+            None,
+        );
 
         play_frame(&mut game, &mut renderer);
         let materials = materials_placed(&renderer);

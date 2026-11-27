@@ -195,7 +195,7 @@ pub enum Feedback {
     /// A reload finished.
     ReloadDone,
     /// The enemy numbered `target` fired a shot.
-    EnemyFired { target: u16 },
+    EnemyFired { target: u16, from: Vec3 },
     /// An enemy shot struck `part` of the player; `from` is where the shot began.
     PlayerHit { part: BodyPart, from: Vec3 },
     /// The enemy numbered `target` died and left the arena.
@@ -1013,6 +1013,7 @@ impl SearchlightSim {
             let direction = self.with_spread(aim - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
+                from: Vec3::ZERO,
             });
             let strike = resolve_shot(
                 &self.world,
@@ -6454,6 +6455,28 @@ mod enemy_tests {
     }
 
     #[test]
+    fn an_enemy_shot_reports_the_eye_it_fired_from() {
+        let mut sim = SearchlightSim::start(duel(&[]), config());
+        let mut reported = None;
+
+        for _ in 0..12 {
+            sim.tick(&idle(), DT);
+            let eye = sim.enemy_state(0).expect("the enemy lives").eye_position();
+            let from = sim.drain_feedback().into_iter().find_map(|fb| match fb {
+                Feedback::EnemyFired { from, .. } => Some(from),
+                _ => None,
+            });
+            if let Some(from) = from {
+                reported = Some((from, eye));
+                break;
+            }
+        }
+
+        let (from, eye) = reported.expect("the enemy fires within 12 ticks");
+        assert!(from.distance(eye) < 1e-3, "from {from:?}, eye {eye:?}");
+    }
+
+    #[test]
     fn an_enemy_beyond_its_sight_range_does_not_fire() {
         let fired_with_range = |sight_range: f32| {
             let mut config = config();
@@ -7098,7 +7121,7 @@ mod enemy_tests {
     }
 
     fn fired_by(target: u16) -> impl Fn(&Feedback) -> bool {
-        move |feedback| *feedback == Feedback::EnemyFired { target }
+        move |feedback| matches!(feedback, Feedback::EnemyFired { target: fired, .. } if *fired == target)
     }
 
     #[test]
