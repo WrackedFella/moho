@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check
+check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check package-test
 
 fmt-check:
     cargo fmt --all --check
@@ -200,6 +200,34 @@ assets-check:
 [macos, windows]
 assets-check:
     @echo "assets-check: skipped, Linux only"
+
+# Self-test of scripts/package.sh with a stub executable: the package holds the executable and
+# the committed assets and content, no generator tool or README, and a second run drops
+# whatever the first left in the output folder. It never builds.
+package-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    exe="$work/searchlight"
+    out="$work/out"
+    printf '#!/bin/sh\n' > "$exe"
+    chmod +x "$exe"
+    fail() { echo "package-test: $1" >&2; exit 1; }
+    mkdir -p "$out"
+    echo stale > "$out/stale.txt"
+    scripts/package.sh searchlight "$exe" "$out"
+    [[ -f "$out/searchlight" && -x "$out/searchlight" ]] || fail "executable missing or not executable"
+    for f in assets/arena.glb assets/proving_ground.glb assets/rifle_shot.wav content/items.toml content/kits.toml; do
+        [[ -f "$out/$f" ]] || fail "$f missing"
+    done
+    [[ ! -e "$out/assets/tools" ]] || fail "assets/tools shipped"
+    [[ -z "$(find "$out" -name '*.md')" ]] || fail "a markdown file shipped"
+    [[ ! -e "$out/stale.txt" ]] || fail "stale file survived the first run"
+    echo stale > "$out/stale.txt"
+    scripts/package.sh searchlight "$exe" "$out"
+    [[ ! -e "$out/stale.txt" ]] || fail "stale file survived a second run"
+    echo "package-test: OK"
 
 run-record-test:
     #!/usr/bin/env bash

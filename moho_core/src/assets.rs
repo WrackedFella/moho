@@ -14,6 +14,12 @@ pub enum AssetError {
         /// The folder that was asked for.
         path: PathBuf,
     },
+    /// An asset folder path exists but is not a folder.
+    #[error("asset folder {} is not a folder", path.display())]
+    NotAFolder {
+        /// The path that was asked for.
+        path: PathBuf,
+    },
     /// An asset name is absolute or steps outside its folder.
     #[error("asset name {} must be a relative path without `.` or `..`", name.display())]
     InvalidName {
@@ -374,6 +380,43 @@ mod tests {
                 error.to_string().contains(&name.display().to_string()),
                 "{error}"
             );
+        }
+    }
+
+    #[test]
+    fn dot_segments_are_refused_anywhere() {
+        let placeholders = folder_with(&["x.glb", "a/x.glb"]);
+        let roots = roots(placeholders.path(), &[]);
+
+        for name in ["./x.glb", "a/./x.glb", "a/."] {
+            let error = roots.resolve(Path::new(name)).unwrap_err();
+
+            assert!(
+                matches!(&error, AssetError::InvalidName { name: refused } if refused == Path::new(name)),
+                "{name}: {error:?}"
+            );
+            assert!(error.to_string().contains(name), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_file_named_as_a_folder_is_reported_as_not_a_folder() {
+        let placeholders = folder_with(&[]);
+        let holder = folder_with(&["plain.txt"]);
+        let file = holder.path().join("plain.txt");
+        let base = AssetRoots::placeholders(placeholders.path()).unwrap();
+
+        let as_placeholders = AssetRoots::placeholders(&file).unwrap_err();
+        let as_folder = base.with_folder(&file).unwrap_err();
+
+        for error in [as_placeholders, as_folder] {
+            assert!(
+                matches!(&error, AssetError::NotAFolder { path } if path == &file),
+                "{error:?}"
+            );
+            let text = error.to_string();
+            assert!(text.contains("not a folder"), "{text}");
+            assert!(text.contains(&file.display().to_string()), "{text}");
         }
     }
 

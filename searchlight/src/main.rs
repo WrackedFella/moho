@@ -23,7 +23,9 @@ use searchlight::mode::ArenaMode;
 use searchlight::sim::SimConfig;
 use searchlight::tuning::shipped_with_enemy;
 use searchlight::wave::WaveTuning;
-use searchlight::{TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
+use searchlight::{
+    TICK_HZ, assets_root, content_root, mods_dir, prefs_path, split_console_binding,
+};
 
 /// The sim tuning built from the starting kit and the enemy kit, both loaded from the base
 /// content folder and the listed mod roots.
@@ -55,7 +57,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    let assets = match launch::asset_roots(&launch) {
+    let assets = match launch::asset_roots(&launch, &assets_root()) {
         Ok(assets) => assets,
         Err(error) => {
             tracing::error!(%error, "Asset folder refused");
