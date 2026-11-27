@@ -251,7 +251,7 @@ impl KitDef {
             let spare = build(&mut rounds, &entry.magazine, &entry.round, entry.rounds)?;
             rig.stow(spare).map_err(|_| KitError::RigOverfilled {
                 rig: self.rig.clone(),
-                slots: rig_spec.magazine_slots,
+                slots: rig_spec.magazine_slots.values().sum(),
                 magazines: self.magazines.len(),
             })?;
         }
@@ -329,11 +329,11 @@ mod tests {
             },
             "mag_rifle": {
                 "class": "gear", "size": [1, 2],
-                "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30}
+                "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "rifle"}
             },
             "mag_pistol": {
                 "class": "gear", "size": [1, 1],
-                "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15}
+                "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15, "slot": "rifle"}
             },
             "round_ball": {
                 "class": "consumable", "size": [1, 1],
@@ -351,7 +351,7 @@ mod tests {
                 "class": "consumable", "size": [1, 1],
                 "round": {"caliber": "9mm", "muzzle_velocity": 400.0, "drag": 3.0, "damage": 20}
             },
-            "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
+            "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": {"rifle": 3}}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
         });
         let Value::Object(defs) = defs else {

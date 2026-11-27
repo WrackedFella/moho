@@ -15,7 +15,7 @@ use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId,
     LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Remains, Rifle, Rig, RigSpec,
-    RoundStats,
+    RoundStats, SlotKind,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -103,11 +103,19 @@ pub(crate) fn flat_floor() -> PhysicsWorld {
     world_with(&[(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0))])
 }
 
+/// A rig section with `slots` magazine slots of the `test` kind, the kind of every test magazine.
+pub(crate) fn rig_spec(slots: u32) -> RigSpec {
+    RigSpec {
+        magazine_slots: BTreeMap::from([(SlotKind::new("test"), slots)]),
+    }
+}
+
 /// A magazine of the `test` well holding `rounds` of `test_round`.
 pub(crate) fn mag(capacity: u32, rounds: u32) -> Magazine {
     let spec = MagazineSpec {
         well: MagazineWell::new("test"),
         caliber: Caliber::new("test"),
+        slot: SlotKind::new("test"),
         capacity,
     };
     Magazine::filled(
@@ -124,6 +132,7 @@ pub(crate) fn foreign_mag(capacity: u32, rounds: u32) -> Magazine {
     let spec = MagazineSpec {
         well: MagazineWell::new("foreign"),
         caliber: Caliber::new("test"),
+        slot: SlotKind::new("test"),
         capacity,
     };
     Magazine::filled(
@@ -171,12 +180,7 @@ pub(crate) fn test_profile() -> BodyProfile {
 /// `spares` stowed in order on a rig that has one slot per spare.
 pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     let slots = u32::try_from(spares.len()).expect("a handful of test spares");
-    let mut rig = Rig::new(
-        ItemId::new("test_rig"),
-        &RigSpec {
-            magazine_slots: slots,
-        },
-    );
+    let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(slots));
     for spare in spares {
         rig.stow(spare).expect("the rig has a slot per spare");
     }

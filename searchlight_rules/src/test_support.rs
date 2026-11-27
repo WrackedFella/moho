@@ -1,6 +1,6 @@
 //! Shared builders for the crate's unit tests.
 
-use crate::item::{Caliber, ItemId, MagazineSpec, MagazineWell};
+use crate::item::{Caliber, ItemId, MagazineSpec, MagazineWell, SlotKind};
 use crate::magazine::Magazine;
 
 pub(crate) fn id(text: &str) -> ItemId {
@@ -11,6 +11,7 @@ pub(crate) fn spec(well: &str, capacity: u32) -> MagazineSpec {
     MagazineSpec {
         well: MagazineWell::new(well),
         caliber: Caliber::new("5.56x45"),
+        slot: SlotKind::new("rifle"),
         capacity,
     }
 }

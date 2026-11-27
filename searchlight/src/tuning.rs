@@ -123,12 +123,11 @@ mod tests {
     use super::*;
     use crate::input::SearchlightCommand;
     use crate::sim::SearchlightSim;
-    use crate::test_support::{DT, arena_with, mag, rifle_from};
+    use crate::test_support::{DT, arena_with, mag, rifle_from, rig_spec};
     use glam::Vec3;
     use moho_physics::{Hull, HullShape, Stature};
     use searchlight_rules::{
-        Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
-        RoundStats,
+        Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RoundStats,
     };
     use std::collections::BTreeMap;
 
@@ -141,7 +140,7 @@ mod tests {
             reload_ticks: 77,
             charge_ticks: 13,
         };
-        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 2 });
+        let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(2));
         rig.stow(mag(17, 17)).unwrap();
         let loadout = Loadout::new(rifle_from(mag(17, 17)), rig);
         let rounds = BTreeMap::from([(
@@ -170,7 +169,7 @@ mod tests {
     }
 
     fn shipped_config() -> SimConfig {
-        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
+        let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(1));
         rig.stow(mag(17, 17)).unwrap();
         tuning(Kit {
             weapon: RifleDef {
@@ -235,7 +234,7 @@ mod tests {
 
     #[test]
     fn the_shipped_lean_is_0_35_m_and_12_degrees() {
-        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
+        let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(1));
         rig.stow(mag(17, 17)).unwrap();
         let kit = Kit {
             weapon: RifleDef {

@@ -2,10 +2,18 @@
 //! the inventory of everything else.
 
 use crate::inventory::{Item, MoveRefused, Place, Remains, Source};
-use crate::item::ItemId;
+use crate::item::{ItemId, SlotKind};
 use crate::magazine::Magazine;
 use crate::rifle::{Rifle, Shot};
 use crate::rig::Rig;
+
+/// What a move's source holds.
+enum Held {
+    /// A magazine, taking a slot of this kind.
+    Magazine(SlotKind),
+    /// Anything else.
+    Other,
+}
 
 /// A rifle, the rig it reloads from, the backpack worn and the inventory.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,15 +82,15 @@ impl Loadout {
         if (to == Place::Body || from.on_body()) && body.is_none() {
             return Err(MoveRefused::NoBody);
         }
-        let is_magazine = self
-            .holds_magazine(body.as_deref(), from)
+        let held = self
+            .held(body.as_deref(), from)
             .ok_or(MoveRefused::NoSuchItem)?;
         if to == Place::MagazineSlots {
-            if !is_magazine {
+            let Held::Magazine(kind) = held else {
                 return Err(MoveRefused::NotAMagazine);
-            }
-            let leaves_a_slot = matches!(from, Source::MagazineSlot(_));
-            if self.rig.free_slots() == 0 && !leaves_a_slot {
+            };
+            let leaves_a_fitting_slot = matches!(from, Source::MagazineSlot(slot) if self.rig.slot_kind(slot) == Some(&kind));
+            if !leaves_a_fitting_slot && !self.rig.has_free_slot_for(&kind) {
                 return Err(MoveRefused::NoFreeSlot);
             }
         }
@@ -106,29 +114,30 @@ impl Loadout {
         Ok(())
     }
 
-    /// Whether `from` holds an item, and if so whether it is a magazine.
-    fn holds_magazine(&self, body: Option<&Remains>, from: Source) -> Option<bool> {
+    /// What `from` holds, if anything.
+    fn held(&self, body: Option<&Remains>, from: Source) -> Option<Held> {
         let in_slot = |slots: &[Option<Magazine>], index: usize| {
-            slots.get(index).and_then(Option::as_ref).map(|_| true)
+            slots
+                .get(index)
+                .and_then(Option::as_ref)
+                .map(|magazine| Held::Magazine(magazine.slot().clone()))
+        };
+        let kind_of = |item: &Item| match item {
+            Item::Magazine(magazine) => Held::Magazine(magazine.slot().clone()),
+            _ => Held::Other,
         };
         match from {
-            Source::Inventory(index) => self
-                .inventory
-                .get(index)
-                .map(|item| matches!(item, Item::Magazine(_))),
+            Source::Inventory(index) => self.inventory.get(index).map(kind_of),
             Source::MagazineSlot(index) => in_slot(self.rig.slots(), index),
-            Source::BodyCarried(index) => body?
-                .carried
-                .get(index)
-                .map(|item| matches!(item, Item::Magazine(_))),
+            Source::BodyCarried(index) => body?.carried.get(index).map(kind_of),
             Source::BodyMagazineSlot(index) => in_slot(body?.rig.as_ref()?.slots(), index),
-            Source::BodyRig => body?.rig.as_ref().map(|_| false),
-            Source::BodyBackpack => body?.backpack.as_ref().map(|_| false),
+            Source::BodyRig => body?.rig.as_ref().map(|_| Held::Other),
+            Source::BodyBackpack => body?.backpack.as_ref().map(|_| Held::Other),
         }
     }
 
     /// Removes and returns what `from` holds. Call it only for a source
-    /// [`Self::holds_magazine`] found an item in: an index past the end of a list panics.
+    /// [`Self::held`] found an item in: an index past the end of a list panics.
     /// Taking a body's rig yields the rig alone; its magazines join the body's carried items.
     fn take(&mut self, body: Option<&mut Remains>, from: Source) -> Option<Item> {
         match from {
@@ -194,7 +203,7 @@ impl Loadout {
 mod tests {
     use super::*;
     use crate::inventory::RoundStack;
-    use crate::item::{ItemId, RigSpec};
+    use crate::item::ItemId;
     use crate::magazine::Magazine;
     use crate::rifle::{Rifle, Shot};
     use crate::rig::Rig;
@@ -209,9 +218,7 @@ mod tests {
     fn loadout(magazine: Magazine, layout: &[Option<Magazine>]) -> Loadout {
         let mut rig = Rig::new(
             id("rig"),
-            &RigSpec {
-                magazine_slots: u32::try_from(layout.len()).unwrap(),
-            },
+            &crate::test_support::rig_spec(&[("rifle", u32::try_from(layout.len()).unwrap())]),
         );
         for (slot, spare) in layout.iter().enumerate() {
             if let Some(spare) = spare {
@@ -440,9 +447,7 @@ mod tests {
     fn rig_holding(item: &str, layout: &[Option<&str>]) -> Rig {
         let mut rig = Rig::new(
             id(item),
-            &RigSpec {
-                magazine_slots: u32::try_from(layout.len()).unwrap(),
-            },
+            &crate::test_support::rig_spec(&[("rifle", u32::try_from(layout.len()).unwrap())]),
         );
         for (slot, magazine) in layout.iter().enumerate() {
             if let Some(magazine) = magazine {

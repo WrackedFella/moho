@@ -1693,7 +1693,7 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
+    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig};
 
     use super::*;
     use crate::tag::SurfaceTag;
@@ -1774,9 +1774,7 @@ mod tests {
     fn empty_rig(slots: u32) -> Rig {
         Rig::new(
             ItemId::new("test_rig"),
-            &RigSpec {
-                magazine_slots: slots,
-            },
+            &crate::test_support::rig_spec(slots),
         )
     }
 

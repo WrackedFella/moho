@@ -2,12 +2,20 @@
 //! screen only shows and asks; the sim owns the items and applies every move.
 
 use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
-use searchlight_rules::{Item, Loadout, Magazine, Place, Remains, Source};
+use searchlight_rules::{Item, Loadout, Magazine, Place, Remains, SlotKind, Source};
 
 use crate::menu::MenuAction;
 
-/// The label of a magazine slot with no magazine in it.
-pub const EMPTY_SLOT: &str = "(empty)";
+/// The label of a free magazine slot of kind `kind`, such as "Rifle slot · Empty".
+fn free_slot_label(kind: Option<&SlotKind>) -> String {
+    let kind = kind.map_or("", SlotKind::as_str);
+    let mut letters = kind.chars();
+    let name: String = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default();
+    format!("{name} slot · Empty")
+}
 
 /// The worn rig and backpack; nothing in it moves.
 pub const EQUIPMENT: ListId = ListId(0);
@@ -22,7 +30,7 @@ pub const BODY: ListId = ListId(3);
 ///
 /// A row is labelled with its item's id; a magazine's count is its rounds and a stack of
 /// rounds' is its size. The magazine slots list has one row per slot, a free one labelled
-/// [`EMPTY_SLOT`] with no count.
+/// with its kind, such as "Rifle slot · Empty", and no count.
 pub fn gear_lists(loadout: &Loadout) -> ItemLists<MenuAction> {
     ItemLists {
         lists: vec![
@@ -124,7 +132,11 @@ fn entries(list: ListId, loadout: &Loadout, body: Option<&Remains>) -> Vec<Entry
             .enumerate()
             .map(|(slot, held)| match held {
                 Some(magazine) => Entry::of_magazine(magazine, Source::MagazineSlot(slot)),
-                None => Entry::new(EMPTY_SLOT, None, Some(Source::MagazineSlot(slot))),
+                None => Entry::new(
+                    free_slot_label(loadout.rig().slot_kind(slot)),
+                    None,
+                    Some(Source::MagazineSlot(slot)),
+                ),
             })
             .collect(),
         INVENTORY => loadout
@@ -186,22 +198,17 @@ fn list(
 
 #[cfg(test)]
 mod tests {
-    use searchlight_rules::{Item, ItemId, Place, Rig, RigSpec, Source};
+    use searchlight_rules::{Item, ItemId, Place, Rig, Source};
 
     use super::*;
-    use crate::test_support::{mag, rifle_from};
+    use crate::test_support::{mag, rifle_from, rig_spec};
 
     fn bandage() -> Item {
         Item::Other(ItemId::new("bandage"))
     }
 
     fn rig_with(slots: u32, held: usize) -> Rig {
-        let mut rig = Rig::new(
-            ItemId::new("test_rig"),
-            &RigSpec {
-                magazine_slots: slots,
-            },
-        );
+        let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(slots));
         for _ in 0..held {
             rig.stow(mag(30, 30)).expect("the rig has a free slot");
         }
@@ -370,7 +377,12 @@ mod tests {
 
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
-            ["test_mag", EMPTY_SLOT, EMPTY_SLOT, EMPTY_SLOT]
+            [
+                "test_mag",
+                "Test slot · Empty",
+                "Test slot · Empty",
+                "Test slot · Empty"
+            ]
         );
     }
 
@@ -378,7 +390,7 @@ mod tests {
     fn sparse_player() -> Loadout {
         let rig = Rig::from_slots(
             ItemId::new("test_rig"),
-            &RigSpec { magazine_slots: 4 },
+            &rig_spec(4),
             vec![None, Some(mag(30, 30)), None, Some(mag(30, 30))],
         )
         .expect("four slots for a four-slot spec");
@@ -393,7 +405,7 @@ mod tests {
             rig: Some(
                 Rig::from_slots(
                     ItemId::new("body_rig"),
-                    &RigSpec { magazine_slots: 3 },
+                    &rig_spec(3),
                     vec![Some(mag(30, 30)), None, Some(mag(30, 30))],
                 )
                 .expect("three slots for a three-slot spec"),
@@ -443,7 +455,12 @@ mod tests {
         );
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
-            [EMPTY_SLOT, "test_mag", EMPTY_SLOT, "test_mag"]
+            [
+                "Test slot · Empty",
+                "test_mag",
+                "Test slot · Empty",
+                "test_mag"
+            ]
         );
         assert_eq!(
             sources(&shown, INVENTORY, &loadout, Some(&remains)),

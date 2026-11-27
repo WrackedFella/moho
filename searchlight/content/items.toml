@@ -15,7 +15,7 @@ charge_ticks = 30
 class = "gear"
 size = [1, 2]
 weight = 0.25
-magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 30, slot = "rifle" }
 
 [round_rifle_ball]
 class = "consumable"
@@ -27,7 +27,7 @@ round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0, damage = 30 
 class = "gear"
 size = [3, 2]
 weight = 1.2
-rig = { magazine_slots = 3 }
+rig = { magazine_slots = { rifle = 3 } }
 
 [backpack_small]
 class = "gear"

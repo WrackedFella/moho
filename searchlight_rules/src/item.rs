@@ -3,6 +3,7 @@
 use crate::ballistics::{Ballistics, MIN_SPEED, RoundStats};
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 use thiserror::Error;
@@ -47,6 +48,10 @@ string_id!(
 string_id!(
     /// The kind of magazine well a weapon has; a magazine fits a weapon with the same well.
     MagazineWell
+);
+string_id!(
+    /// The kind of rig slot a magazine takes, such as `rifle` or `pistol`; a mod may name its own.
+    SlotKind
 );
 
 /// What an item is for.
@@ -177,6 +182,9 @@ pub struct MagazineSpec {
     pub well: MagazineWell,
     /// The caliber it takes.
     pub caliber: Caliber,
+    /// The kind of rig slot it takes. A kind no rig defines is allowed: the magazine then
+    /// fits no slot.
+    pub slot: SlotKind,
     /// Rounds it holds.
     pub capacity: u32,
 }
@@ -185,8 +193,10 @@ pub struct MagazineSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RigSpec {
-    /// Magazines the rig carries.
-    pub magazine_slots: u32,
+    /// How many magazine slots of each kind the rig carries; a kind left out has none. The
+    /// rig's slots run in the order of the kind names (sorted, as the data loader keeps no
+    /// file order), each kind's slots together.
+    pub magazine_slots: BTreeMap<SlotKind, u32>,
 }
 
 /// The backpack section of an item definition: marks an item that goes in the backpack slot.
@@ -578,7 +588,7 @@ mod tests {
     fn a_magazine_section_loads_well_caliber_and_capacity() {
         let item = parse(json!({
             "class": "gear", "size": [1, 2],
-            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30}
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "rifle"}
         }))
         .expect("gear with a magazine section loads");
 
@@ -590,6 +600,7 @@ mod tests {
             MagazineSpec {
                 well: MagazineWell::new("rifle"),
                 caliber: Caliber::new("5.56x45"),
+                slot: SlotKind::new("rifle"),
                 capacity: 30,
             }
         );
@@ -706,14 +717,19 @@ mod tests {
     #[test]
     fn a_rig_section_loads_its_magazine_slots() {
         let item = parse(json!({
-            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}
+            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": {"rifle": 3}}
         }))
         .expect("gear with a rig section loads");
 
         let ItemKind::Rig(spec) = item.kind else {
             panic!("expected a rig kind, got {:?}", item.kind);
         };
-        assert_eq!(spec, RigSpec { magazine_slots: 3 });
+        assert_eq!(
+            spec,
+            RigSpec {
+                magazine_slots: BTreeMap::from([(SlotKind::new("rifle"), 3)])
+            }
+        );
     }
 
     #[test]
@@ -723,11 +739,11 @@ mod tests {
             (
                 "weapon",
                 "magazine",
-                json!({"well": "w", "caliber": "c", "capacity": 1}),
+                json!({"well": "w", "caliber": "c", "capacity": 1, "slot": "s"}),
             ),
             ("gear", "round", round_section(json!(940.0), json!(1.0))),
-            ("consumable", "rig", json!({"magazine_slots": 1})),
-            ("tool", "rig", json!({"magazine_slots": 1})),
+            ("consumable", "rig", json!({"magazine_slots": {"rifle": 1}})),
+            ("tool", "rig", json!({"magazine_slots": {"rifle": 1}})),
         ];
         for (class, section, body) in cases {
             let mut value = json!({"class": class, "size": [1, 1]});
@@ -744,8 +760,8 @@ mod tests {
     fn two_sections_on_one_item_are_refused() {
         let result = parse(json!({
             "class": "gear", "size": [1, 1],
-            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30},
-            "rig": {"magazine_slots": 3}
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "rifle"},
+            "rig": {"magazine_slots": {"rifle": 3}}
         }));
 
         assert!(result.is_err(), "{result:?}");
@@ -754,7 +770,7 @@ mod tests {
     #[test]
     fn an_unknown_section_key_inside_a_section_is_refused() {
         let text = error_text(json!({
-            "class": "gear", "size": [1, 1], "rig": {"magazine_slots": 3, "slotz": 1}
+            "class": "gear", "size": [1, 1], "rig": {"magazine_slots": {"rifle": 3}, "slotz": 1}
         }));
 
         assert!(text.contains("slotz"), "{text}");
