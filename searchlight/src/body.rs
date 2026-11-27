@@ -1,9 +1,19 @@
 //! The character body the game uses, and a check that says whether a body is one it can use.
 
 use std::fmt;
+use std::path::{Path, PathBuf};
 
-use moho_core::assets::AssetRoots;
+use glam::Affine3A;
+use moho_core::assets::{AssetError, AssetRoots};
+use moho_level::anim::{ClipError, ClipPlayer, Playback};
+use moho_level::humanoid::{Bone, Humanoid, load_humanoid};
+use moho_level::{LevelError, Model, load_model};
 use thiserror::Error;
+
+use crate::TICK_HZ;
+
+/// How far the standing head may sit from the standing eye, in metres.
+const HEAD_TOLERANCE: f32 = 0.05;
 
 /// The full body, as an asset name.
 pub const BODY: &str = "characters/mannequin/mannequin.glb";
@@ -30,29 +40,296 @@ pub const CLIPS: [&str; 10] = [
 
 /// What the check found in a body the game can use.
 #[derive(Debug)]
-pub struct BodyReport {}
+pub struct BodyReport {
+    body: PathBuf,
+    player_body: PathBuf,
+    head: PathBuf,
+    head_height: f32,
+    eye_height: f32,
+}
 
 impl fmt::Display for BodyReport {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Ok(())
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (name, source) in [(BODY, &self.body), (PLAYER_BODY, &self.player_body)] {
+            writeln!(f, "{name}: {}", source.display())?;
+            writeln!(
+                f,
+                "  {} bones, {} clips: {}",
+                Bone::ALL.len(),
+                CLIPS.len(),
+                CLIPS.join(", ")
+            )?;
+        }
+        writeln!(f, "{HEAD}: {}", self.head.display())?;
+        write!(
+            f,
+            "standing head height {:.2} m against eye {:.2} m",
+            self.head_height, self.eye_height
+        )
     }
 }
 
-/// Why a body is one the game can't use.
+/// Why a body is one the game can't use; each variant names the asset file.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum BodyError {
-    /// The check is not written yet.
-    #[error("the body check is not implemented")]
-    NotImplemented,
+    /// No folder holds the file.
+    #[error("{file}: {source}")]
+    Resolve {
+        /// The asset name.
+        file: &'static str,
+        /// Why it did not resolve.
+        source: AssetError,
+    },
+    /// The loader refused the file, or it lacks a humanoid bone.
+    #[error("{file}: {source}")]
+    Load {
+        /// The asset name.
+        file: &'static str,
+        /// What the loader said.
+        source: LevelError,
+    },
+    /// A bone name resolves to a node that is not a joint of the rig.
+    #[error("{file}: {bone} is not a joint")]
+    NotJoint {
+        /// The asset name.
+        file: &'static str,
+        /// The bone's node name.
+        bone: &'static str,
+    },
+    /// A required clip is missing.
+    #[error("{file}: {source}")]
+    Clip {
+        /// The asset name.
+        file: &'static str,
+        /// Which clip and why.
+        source: ClipError,
+    },
+    /// A clip's duration or one of its poses is not finite.
+    #[error("{file}: clip {clip} gives a non-finite pose at {time} s")]
+    NonFinitePose {
+        /// The asset name.
+        file: &'static str,
+        /// The clip's name.
+        clip: &'static str,
+        /// The time the pose was taken at.
+        time: f32,
+    },
+    /// An unskinned mesh sits on no bone.
+    #[error("{file}: the mesh on node {node} is on no bone")]
+    DetachedMesh {
+        /// The asset name.
+        file: &'static str,
+        /// The mesh node's name, or its index when it has none.
+        node: String,
+    },
+    /// The headless body carries the head or neck.
+    #[error("{file}: the headless body has a mesh on {bone}")]
+    HeadInHeadlessBody {
+        /// The asset name.
+        file: &'static str,
+        /// `head` or `neck_01`.
+        bone: &'static str,
+    },
+    /// The head model has no `attach` node.
+    #[error("{file}: no node named attach")]
+    NoAttach {
+        /// The asset name.
+        file: &'static str,
+    },
+    /// The standing head is not under the standing eye.
+    #[error(
+        "{file}: the head height {height:.2} m is not within {HEAD_TOLERANCE} m of the eye {eye:.2} m"
+    )]
+    HeadHeight {
+        /// The asset name.
+        file: &'static str,
+        /// The head bone's height in `idle` at time 0.
+        height: f32,
+        /// The height the camera sits at.
+        eye: f32,
+    },
 }
 
-/// Checks the three character files `assets` resolves.
+/// Checks the three character files `assets` resolves, and that the standing head of the
+/// full body sits within 0.05 m of `eye_height`.
 ///
 /// # Errors
 /// [`BodyError`] naming the file and the fault.
-pub fn check(_assets: &AssetRoots, _eye_height: f32) -> Result<BodyReport, BodyError> {
-    Err(BodyError::NotImplemented)
+pub fn check(assets: &AssetRoots, eye_height: f32) -> Result<BodyReport, BodyError> {
+    let body = resolve(assets, BODY)?;
+    let player_body = resolve(assets, PLAYER_BODY)?;
+    let head = resolve(assets, HEAD)?;
+
+    let (model, humanoid) = check_rig(BODY, &body)?;
+    let (player_model, player_humanoid) = check_rig(PLAYER_BODY, &player_body)?;
+    check_headless(&player_model, player_humanoid).map_err(|bone| {
+        BodyError::HeadInHeadlessBody {
+            file: PLAYER_BODY,
+            bone,
+        }
+    })?;
+
+    let head_model = load_model(&head).map_err(|source| BodyError::Load { file: HEAD, source })?;
+    if head_model.node("attach").is_none() {
+        return Err(BodyError::NoAttach { file: HEAD });
+    }
+
+    let head_height = standing_head_height(&model, humanoid);
+    if (head_height - eye_height).abs() > HEAD_TOLERANCE {
+        return Err(BodyError::HeadHeight {
+            file: BODY,
+            height: head_height,
+            eye: eye_height,
+        });
+    }
+    Ok(BodyReport {
+        body,
+        player_body,
+        head,
+        head_height,
+        eye_height,
+    })
+}
+
+fn resolve(assets: &AssetRoots, file: &'static str) -> Result<PathBuf, BodyError> {
+    assets
+        .resolve(Path::new(file))
+        .map_err(|source| BodyError::Resolve { file, source })
+}
+
+/// Loads a body and checks its bones, clips and meshes.
+fn check_rig(file: &'static str, path: &Path) -> Result<(Model, Humanoid), BodyError> {
+    let (model, humanoid) =
+        load_humanoid(path).map_err(|source| BodyError::Load { file, source })?;
+    check_joints(file, &model, humanoid)?;
+    for clip in CLIPS {
+        play_clip(file, &model, clip)?;
+    }
+    check_no_detached_mesh(file, &model, humanoid)?;
+    Ok((model, humanoid))
+}
+
+/// Every resolved bone node is a joint of a skin, or, in a body with no skin, carries no
+/// mesh. A mesh node named like a bone and ahead of it would otherwise win the name lookup.
+fn check_joints(file: &'static str, model: &Model, humanoid: Humanoid) -> Result<(), BodyError> {
+    for bone in Bone::ALL {
+        let node = humanoid.node(bone);
+        let is_joint = if model.skins().is_empty() {
+            model.meshes().iter().all(|mesh| mesh.node != node)
+        } else {
+            model.skins().iter().any(|skin| skin.joints.contains(&node))
+        };
+        if !is_joint {
+            return Err(BodyError::NotJoint {
+                file,
+                bone: bone.name(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Plays `clip` from 0 to its duration in sim ticks; every pose must be finite.
+fn play_clip(file: &'static str, model: &Model, clip: &'static str) -> Result<(), BodyError> {
+    let mut player = ClipPlayer::new(model, clip, Playback::Once)
+        .map_err(|source| BodyError::Clip { file, source })?;
+    let duration = model.clips()[player.clip()].duration();
+    if !duration.is_finite() {
+        return Err(BodyError::NonFinitePose {
+            file,
+            clip,
+            time: duration,
+        });
+    }
+    let tick = 1.0 / TICK_HZ as f32;
+    loop {
+        let pose = player.pose(model);
+        if !pose.nodes().iter().all(Affine3A::is_finite) {
+            return Err(BodyError::NonFinitePose {
+                file,
+                clip,
+                time: player.time(),
+            });
+        }
+        if player.is_finished(model) {
+            return Ok(());
+        }
+        player.advance(model, tick);
+    }
+}
+
+/// Whether `node` is `ancestor` or sits below it.
+fn is_under(model: &Model, node: usize, ancestor: usize) -> bool {
+    let mut at = Some(node);
+    while let Some(current) = at {
+        if current == ancestor {
+            return true;
+        }
+        at = model.nodes()[current].parent;
+    }
+    false
+}
+
+/// Every mesh is skinned or sits under `pelvis`.
+fn check_no_detached_mesh(
+    file: &'static str,
+    model: &Model,
+    humanoid: Humanoid,
+) -> Result<(), BodyError> {
+    let pelvis = humanoid.node(Bone::Pelvis);
+    for mesh in model.meshes() {
+        if mesh.skin.is_none() && !is_under(model, mesh.node, pelvis) {
+            let node = model.nodes()[mesh.node]
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("#{}", mesh.node));
+            return Err(BodyError::DetachedMesh { file, node });
+        }
+    }
+    Ok(())
+}
+
+/// The bone name of the first head or neck mesh in `model`: a vertex weighted on it, or an
+/// unskinned mesh under it.
+fn check_headless(model: &Model, humanoid: Humanoid) -> Result<(), &'static str> {
+    let hidden = [Bone::Head, Bone::Neck];
+    for mesh in model.meshes() {
+        match &mesh.skin {
+            Some(skin) => {
+                let joints = &model.skins()[skin.skin].joints;
+                for (influences, weights) in skin.joints.iter().zip(&skin.weights) {
+                    for (&joint, &weight) in influences.iter().zip(weights) {
+                        let node = joints[usize::from(joint)];
+                        if let Some(bone) = hidden
+                            .into_iter()
+                            .find(|&bone| weight > 0.0 && humanoid.node(bone) == node)
+                        {
+                            return Err(bone.name());
+                        }
+                    }
+                }
+            }
+            None => {
+                if let Some(bone) = hidden
+                    .into_iter()
+                    .find(|&bone| is_under(model, mesh.node, humanoid.node(bone)))
+                {
+                    return Err(bone.name());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The head bone's model-space height in `idle` at time 0.
+fn standing_head_height(model: &Model, humanoid: Humanoid) -> f32 {
+    let idle = model
+        .clip("idle")
+        .expect("check_rig played idle, so the model has it");
+    let pose = model.pose(idle, 0.0);
+    humanoid.bone(&pose, Bone::Head).translation.y
 }
 
 #[cfg(test)]
@@ -170,7 +447,13 @@ mod tests {
                         .for_each(|n| bump(n, at));
                 }
             }
-            for skin in self.json["skins"].as_array_mut().into_iter().flatten() {
+            for skin in self
+                .json
+                .get_mut("skins")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
                 skin["joints"]
                     .as_array_mut()
                     .expect("joints")
