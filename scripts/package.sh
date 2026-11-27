@@ -13,7 +13,29 @@ exe=$2
 out=$3
 
 [[ -f "$exe" ]] || { echo "package: executable $exe not found" >&2; exit 1; }
-[[ -n "$out" && "$out" != "/" ]] || { echo "package: refusing output folder '$out'" >&2; exit 1; }
+[[ -n "$out" ]] || { echo "package: no output folder given" >&2; exit 1; }
+
+# The physical path of an existing folder.
+physical() { (cd "$1" && pwd -P); }
+
+# The output folder's physical path, whether or not it exists yet.
+if [[ -d "$out" ]]; then
+    resolved=$(physical "$out")
+elif [[ -d "$(dirname "$out")" ]]; then
+    resolved=$(physical "$(dirname "$out")")/$(basename "$out")
+else
+    resolved=""
+fi
+
+# Emptying the output must never take the working directory or the executable with it.
+if [[ -n "$resolved" ]]; then
+    for kept in "$(pwd -P)" "$(physical "$(dirname "$exe")")"; do
+        if [[ "$resolved" == / || "$kept" == "$resolved" || "$kept" == "$resolved"/* ]]; then
+            echo "package: refusing output folder '$out': it is or holds $kept" >&2
+            exit 1
+        fi
+    done
+fi
 
 rm -rf "$out"
 mkdir -p "$out"

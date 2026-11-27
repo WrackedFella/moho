@@ -259,6 +259,24 @@ package-test:
     echo stale > "$out/stale.txt"
     scripts/package.sh searchlight "$exe" "$out"
     [[ ! -e "$out/stale.txt" ]] || fail "stale file survived a second run"
+    # An output folder that is, or holds, the working directory or the executable's folder is
+    # refused before anything is deleted.
+    root="$(pwd -P)"
+    guard="$work/guard"
+    mkdir -p "$guard/sub"
+    echo keep > "$guard/sentinel"
+    refuses() {
+        local dir=$1 target=$2 rc=0
+        (cd "$dir" && "$root/scripts/package.sh" searchlight "$exe" "$target") > /dev/null 2>&1 || rc=$?
+        [[ $rc -ne 0 ]] || fail "output '$target' from $dir was accepted"
+        [[ -f "$guard/sentinel" && -f "$exe" ]] || fail "output '$target' from $dir deleted files"
+    }
+    refuses "$guard" .
+    refuses "$guard/sub" ..
+    refuses "$guard/sub" "$guard"
+    refuses "$guard/sub" "$guard/sub/../.."
+    refuses "$root" "$work"
+    refuses "$guard" /
     echo "package-test: OK"
 
 run-record-test:
