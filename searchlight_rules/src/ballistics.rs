@@ -1,5 +1,6 @@
 //! A round in flight: one integration step under gravity and drag, and the bounds it flies in.
 
+use crate::weapon::VelocityFactor;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -20,6 +21,15 @@ pub struct Ballistics {
     pub muzzle_velocity: f32,
     /// Fraction of its velocity a round sheds per second, in 1/s.
     pub drag: f32,
+}
+
+impl Ballistics {
+    /// These ballistics fired through a barrel: the muzzle velocity scaled by `factor`, the
+    /// drag unchanged.
+    #[must_use]
+    pub fn through_barrel(self, _factor: VelocityFactor) -> Self {
+        todo!("FPS-F15-08: scale the muzzle velocity by the barrel factor")
+    }
 }
 
 /// What a round is: how it flies and the damage it does at the muzzle.
@@ -405,6 +415,55 @@ mod tests {
 
             prop_assert!(at_slower <= at_faster, "{at_slower} at {slower}, {at_faster} at {faster}");
         });
+    }
+
+    #[test]
+    fn a_barrel_scales_the_muzzle_velocity_and_keeps_the_drag() {
+        let round = ball(900.0, 1.5);
+        let short = VelocityFactor::try_from(0.8).unwrap();
+
+        let leaving = round.through_barrel(short);
+
+        assert!(
+            (leaving.muzzle_velocity - 720.0).abs() < 1e-3,
+            "{leaving:?}"
+        );
+        assert_eq!(leaving.drag, 1.5);
+    }
+
+    #[test]
+    fn the_default_barrel_leaves_the_ballistics_as_they_are() {
+        let round = ball(900.0, 1.5);
+
+        let leaving = round.through_barrel(VelocityFactor::default());
+
+        assert_eq!(leaving, round);
+    }
+
+    #[test]
+    fn a_long_barrel_speeds_the_round_up() {
+        let long = VelocityFactor::try_from(1.1).unwrap();
+
+        let leaving = ball(900.0, 1.0).through_barrel(long);
+
+        assert!(
+            (leaving.muzzle_velocity - 990.0).abs() < 1e-2,
+            "{leaving:?}"
+        );
+    }
+
+    #[test]
+    fn a_flight_fired_with_the_scaled_ballistics_leaves_at_the_scaled_speed() {
+        let short = VelocityFactor::try_from(0.8).unwrap();
+        let round = ball(900.0, 1.0);
+
+        let flight = Flight::fired(Vec3::ZERO, Vec3::Z, &round.through_barrel(short));
+
+        assert!(
+            (flight.velocity.length() - 720.0).abs() < 1e-2,
+            "{}",
+            flight.velocity
+        );
     }
 
     #[test]

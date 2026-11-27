@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
     AccuracyTuning, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains, RoundStats,
+    VelocityFactor,
 };
 
 use crate::brain::EnemyTuning;
@@ -78,6 +79,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
         charge_ticks: weapon.charge_ticks,
+        muzzle_velocity_factor: VelocityFactor::default(),
         body: BodyProfile {
             max_health: 100,
             head_status: 30,
@@ -140,6 +142,7 @@ mod tests {
             cooldown_ticks: 9,
             reload_ticks: 77,
             charge_ticks: 13,
+            muzzle_velocity_factor: VelocityFactor::default(),
         };
         let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 2 });
         rig.stow(mag(17, 17)).unwrap();
@@ -169,6 +172,39 @@ mod tests {
         assert_eq!(config.rounds, rounds);
     }
 
+    fn config_with_barrel(factor: f32) -> SimConfig {
+        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
+        rig.stow(mag(17, 17)).unwrap();
+        tuning(Kit {
+            weapon: RifleDef {
+                well: MagazineWell::new("test"),
+                fire: FireBehaviour::SemiAuto,
+                cooldown_ticks: 6,
+                reload_ticks: 120,
+                charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::try_from(factor).unwrap(),
+            },
+            loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: BTreeMap::new(),
+        })
+    }
+
+    #[test]
+    fn the_config_takes_its_muzzle_velocity_factor_from_the_kits_weapon() {
+        let short = config_with_barrel(0.8);
+        let long = config_with_barrel(1.1);
+
+        assert_eq!(short.muzzle_velocity_factor.get(), 0.8);
+        assert_eq!(long.muzzle_velocity_factor.get(), 1.1);
+    }
+
+    #[test]
+    fn a_weapon_with_the_default_barrel_gives_a_config_factor_of_1() {
+        let config = shipped_config();
+
+        assert_eq!(config.muzzle_velocity_factor.get(), 1.0);
+    }
+
     fn shipped_config() -> SimConfig {
         let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
         rig.stow(mag(17, 17)).unwrap();
@@ -179,6 +215,7 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
             rounds: BTreeMap::new(),
@@ -244,6 +281,7 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
             rounds: BTreeMap::new(),

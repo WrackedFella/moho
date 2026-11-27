@@ -15,7 +15,7 @@ use moho_physics::{
 use searchlight_rules::{
     Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport,
     ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Place, Remains, Rifle,
-    Rig, RoundStats, Shot, Source, arrival_damage, disc_offset, leaned_parts,
+    Rig, RoundStats, Shot, Source, VelocityFactor, arrival_damage, disc_offset, leaned_parts,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -153,6 +153,8 @@ pub struct SimConfig {
     pub reload_ticks: u32,
     /// Ticks added to `reload_ticks` when the chamber is empty at the press.
     pub charge_ticks: u32,
+    /// How much the player's barrel scales the speed rounds leave at.
+    pub muzzle_velocity_factor: VelocityFactor,
     /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
     /// The rifle in hand and the rig it reloads from.
@@ -3991,6 +3993,161 @@ mod tests {
             simple: true,
             ..idle()
         }
+    }
+
+    /// `config` with a barrel of `factor`.
+    fn with_barrel(mut config: SimConfig, factor: f32) -> SimConfig {
+        config.muzzle_velocity_factor = VelocityFactor::try_from(factor).expect("a valid factor");
+        config
+    }
+
+    /// A round of `muzzle_velocity` that sheds no speed, with `damage`.
+    fn undragged(muzzle_velocity: f32, damage: u32) -> SimConfig {
+        with_round(
+            Ballistics {
+                muzzle_velocity,
+                drag: 0.0,
+            },
+            damage,
+        )
+    }
+
+    /// The speed of the one round in the air right after a pull, and the muzzle velocity it
+    /// is scored against.
+    fn launch_of(config: SimConfig) -> (f32, f32) {
+        let mut sim = dummy_ahead(60.0, BodyPart::Torso, config);
+
+        sim.tick(&pull(), DT);
+
+        let rounds = sim.rounds_in_flight();
+        assert_eq!(rounds.len(), 1, "one pull sends one round");
+        (
+            rounds[0].flight.velocity.length(),
+            rounds[0].ballistics.muzzle_velocity,
+        )
+    }
+
+    #[test]
+    fn a_round_leaves_a_0_8_barrel_at_80_percent_of_its_muzzle_velocity() {
+        let (speed, _) = launch_of(with_barrel(undragged(900.0, 30), 0.8));
+
+        assert!((speed - 720.0).abs() < 0.01, "left at {speed} m/s");
+    }
+
+    #[test]
+    fn a_round_leaves_a_1_1_barrel_at_110_percent_of_its_muzzle_velocity() {
+        let (speed, _) = launch_of(with_barrel(undragged(900.0, 30), 1.1));
+
+        assert!((speed - 990.0).abs() < 0.01, "left at {speed} m/s");
+    }
+
+    #[test]
+    fn a_weapon_with_no_barrel_factor_launches_the_round_at_its_own_velocity() {
+        let (speed, _) = launch_of(undragged(900.0, 30));
+
+        assert!((speed - 900.0).abs() < 0.01, "left at {speed} m/s");
+    }
+
+    #[test]
+    fn the_round_in_flight_keeps_its_own_muzzle_velocity_as_the_damage_reference() {
+        let (_, reference) = launch_of(with_barrel(undragged(900.0, 30), 0.8));
+
+        assert_eq!(reference, 900.0);
+    }
+
+    #[test]
+    fn a_0_8_barrel_hits_a_torso_at_point_blank_for_24_not_30_in_flight() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 0.8),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(health, 76, "30 scaled by 720/900 is 24");
+    }
+
+    #[test]
+    fn a_0_8_barrel_hits_a_torso_for_24_under_simple_at_any_range() {
+        for distance in [1.5, 10.0, 90.0] {
+            let health = dummy_health_after_a_shot(
+                distance,
+                BodyPart::Torso,
+                with_barrel(undragged(900.0, 30), 0.8),
+                simple_pull(),
+            );
+
+            assert_eq!(health, 76, "{distance} m");
+        }
+    }
+
+    #[test]
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage() {
+        let in_flight = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.1),
+            pull_without_gravity(),
+        );
+        let simple = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.1),
+            simple_pull(),
+        );
+
+        assert_eq!(in_flight, 70, "the ratio is capped at 1");
+        assert_eq!(simple, 70, "the ratio is capped at 1 under Simple too");
+    }
+
+    #[test]
+    fn a_1_0_barrel_hits_a_torso_at_point_blank_for_the_rounds_full_damage() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.0),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(health, 70);
+    }
+
+    /// The damage a level pull does to a torso `distance` metres ahead, and the height the
+    /// round struck it at.
+    fn torso_strike(distance: f32, config: SimConfig) -> (u32, f32) {
+        let mut sim = dummy_ahead(distance, BodyPart::Torso, config);
+
+        let ticks = fire_and_wait(&mut sim, pull(), 60);
+
+        let hits = hits_in(&ticks);
+        let (_, _, point) = *hits
+            .first()
+            .unwrap_or_else(|| panic!("a round at {distance} m never hit: {ticks:?}"));
+        let health = sim.dummy_body(0).expect("dummy 0 exists").health();
+        (100 - health, point.y)
+    }
+
+    #[test]
+    fn at_long_range_a_1_1_barrel_round_drops_less_and_does_at_least_as_much_damage() {
+        let dragged = Ballistics {
+            muzzle_velocity: 900.0,
+            drag: 1.0,
+        };
+
+        let (plain_damage, plain_height) =
+            torso_strike(90.0, with_barrel(with_round(dragged, 30), 1.0));
+        let (long_damage, long_height) =
+            torso_strike(90.0, with_barrel(with_round(dragged, 30), 1.1));
+
+        assert!(
+            long_height > plain_height,
+            "1.1 struck at {long_height}, 1.0 at {plain_height}"
+        );
+        assert!(
+            long_damage >= plain_damage,
+            "1.1 did {long_damage}, 1.0 did {plain_damage}"
+        );
+        assert!(long_damage <= 30, "never above the round's own damage");
     }
 
     #[test]

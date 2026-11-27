@@ -570,6 +570,7 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: crate::weapon::VelocityFactor::default(),
             }
         );
     }

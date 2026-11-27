@@ -37,4 +37,4 @@ pub use mix::{GradeMix, GradeMixError, WaveGrades};
 pub use posture::{BODY_RIGHT, Lean, LeanReach, LeanSide, LeanTuning, PartOffset, leaned_parts};
 pub use rifle::{Rifle, RifleError, Shot};
 pub use rig::Rig;
-pub use weapon::{FireBehaviour, RifleDef};
+pub use weapon::{FireBehaviour, RifleDef, VelocityFactor, VelocityFactorError};
