@@ -17,6 +17,8 @@ The output directory defaults to characters/mannequin/ beside tools/. Outputs:
 
 1.8 m tall, +Y up, facing +Z (the character's left is +X), origin on the floor between the feet.
 Bones have identity rest rotations, so a clip's rotation is the bone's bend from standing.
+Both bodies carry the named points `hold_r` and `hold_l`: empty children of `hand_r` and
+`hand_l` at the joint, where a held weapon's grip goes.
 """
 
 from __future__ import annotations
@@ -258,6 +260,10 @@ def character(scene_name, skip=()):
     joints = {}
     for name, parent, offset in BONES:
         joints[name] = doc.node(name, joints[parent] if parent else root, translation=offset)
+    # Where a held weapon's grip sits: the hands keep the model's orientation, so a grip placed
+    # here points its barrel +Z with its top +Y.
+    for side in ("r", "l"):
+        doc.node(f"hold_{side}", joints[f"hand_{side}"])
     materials = {m: doc.material(m, COLOURS[m]) for m in COLOURS}
     parts = bone_geometry(skip)
     mesh = doc.mesh(f"{scene_name}_body", [(geo, materials[m]) for m, geo in sorted(parts.items())], skinned=True)
