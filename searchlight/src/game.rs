@@ -1836,11 +1836,9 @@ impl SearchlightGame {
         self
     }
 
-    /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
-    /// feed's camera, or an empty world on a level without menu cameras; the shell paints the
-    /// menu. The feed follows frame time: the sim is paused here.
-    /// Opens the inventory on a finished search and leaves it on death, before the frame reads
-    /// its view: both discard the pending look, so the listener and the draw share one view.
+    /// Opens the inventory on a finished search, and leaves it or the character screen on death,
+    /// before the frame reads its view: both discard the pending look, so the listener and the
+    /// draw share one view.
     fn settle_screen(&mut self, feedback: &[Feedback]) {
         let searched = feedback
             .iter()
@@ -1848,11 +1846,15 @@ impl SearchlightGame {
         if searched && self.screen == Screen::Playing {
             self.open_inventory();
         }
-        if self.screen == Screen::Inventory && self.mode.sim().player_body().is_dead() {
+        let on_a_screen_over_play = matches!(self.screen, Screen::Inventory | Screen::Character);
+        if on_a_screen_over_play && self.mode.sim().player_body().is_dead() {
             self.enter_play();
         }
     }
 
+    /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
+    /// feed's camera, or an empty world on a level without menu cameras; the shell paints the
+    /// menu. The feed follows frame time: the sim is paused here.
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
         self.stage.refresh_title("");
         self.stage.hide_hud();
@@ -2121,12 +2123,8 @@ impl Game for SearchlightGame {
             self.stage.shell().menu_mut().set_lists(lists);
         }
         if self.screen == Screen::Character {
-            if dead {
-                self.enter_play();
-            } else {
-                let lists = character::character_lists(self.mode.sim());
-                self.stage.shell().menu_mut().set_lists(lists);
-            }
+            let lists = character::character_lists(self.mode.sim());
+            self.stage.shell().menu_mut().set_lists(lists);
         }
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
