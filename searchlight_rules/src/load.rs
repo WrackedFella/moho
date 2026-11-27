@@ -297,6 +297,44 @@ mod tests {
         assert_eq!(contributions, []);
     }
 
+    fn thresholds(slowed: f64, no_sprint: f64, cannot_move: f64) -> Result<LoadThresholds, String> {
+        serde_json::from_value(json!({
+            "slowed": slowed, "no_sprint": no_sprint, "cannot_move": cannot_move
+        }))
+        .map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn increasing_positive_thresholds_are_kept_as_given() {
+        let loaded = thresholds(0.25, 0.5, 0.75).expect("increasing positive thresholds load");
+
+        assert_eq!(
+            loaded,
+            LoadThresholds {
+                slowed: 0.25,
+                no_sprint: 0.5,
+                cannot_move: 0.75,
+            }
+        );
+    }
+
+    #[test]
+    fn a_zero_or_negative_slowed_threshold_is_refused_alone() {
+        for slowed in [0.0, -0.1] {
+            let error = thresholds(slowed, 0.5, 0.75)
+                .expect_err("a slowed threshold of 0 or less is refused");
+
+            assert!(error.contains("thresholds must be"), "{slowed}: {error}");
+        }
+    }
+
+    #[test]
+    fn equal_no_sprint_and_cannot_move_thresholds_are_refused() {
+        let error = thresholds(0.25, 0.75, 0.75).expect_err("equal thresholds are refused");
+
+        assert!(error.contains("thresholds must be"), "{error}");
+    }
+
     #[test]
     fn slowed_scales_movement_speed_and_nothing_else() {
         let contributions = load_contributions(LoadState::Slowed, 0.55);

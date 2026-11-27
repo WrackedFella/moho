@@ -264,6 +264,93 @@ mod tests {
         }
     }
 
+    fn sheet(field: &str, value: serde_json::Value) -> Result<PlayerDef, String> {
+        let mut sheet = serde_json::json!({
+            "strength": 10.0,
+            "carry_capacity_per_strength": 3.0,
+            "movement_speed": 1.0,
+            "stamina_pool": 5.0,
+            "slowed_scale": 0.7,
+            "thresholds": {"slowed": 0.6, "no_sprint": 0.8, "cannot_move": 1.0},
+        });
+        sheet[field] = value;
+        serde_json::from_value(sheet).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn a_valid_sheet_loads_with_every_value_kept() {
+        let loaded = sheet("slowed_scale", serde_json::json!(0.7)).expect("the sheet is valid");
+
+        assert_eq!(loaded, player());
+    }
+
+    #[test]
+    fn a_negative_value_is_refused_naming_its_field() {
+        for field in [
+            "strength",
+            "carry_capacity_per_strength",
+            "movement_speed",
+            "stamina_pool",
+            "slowed_scale",
+        ] {
+            let error =
+                sheet(field, serde_json::json!(-1.0)).expect_err("a negative value is refused");
+
+            assert!(error.contains(field), "{field}: {error}");
+            assert!(error.contains("0 or more"), "{field}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_zero_value_is_kept() {
+        let loaded = sheet("stamina_pool", serde_json::json!(0.0)).expect("0 is allowed");
+
+        assert_eq!(loaded.stamina_pool, 0.0);
+    }
+
+    #[test]
+    fn a_non_finite_value_is_refused_naming_its_field() {
+        let raw = RawPlayerDef {
+            strength: f32::NAN,
+            carry_capacity_per_strength: 3.0,
+            movement_speed: 1.0,
+            stamina_pool: 5.0,
+            slowed_scale: 0.7,
+            thresholds: player().thresholds,
+        };
+
+        let error = PlayerDef::try_from(raw).expect_err("NaN is refused");
+
+        assert!(
+            matches!(
+                error,
+                PlayerDefError::Value {
+                    field: "strength",
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_slowed_scale_of_exactly_1_or_less_is_kept() {
+        for scale in [1.0, 0.5] {
+            let loaded = sheet("slowed_scale", serde_json::json!(scale))
+                .expect("a scale of at most 1 is valid");
+
+            assert_eq!(loaded.slowed_scale, scale as f32);
+        }
+    }
+
+    #[test]
+    fn a_slowed_scale_above_1_is_refused() {
+        let error = sheet("slowed_scale", serde_json::json!(1.5))
+            .expect_err("a scale above 1 would speed the player up");
+
+        assert!(error.contains("slowed_scale must be at most 1"), "{error}");
+    }
+
     #[test]
     fn baselines_come_from_the_attribute_sheet() {
         let player = PlayerDef {
