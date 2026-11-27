@@ -544,20 +544,49 @@ mod tests {
 
     #[test]
     fn a_free_slot_row_reads_its_kind() {
-        let roots = moho_core::content::ContentRoots::base(&crate::content_root())
-            .expect("the shipped content folder");
-        let mut loadout = crate::kit::load(&roots, crate::kit::START_KIT_ID)
-            .expect("the shipped start kit loads")
+        let items = r#"
+[rifle]
+class = "weapon"
+size = [2, 5]
+weight = 3.4
+condition = 100
+weapon = { well = "rifle", fire = "semi_auto", cooldown_ticks = 6, reload_ticks = 120, charge_ticks = 30 }
+
+[mag_rifle]
+class = "gear"
+size = [1, 2]
+weight = 0.25
+magazine = { well = "rifle", caliber = "5.56x45", capacity = 30, slot = "rifle" }
+
+[round_ball]
+class = "consumable"
+size = [1, 1]
+weight = 0.01
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0, damage = 30 }
+
+[rig_mixed]
+class = "gear"
+size = [3, 2]
+weight = 1.0
+rig = { magazine_slots = { rifle = 1, pistol = 1 } }
+"#;
+        let kits = "[start]\nrig = \"rig_mixed\"\nweapon = \"rifle\"\n\
+                    loaded = { magazine = \"mag_rifle\", round = \"round_ball\" }\n";
+        let dir = tempfile::tempdir().expect("a scratch folder");
+        std::fs::write(dir.path().join("items.toml"), items).expect("items written");
+        std::fs::write(dir.path().join("kits.toml"), kits).expect("kits written");
+        let roots =
+            moho_core::content::ContentRoots::base(dir.path()).expect("the scratch content");
+        let loadout = crate::kit::load(&roots, crate::kit::START_KIT_ID)
+            .expect("a kit with a free pistol slot and a free rifle slot loads")
             .loadout;
-        loadout
-            .move_item(None, Source::MagazineSlot(1), Place::Inventory)
-            .expect("the slot holds a magazine");
 
         let shown = gear_lists(&loadout);
 
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
-            ["mag_rifle", "Rifle slot · Empty", "mag_rifle"]
+            ["Pistol slot · Empty", "Rifle slot · Empty"],
+            "slots sort by kind"
         );
     }
 }
