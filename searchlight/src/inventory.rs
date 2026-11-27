@@ -7,9 +7,8 @@ use searchlight_rules::{Item, Loadout, Magazine, Place, Remains, SlotKind, Sourc
 use crate::menu::MenuAction;
 
 /// The label of a free magazine slot of kind `kind`, such as "Rifle slot · Empty".
-fn free_slot_label(kind: Option<&SlotKind>) -> String {
-    let kind = kind.map_or("", SlotKind::as_str);
-    let mut letters = kind.chars();
+fn free_slot_label(kind: &SlotKind) -> String {
+    let mut letters = kind.as_str().chars();
     let name: String = letters
         .next()
         .map(|first| first.to_uppercase().chain(letters).collect())
@@ -133,7 +132,12 @@ fn entries(list: ListId, loadout: &Loadout, body: Option<&Remains>) -> Vec<Entry
             .map(|(slot, held)| match held {
                 Some(magazine) => Entry::of_magazine(magazine, Source::MagazineSlot(slot)),
                 None => Entry::new(
-                    free_slot_label(loadout.rig().slot_kind(slot)),
+                    free_slot_label(
+                        loadout
+                            .rig()
+                            .slot_kind(slot)
+                            .expect("every slot index of a rig has a kind"),
+                    ),
                     None,
                     Some(Source::MagazineSlot(slot)),
                 ),
@@ -561,13 +565,12 @@ mod tests {
 
     #[test]
     fn a_free_slot_label_capitalises_any_kind_without_panicking() {
-        let label = |kind: Option<&str>| free_slot_label(kind.map(SlotKind::new).as_ref());
+        let label = |kind: &str| free_slot_label(&SlotKind::new(kind));
 
-        assert_eq!(label(Some("pistol")), "Pistol slot · Empty");
-        assert_eq!(label(Some("écu")), "Écu slot · Empty");
-        assert_eq!(label(Some("ß")), "SS slot · Empty");
-        assert_eq!(label(Some("")), " slot · Empty");
-        assert_eq!(label(None), " slot · Empty");
+        assert_eq!(label("pistol"), "Pistol slot · Empty");
+        assert_eq!(label("écu"), "Écu slot · Empty");
+        assert_eq!(label("ß"), "SS slot · Empty");
+        assert_eq!(label(""), " slot · Empty");
     }
 
     #[test]
