@@ -22,35 +22,24 @@ pub struct AudioCache {
 
 impl AudioCache {
     /// Create a new audio cache and pre-load the UI click, when one is given.
-    pub fn new(_ui_click: Option<&std::path::Path>) -> AudioResult<Self> {
+    ///
+    /// # Errors
+    ///
+    /// [`AudioError::FileNotFound`] naming the click when it cannot be read.
+    pub fn new(ui_click: Option<&std::path::Path>) -> AudioResult<Self> {
         let mut cache = Self {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
         };
 
-        cache.preload_ui_sounds()?;
-        Ok(cache)
-    }
-
-    /// Pre-load common UI sounds to eliminate loading delays
-    fn preload_ui_sounds(&mut self) -> AudioResult<()> {
-        let ui_sounds = vec!["assets/audio/ui/button_click.mp3"];
-
-        for sound_path in ui_sounds {
-            if let Ok(audio_data) = std::fs::read(sound_path) {
-                self.ui_sound_cache
-                    .insert(sound_path.to_string(), audio_data);
-                debug!(path = sound_path, "Pre-loaded UI sound");
-            } else {
-                // Don't fail initialization if UI sounds are missing
-                debug!(
-                    path = sound_path,
-                    "UI sound file not found (will load on-demand)"
-                );
-            }
+        if let Some(click) = ui_click {
+            let key = click.to_string_lossy().into_owned();
+            let bytes = std::fs::read(click)
+                .map_err(|e| AudioError::FileNotFound(format!("{key}: {e}")))?;
+            cache.ui_sound_cache.insert(key, bytes);
+            debug!(path = %click.display(), "Pre-loaded UI click");
         }
-
-        Ok(())
+        Ok(cache)
     }
 
     /// Get UI sound data with low-latency access.

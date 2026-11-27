@@ -173,7 +173,13 @@ impl FrameProcessor {
                         tracing::debug!(pawn = ?id, ?aim, "Pawn dig found nothing solid within reach");
                         continue;
                     };
-                    apply_pawn_dig(&app.event_bus, &mut app.colony.stock, grid, &outcome);
+                    apply_pawn_dig(
+                        &app.event_bus,
+                        &mut app.colony.stock,
+                        grid,
+                        &outcome,
+                        &app.sounds.dig,
+                    );
                 }
             }
         }

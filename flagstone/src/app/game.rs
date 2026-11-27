@@ -39,8 +39,6 @@ const PAWN_BODY_MATERIAL: flagstone_voxel::MaterialType =
 /// How far a pointer ray reaches into the world, in metres.
 pub const POINTER_RAY_RANGE: f32 = 256.0;
 
-const MARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mark.wav");
-const UNMARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/unmark.wav");
 const MARK_VOLUME: f32 = 0.6;
 
 /// One tick's worth of player input.
@@ -314,12 +312,12 @@ impl App {
         let pos = hit.block_pos.to_array();
         let change = self.colony.marks.toggle(pos);
         let clip = match change {
-            MarkChange::Marked => MARK_SOUND,
-            MarkChange::Cancelled => UNMARK_SOUND,
+            MarkChange::Marked => &self.sounds.mark,
+            MarkChange::Cancelled => &self.sounds.unmark,
         };
         self.event_bus
             .publish(moho_core::events::AudioEvent::PlaySound {
-                path: clip.to_string(),
+                path: clip.to_string_lossy().into_owned(),
                 volume: MARK_VOLUME,
             });
         tracing::debug!(?pos, ?change, "Mining mark toggled");
@@ -823,6 +821,7 @@ mod tests {
             crate::app::config::AppConfig::builder()
                 .prefs(prefs)
                 .build(),
+            crate::app::sounds::Sounds::in_checkout(),
         );
 
         let settings = app
@@ -3308,9 +3307,12 @@ mod tests {
         }
 
         fn asset(name: &str) -> std::path::PathBuf {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("assets")
-                .join(name)
+            let sounds = crate::app::sounds::Sounds::in_checkout();
+            match name {
+                "mark.wav" => sounds.mark,
+                "unmark.wav" => sounds.unmark,
+                other => panic!("no cue named {other}"),
+            }
         }
 
         #[test]

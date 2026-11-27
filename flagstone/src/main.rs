@@ -111,6 +111,9 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
+    /// The sound files the game plays, resolved at start.
+    sounds: app::sounds::Sounds,
+
     /// Time of play between autosaves of an edited world; `None` when autosave is off.
     autosave_interval: Option<std::time::Duration>,
     autosave: app::autosave::AutosaveSchedule,
@@ -291,7 +294,7 @@ impl App {
         self.frame_cap_changed = true;
     }
 
-    fn from_config(config: crate::app::config::AppConfig) -> Self {
+    fn from_config(config: crate::app::config::AppConfig, sounds: app::sounds::Sounds) -> Self {
         let initialized = crate::app::initializer::AppInitializer::new(config)
             .build()
             .expect("Failed to initialize application");
@@ -336,6 +339,7 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            sounds,
             autosave_interval,
             autosave: app::autosave::AutosaveSchedule::from_interval(autosave_interval),
             exit_requested: false,
@@ -382,7 +386,10 @@ impl App {
     /// prefs so tests never read `config/prefs.ini`.
     #[cfg(test)]
     fn headless() -> Self {
-        let mut app = Self::from_config(crate::app::config::AppConfig::builder().build());
+        let mut app = Self::from_config(
+            crate::app::config::AppConfig::builder().build(),
+            app::sounds::Sounds::in_checkout(),
+        );
         app.prefs_path = None;
         app
     }
@@ -724,6 +731,7 @@ fn app_config_for(prefs: &Prefs) -> moho_app::AppConfig {
         window_title: "Flagstone".into(),
         loop_config: moho_app::LoopConfig::new(flagstone_game::TICK_HZ),
         init_audio: true,
+        ui_click: None,
         toggle_keys: Some(vec![moho_input::bindings::Input::Key(
             moho_input::key::Key::F11,
         )]),
@@ -737,11 +745,42 @@ fn app_config() -> moho_app::AppConfig {
     app_config_for(&Prefs::default())
 }
 
+/// The source checkout, where the placeholder assets live when no install sits beside the
+/// executable.
+fn checkout_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The sounds this launch plays: the install's `assets` folder (beside the executable, else the
+/// checkout) under the folder `--assets` named, if any.
+fn launch_sounds() -> Result<app::sounds::Sounds, Box<dyn std::error::Error>> {
+    let (named, _ignored) = moho_app::launch::split_assets_option(std::env::args_os().skip(1))?;
+    let exe = std::env::current_exe()?;
+    let exe_dir = exe
+        .parent()
+        .ok_or("the executable path has no parent folder")?;
+    let install = moho_core::install::Install::locate(exe_dir, &checkout_root(), &["assets"])?;
+    let mut roots = moho_core::assets::AssetRoots::placeholders(&install.root().join("assets"))?;
+    if let Some(folder) = named {
+        roots = roots.with_folder(&folder)?;
+    }
+    Ok(app::sounds::Sounds::resolve(&roots)?)
+}
+
 fn main() {
     init_logging();
-    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
+    let sounds = match launch_sounds() {
+        Ok(sounds) => sounds,
+        Err(error) => {
+            tracing::error!(%error, "Sounds could not be resolved");
+            std::process::exit(1);
+        }
+    };
+    let ui_click = sounds.click.clone();
+    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs(), sounds);
     app.input.gamepads = moho_input::gamepad::Gamepads::new();
-    let config = app_config_for(&app.prefs);
+    let mut config = app_config_for(&app.prefs);
+    config.ui_click = ui_click;
 
     if let Err(e) = moho_app::run(app, config) {
         tracing::error!(error = %e, "Application failed");

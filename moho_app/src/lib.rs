@@ -345,6 +345,8 @@ pub struct AppConfig {
     /// Whether to create an [`AudioSystem`]; a failure to create one is logged
     /// and the game runs without audio.
     pub init_audio: bool,
+    /// The file UI sound events play; `None` makes them silent.
+    pub ui_click: Option<std::path::PathBuf>,
     /// Inputs that flip the window between windowed and borderless, besides the
     /// always-on Alt+Enter; `None` leaves window handling to the game, so nothing flips.
     pub toggle_keys: Option<Vec<moho_input::bindings::Input>>,

@@ -9,10 +9,8 @@ use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
 use crate::spatial::{Listener, distance_gain, rear_gain, stereo_pan};
 use glam::Vec3;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
-
-const CLICK_SOUND: &str = "assets/audio/ui/button_click.mp3";
 
 /// Main audio system for the Moho engine.
 ///
@@ -27,6 +25,9 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
     /// Audio cache manager (handles loading and caching)
     audio_cache: AudioCache,
 
+    /// The file UI events play; none means they are silent.
+    ui_click: Option<PathBuf>,
+
     /// Looping background music voice, kept for live volume changes.
     music_voice: Option<O::Voice>,
 
@@ -36,34 +37,32 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
 impl AudioSystem {
     /// Create a new audio system playing through the default audio device.
     ///
+    /// UI events play the file at `ui_click`, or nothing when it is `None`.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the device or the UI sound cache cannot be opened.
-    pub fn new() -> AudioResult<Self> {
+    /// Returns an error if the device cannot be opened or the click cannot be read.
+    pub fn new(ui_click: Option<PathBuf>) -> AudioResult<Self> {
         let output = RodioOutput::open_default()?;
+        let cache = AudioCache::new(ui_click.as_deref())?;
 
         debug!("Audio system initialized successfully");
 
-        Ok(Self::with_output(output, AudioCache::new(None)?))
+        Ok(Self::with_output(output, cache, ui_click))
     }
 }
 
 impl<O: AudioOutput> AudioSystem<O> {
-    /// An audio system whose UI events play the file at `ui_click`, or nothing when it is `None`.
-    #[cfg(test)]
-    pub(crate) fn with_output_and_click(
-        _output: O,
-        _audio_cache: AudioCache,
-        _ui_click: Option<std::path::PathBuf>,
+    pub(crate) fn with_output(
+        output: O,
+        audio_cache: AudioCache,
+        ui_click: Option<PathBuf>,
     ) -> Self {
-        todo!("with_output_and_click")
-    }
-
-    pub(crate) fn with_output(output: O, audio_cache: AudioCache) -> Self {
         Self {
             output,
             settings: AudioSettings::default(),
             audio_cache,
+            ui_click,
             music_voice: None,
             listener: Listener::default(),
         }
@@ -217,9 +216,14 @@ impl<O: AudioOutput> AudioSystem<O> {
         }
     }
 
-    /// Play the UI click, served from the pre-loaded UI cache for low latency.
+    /// Play the UI click, served from the pre-loaded UI cache for low latency; nothing when
+    /// the game named none.
     fn play_click(&mut self, volume: f32) -> AudioResult<()> {
-        self.play_audio_source(&AudioSource::ui_sound(CLICK_SOUND, volume))
+        let Some(click) = &self.ui_click else {
+            return Ok(());
+        };
+        let source = AudioSource::ui_sound(click, volume);
+        self.play_audio_source(&source)
     }
 
     /// Stop audio based on category
@@ -275,7 +279,7 @@ mod tests {
             &[(CLICK, wav_bytes(10, 500))],
         );
         let output = RecordingOutput::default();
-        let mut system = AudioSystem::with_output(output.clone(), cache);
+        let mut system = AudioSystem::with_output(output.clone(), cache, Some(CLICK.into()));
         system.set_settings(settings);
         (system, output)
     }
@@ -355,7 +359,7 @@ mod tests {
         for (event, volume) in rows {
             let cache = AudioCache::seeded(&[], &[(named, wav_bytes(7, 700))]);
             let output = RecordingOutput::default();
-            let mut system = AudioSystem::with_output_and_click(
+            let mut system = AudioSystem::with_output(
                 output.clone(),
                 cache,
                 Some(std::path::PathBuf::from(named)),
@@ -387,7 +391,7 @@ mod tests {
         for event in events {
             let cache = AudioCache::seeded(&[], &[(CLICK, wav_bytes(10, 500))]);
             let output = RecordingOutput::default();
-            let mut system = AudioSystem::with_output_and_click(output.clone(), cache, None);
+            let mut system = AudioSystem::with_output(output.clone(), cache, None);
             system.set_settings(full_volume());
 
             let result = system.handle_event(event.clone());

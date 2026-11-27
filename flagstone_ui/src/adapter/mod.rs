@@ -77,8 +77,8 @@ pub struct EguiAdapter {
     // Whether menu music is currently playing (to avoid redundant start/stop)
     menu_music_playing: bool,
 
-    // Checked once at construction.
-    menu_music_exists: bool,
+    // The file the main menu loops; none means the menu is silent.
+    menu_music: Option<PathBuf>,
 
     // Prefs from the last `SettingsSaved` action, until the app takes them.
     saved_prefs: Option<Prefs>,
@@ -143,7 +143,7 @@ impl EguiAdapter {
             progress: None,
             last_hovered_key: None,
             menu_music_playing: false,
-            menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
+            menu_music: None,
             saved_prefs: None,
             requested_window_mode: None,
             requested_window_size: None,
@@ -154,8 +154,9 @@ impl EguiAdapter {
     /// Plays the file at `path` as looping menu music while the main menu shows; `None` means
     /// the menu is silent.
     #[must_use]
-    pub fn with_menu_music(self, _path: Option<PathBuf>) -> Self {
-        todo!("with_menu_music")
+    pub fn with_menu_music(mut self, path: Option<PathBuf>) -> Self {
+        self.menu_music = path;
+        self
     }
 
     /// Update the current game state (called by main app each frame)
@@ -507,12 +508,14 @@ impl moho_render_api::UiFrameSource for EguiAdapter {
 
         // Runs only on rendered frames. Every non-`Menu` state renders, so a stop is never missed;
         // a hidden `Menu` keeps whatever is playing (music carries on through world generation).
-        let want_menu_music = self.current_game_state == GameState::Menu && self.menu_music_exists;
-        if let Some(event) =
-            event_routing::menu_music_change(want_menu_music, self.menu_music_playing)
-        {
-            self.event_bus.publish(event);
-            self.menu_music_playing = want_menu_music;
+        if let Some(path) = &self.menu_music {
+            let want_menu_music = self.current_game_state == GameState::Menu;
+            if let Some(event) =
+                event_routing::menu_music_change(want_menu_music, self.menu_music_playing, path)
+            {
+                self.event_bus.publish(event);
+                self.menu_music_playing = want_menu_music;
+            }
         }
 
         // Handle platform output
@@ -812,8 +815,9 @@ mod tests {
 
     #[test]
     fn menu_frame_starts_menu_music_once() {
-        let (mut adapter, rx) = audio_adapter();
-        adapter.menu_music_exists = true;
+        let (adapter, rx) = audio_adapter();
+        let mut adapter =
+            adapter.with_menu_music(Some(PathBuf::from("assets/audio/music/menu.ogg")));
         adapter.set_game_state(GameState::Menu);
         adapter.set_visible(true);
 
@@ -828,20 +832,6 @@ mod tests {
             "unexpected {:?}",
             events[0]
         );
-    }
-
-    #[test]
-    fn menu_without_music_file_publishes_nothing_and_still_paints() {
-        let (mut adapter, rx) = audio_adapter();
-        adapter.menu_music_exists = false;
-        adapter.set_game_state(GameState::Menu);
-        adapter.set_visible(true);
-
-        let frame = adapter.ui_frame([800, 600]);
-
-        assert!(frame.is_some(), "the menu still paints");
-        let events = music_events(&rx);
-        assert!(events.is_empty(), "events: {events:?}");
     }
 
     fn audio_adapter_with_music(
@@ -887,8 +877,9 @@ mod tests {
 
     #[test]
     fn leaving_the_menu_state_stops_menu_music() {
-        let (mut adapter, rx) = audio_adapter();
-        adapter.menu_music_exists = true;
+        let (adapter, rx) = audio_adapter();
+        let mut adapter =
+            adapter.with_menu_music(Some(PathBuf::from("assets/audio/music/menu.ogg")));
         adapter.set_game_state(GameState::Menu);
         adapter.set_visible(true);
         adapter.ui_frame([800, 600]);

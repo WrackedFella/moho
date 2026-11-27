@@ -1,6 +1,6 @@
 //! The sound files flagstone plays, each resolved through the asset folders.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use moho_core::assets::{AssetError, AssetRoots};
 
@@ -25,8 +25,46 @@ impl Sounds {
     /// The [`AssetError`] of a cue found in no folder, or of an optional file that fails for any
     /// reason other than being absent.
     pub fn resolve(assets: &AssetRoots) -> Result<Self, AssetError> {
-        let _ = assets;
-        todo!("Sounds::resolve")
+        Ok(Self {
+            pickup: assets.resolve(Path::new("pickup.wav"))?,
+            dig: assets.resolve(Path::new("dig.wav"))?,
+            mark: assets.resolve(Path::new("mark.wav"))?,
+            unmark: assets.resolve(Path::new("unmark.wav"))?,
+            click: optional(assets, CLICK)?,
+            menu_music: optional(assets, MENU_MUSIC)?,
+        })
+    }
+}
+
+#[cfg(test)]
+impl Sounds {
+    /// The sounds as resolved from the checkout's placeholder folder, for tests that build an
+    /// [`App`](crate::App).
+    pub(crate) fn in_checkout() -> Self {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let roots = AssetRoots::placeholders(&folder).expect("the checkout holds its assets");
+        Self::resolve(&roots).expect("the checkout holds every cue")
+    }
+}
+
+const CLICK: &str = "audio/ui/button_click.mp3";
+const MENU_MUSIC: &str = "audio/music/menu.ogg";
+
+/// The file `name` if some folder holds it; `None`, logged with the folders searched, if none
+/// does.
+fn optional(assets: &AssetRoots, name: &str) -> Result<Option<PathBuf>, AssetError> {
+    match assets.resolve(Path::new(name)) {
+        Ok(file) => Ok(Some(file)),
+        Err(AssetError::NotFound { name, searched }) => {
+            let searched: Vec<String> = searched.iter().map(|p| p.display().to_string()).collect();
+            tracing::info!(
+                asset = %name.display(),
+                searched = %searched.join(", "),
+                "optional asset not found"
+            );
+            Ok(None)
+        }
+        Err(other) => Err(other),
     }
 }
 

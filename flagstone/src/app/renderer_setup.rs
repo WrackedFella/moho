@@ -42,7 +42,8 @@ pub fn init_renderer_and_ui(
             Some(window.clone()),
             app.event_bus.clone(),
             app.prefs.clone(),
-        );
+        )
+        .with_menu_music(app.sounds.menu_music.clone());
         let ui_adapter = Arc::new(Mutex::new(adapter));
 
         renderer.set_ui_source(Some(ui_adapter.clone() as moho_renderer::UiSource));

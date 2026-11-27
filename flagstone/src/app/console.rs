@@ -432,9 +432,10 @@ mod tests {
             .expect("the autosave is written");
         app.save_prefs();
 
-        let relaunched = App::from_config(crate::app::config::AppConfig::from_prefs_struct(
-            Prefs::load_from(&prefs_path).0,
-        ));
+        let relaunched = App::from_config(
+            crate::app::config::AppConfig::from_prefs_struct(Prefs::load_from(&prefs_path).0),
+            crate::app::sounds::Sounds::in_checkout(),
+        );
 
         assert!(!relaunched.physics.noclip);
     }

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
+const ASSETS_OPTION: &str = "--assets";
+
 /// A launch argument that cannot be used.
 #[derive(Debug, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -26,8 +28,21 @@ pub enum LaunchError {
 pub fn split_assets_option(
     args: impl IntoIterator<Item = OsString>,
 ) -> Result<(Option<PathBuf>, Vec<OsString>), LaunchError> {
-    let _ = args;
-    todo!("split_assets_option")
+    let mut folder = None;
+    let mut rest = Vec::new();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == ASSETS_OPTION {
+            if folder.is_some() {
+                return Err(LaunchError::Repeated);
+            }
+            let value = args.next().ok_or(LaunchError::MissingValue)?;
+            folder = Some(PathBuf::from(value));
+        } else {
+            rest.push(arg);
+        }
+    }
+    Ok((folder, rest))
 }
 
 #[cfg(test)]
