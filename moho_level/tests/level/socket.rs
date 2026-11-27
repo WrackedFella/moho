@@ -1476,3 +1476,157 @@ fn release_under_a_scaled_root_reports_the_unscaled_turn_and_an_unscaled_transfo
         );
     }
 }
+
+#[test]
+fn release_under_an_unevenly_scaled_turned_root_is_rigid() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let before_pose = reload_pose(&models, 114);
+    let now_pose = reload_pose(&models, 115);
+    let root = Affine3A::from_scale_rotation_translation(
+        Vec3::new(2.0, 1.0, 1.0),
+        Quat::from_rotation_y(0.3),
+        Vec3::new(5.0, -2.0, 1.0),
+    );
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
+
+    let released = character
+        .release(
+            &lookup,
+            &["hand_l"],
+            Posed {
+                root,
+                pose: &now_pose,
+            },
+            Posed {
+                root,
+                pose: &before_pose,
+            },
+            TICK,
+        )
+        .expect("hand_l holds the magazine");
+
+    let columns = released.transform.matrix3;
+    for column in [columns.x_axis, columns.y_axis, columns.z_axis] {
+        assert!(
+            (column.length() - 1.0).abs() < 1e-5,
+            "{column} is not a unit axis"
+        );
+    }
+    let axes = [columns.x_axis, columns.y_axis, columns.z_axis];
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(
+            axes[a].dot(axes[b]).abs() < 1e-5,
+            "axes {a} and {b} are not orthogonal: {columns:?}"
+        );
+    }
+    let rotation = Quat::from_mat3a(&columns);
+    assert!(rotation.is_normalized(), "{rotation} is not normalised");
+    let hand = node_index(&models, RELOAD_CHARACTER, "hand_l");
+    let expected = root * now_pose.nodes()[hand] * grip();
+    vec_near(
+        Vec3::from(released.transform.translation),
+        Vec3::from(expected.translation),
+        1e-5,
+    );
+    // A sheared chain has no single rotation, so the bound covers that ambiguity while still
+    // ruling out the identity, which is about 1.4 rad from the unscaled chain's turn.
+    let unscaled_root =
+        Affine3A::from_rotation_translation(Quat::from_rotation_y(0.3), root.translation.into());
+    let unscaled = unscaled_root * now_pose.nodes()[hand] * grip();
+    let expected_rotation = Quat::from_mat3a(&unscaled.matrix3).normalize();
+    assert!(
+        rotation.angle_between(expected_rotation) <= 0.5,
+        "{rotation:?} is not the hand's turn {expected_rotation:?}"
+    );
+    let spawn = LooseSpawn {
+        position: Vec3::from(released.transform.translation),
+        rotation,
+        ..LooseSpawn::new(
+            LooseShape::Box {
+                half_extents: Vec3::splat(0.05),
+            },
+            0.2,
+        )
+    };
+    let mut world = PhysicsWorld::new();
+    world.spawn_loose(&spawn);
+}
+
+/// Releases the magazine from `hand_l` at tick 115 under a root of `scale`, turned 0.3 about Y,
+/// then checks the transform is finite and rigid and that a loose object can be built from it.
+fn assert_release_is_rigid_under(scale: Vec3) {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let before_pose = reload_pose(&models, 114);
+    let now_pose = reload_pose(&models, 115);
+    let root = Affine3A::from_scale_rotation_translation(
+        scale,
+        Quat::from_rotation_y(0.3),
+        Vec3::new(5.0, -2.0, 1.0),
+    );
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
+
+    let released = character
+        .release(
+            &lookup,
+            &["hand_l"],
+            Posed {
+                root,
+                pose: &now_pose,
+            },
+            Posed {
+                root,
+                pose: &before_pose,
+            },
+            TICK,
+        )
+        .expect("hand_l holds the magazine");
+
+    let columns = released.transform.matrix3;
+    let axes = [columns.x_axis, columns.y_axis, columns.z_axis];
+    for axis in axes {
+        assert!(axis.is_finite(), "{axis} is not finite");
+        assert!(
+            (axis.length() - 1.0).abs() < 1e-5,
+            "{axis} is not a unit axis"
+        );
+    }
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(
+            axes[a].dot(axes[b]).abs() < 1e-5,
+            "axes {a} and {b} are not orthogonal: {columns:?}"
+        );
+    }
+    assert!(released.transform.translation.is_finite());
+    let rotation = Quat::from_mat3a(&columns);
+    assert!(rotation.is_normalized(), "{rotation} is not normalised");
+    let spawn = LooseSpawn {
+        position: Vec3::from(released.transform.translation),
+        rotation,
+        ..LooseSpawn::new(
+            LooseShape::Box {
+                half_extents: Vec3::splat(0.05),
+            },
+            0.2,
+        )
+    };
+    let mut world = PhysicsWorld::new();
+    world.spawn_loose(&spawn);
+}
+
+#[test]
+fn release_under_a_root_with_a_zero_scale_axis_is_rigid() {
+    assert_release_is_rigid_under(Vec3::new(2.0, 0.0, 1.0));
+}
+
+#[test]
+fn release_under_a_mirrored_root_is_rigid() {
+    assert_release_is_rigid_under(Vec3::new(-2.0, 1.0, 1.0));
+}

@@ -67,10 +67,14 @@ pub struct Released<K> {
     pub angular_velocity: Vec3,
 }
 
-/// The rotation of `transform` with its scale decomposed away; the identity when the scale
-/// has a zero axis, which leaves no rotation to read.
+/// The unit rotation of `transform` with its scale decomposed away; the identity when the
+/// scale has a zero axis, which leaves no rotation to read.
+///
+/// Under uneven scale and a turn the decomposed quaternion is not unit length, so it is
+/// normalised here: a loose object built from it needs a rigid rotation.
 fn rotation_of(transform: Affine3A) -> Quat {
     let (_, rotation, _) = transform.to_scale_rotation_translation();
+    let rotation = rotation.normalize();
     if rotation.is_finite() {
         rotation
     } else {
