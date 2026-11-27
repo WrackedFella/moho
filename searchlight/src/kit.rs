@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use moho_core::content::{ContentError, ContentRoots, Definitions, load_kind};
-use searchlight_rules::{Grade, ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats};
+use searchlight_rules::{
+    Grade, ItemDef, ItemId, Kit, KitDef, KitError, Remains, RoundStats, check_launch,
+};
 use thiserror::Error;
 
 /// The id of the kit a run starts with.
@@ -81,12 +83,19 @@ impl EnemyKits {
         base: &str,
         grade: Grade,
     ) -> Result<ResolvedEnemy, KitLoadError> {
+        self.resolve(&self.kit_for_grade(base, grade))
+    }
+
+    /// The id of the kit an enemy of `grade` wears: `{base}_{grade}` when the kits define it,
+    /// else `base`.
+    #[must_use]
+    pub fn kit_for_grade(&self, base: &str, grade: Grade) -> String {
         let own = format!("{base}_{}", grade.name());
-        self.resolve(if self.kits.get(&own).is_some() {
-            &own
+        if self.kits.get(&own).is_some() {
+            own
         } else {
-            base
-        })
+            base.to_owned()
+        }
     }
 }
 
@@ -111,6 +120,53 @@ pub fn load_enemy_for_grade(
     grade: Grade,
 ) -> Result<ResolvedEnemy, KitLoadError> {
     EnemyKits::load(roots)?.resolve_for_grade(ENEMY_KIT_ID, grade)
+}
+
+/// Loads `items` and `kits` through `roots` once and resolves the kit `start` as the player's
+/// and the kit `enemy` as the gear of a dead enemy, with the ballistics and damage of every
+/// round the enemy kit names.
+///
+/// The player may fire any looted round, and the round's magazine well is not known once the
+/// rounds are joined, so every enemy round is checked against the player's barrel, whether
+/// or not the player's weapon could take its magazine.
+///
+/// # Errors
+///
+/// As [`load_catalogue`] and [`load_enemy`]; also [`KitLoadError::Kit`] for `enemy` with
+/// [`KitError::TooSlowFromWeapon`] or [`KitError::NotFiniteFromWeapon`], naming the player's
+/// weapon and the round, when the player's barrel launches an enemy round too slowly or at a
+/// speed that is not finite.
+pub fn load_start_and_enemy(
+    roots: &ContentRoots,
+    start: &str,
+    enemy: &str,
+) -> Result<(Catalogue, Remains, BTreeMap<ItemId, RoundStats>), KitLoadError> {
+    let catalogue = load_catalogue(roots, start)?;
+    let (remains, rounds) = load_enemy(roots, enemy)?;
+    check_enemy_launch(&catalogue, enemy, &rounds)?;
+    Ok((catalogue, remains, rounds))
+}
+
+/// Checks every round of the enemy kit `enemy` against the player's barrel in `catalogue`, as
+/// [`load_start_and_enemy`] does.
+///
+/// # Errors
+///
+/// [`KitLoadError::Kit`] for `enemy`, as [`load_start_and_enemy`].
+pub fn check_enemy_launch(
+    catalogue: &Catalogue,
+    enemy: &str,
+    rounds: &BTreeMap<ItemId, RoundStats>,
+) -> Result<(), KitLoadError> {
+    for (round, stats) in rounds {
+        check_launch(&catalogue.weapon, &catalogue.kit.weapon, round, stats).map_err(|source| {
+            KitLoadError::Kit {
+                kit: enemy.to_owned(),
+                source,
+            }
+        })?;
+    }
+    Ok(())
 }
 
 /// Loads `items` and `kits` through `roots`, finds the kit `kit` and resolves it with `resolve`,
@@ -348,6 +404,42 @@ weight = 2.0
         assert_eq!(file, &dir.path().join("items.toml"));
         assert_eq!(id, "rifle");
         assert!(reason.contains("damage"), "{reason}");
+    }
+
+    #[test]
+    fn a_bad_barrel_factor_fails_the_load_naming_the_weapon_and_the_field() {
+        for bad in ["0", "0.0", "-0.8", "nan", "inf", "-inf"] {
+            let items = items_toml().replace(
+                "charge_ticks = 30",
+                &format!("charge_ticks = 30\nmuzzle_velocity_factor = {bad}"),
+            );
+            let (dir, roots) = base_with(&items, &start_kit(2));
+
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a weapon with muzzle_velocity_factor = {bad} loaded");
+            };
+
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{bad}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"));
+            assert_eq!(id, "rifle");
+            assert!(reason.contains("muzzle_velocity_factor"), "{bad}: {reason}");
+        }
+    }
+
+    #[test]
+    fn a_weapon_with_a_barrel_factor_loads_it_into_the_kit() {
+        let items = items_toml().replace(
+            "charge_ticks = 30",
+            "charge_ticks = 30\nmuzzle_velocity_factor = 0.8",
+        );
+        let (_dir, roots) = base_with(&items, &start_kit(2));
+
+        let kit = load(&roots, START_KIT_ID).expect("a 0.8 barrel loads");
+
+        assert_eq!(kit.weapon.muzzle_velocity_factor.get(), 0.8);
+        assert_eq!(tuning(kit).muzzle_velocity_factor.get(), 0.8);
     }
 
     #[test]
@@ -738,6 +830,135 @@ weight = 2.0
             let kind = &items.require(id).expect("the backpack is defined").kind;
             assert!(matches!(kind, ItemKind::Backpack(_)), "{id}: {kind:?}");
         }
+    }
+
+    const CARBINE_AND_SLOW_ROUND: &str = r#"
+[carbine]
+class = "weapon"
+size = [2, 4]
+condition = 100
+weight = 2.5
+[carbine.weapon]
+well = "rifle"
+fire = "semi_auto"
+cooldown_ticks = 6
+reload_ticks = 120
+charge_ticks = 30
+
+[round_slow]
+class = "consumable"
+size = [1, 1]
+weight = 0.01
+round = { caliber = "5.56x45", muzzle_velocity = 150.0, drag = 1.0, damage = 20 }
+"#;
+
+    /// A player rifle with a 0.5 barrel and an enemy carbine with the default barrel that
+    /// holds `enemy_round`.
+    fn looting_content(enemy_round: &str) -> (tempfile::TempDir, ContentRoots) {
+        let items = items_toml().replace(
+            "charge_ticks = 30",
+            "charge_ticks = 30\nmuzzle_velocity_factor = 0.5",
+        );
+        let enemy = format!(
+            "[enemy]\nrig = \"rig_chest\"\nweapon = \"carbine\"\nloaded = {{ magazine = \"mag_rifle\", round = \"{enemy_round}\" }}\n"
+        );
+        base_with(
+            &format!("{items}{CARBINE_AND_SLOW_ROUND}"),
+            &format!("{}{enemy}", start_kit(2)),
+        )
+    }
+
+    #[test]
+    fn a_grade_kit_with_a_round_the_players_barrel_slows_too_far_is_refused_when_assembled() {
+        let (dir, roots) = looting_content("round_ball");
+        let items = std::fs::read_to_string(dir.path().join("kits.toml")).expect("kits.toml");
+        let veteran = "[enemy_veteran]\nrig = \"rig_chest\"\nweapon = \"carbine\"\nloaded = { magazine = \"mag_rifle\", round = \"round_slow\" }\n";
+        std::fs::write(dir.path().join("kits.toml"), format!("{items}{veteran}"))
+            .expect("kits.toml is writable");
+        std::fs::copy(
+            content_root().join("player.toml"),
+            dir.path().join("player.toml"),
+        )
+        .expect("the shipped player sheet copies");
+
+        let Err(error) = crate::tuning::shipped_with_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID)
+        else {
+            panic!("a grade kit with a round the player's barrel slows too far loaded");
+        };
+
+        let KitLoadError::Kit { kit, source } = &error else {
+            panic!("expected a kit error, got {error:?}");
+        };
+        assert_eq!(kit, "enemy_veteran");
+        assert!(
+            matches!(source, KitError::TooSlowFromWeapon { .. }),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_looted_round_the_players_barrel_slows_to_the_minimum_speed_is_refused() {
+        let (_dir, roots) = looting_content("round_slow");
+
+        let Err(error) = load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID) else {
+            panic!("a 150 m/s round from a 0.5 barrel loaded");
+        };
+
+        let KitLoadError::Kit { kit, source } = &error else {
+            panic!("expected a kit error, got {error:?}");
+        };
+        assert_eq!(kit, ENEMY_KIT_ID);
+        assert!(
+            matches!(
+                source,
+                KitError::TooSlowFromWeapon { weapon, round }
+                    if *weapon == ItemId::new("rifle") && *round == ItemId::new("round_slow")
+            ),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_looted_round_the_players_barrel_overflows_is_refused() {
+        let items = items_toml().replace(
+            "charge_ticks = 30",
+            "charge_ticks = 30\nmuzzle_velocity_factor = 1e10",
+        );
+        let huge = "\n[round_huge]\nclass = \"consumable\"\nsize = [1, 1]\nweight = 0.01\nround = { caliber = \"5.56x45\", muzzle_velocity = 1e30, drag = 1.0, damage = 20 }\n";
+        let enemy = "[enemy]\nrig = \"rig_chest\"\nweapon = \"carbine\"\nloaded = { magazine = \"mag_rifle\", round = \"round_huge\" }\n";
+        let (_dir, roots) = base_with(
+            &format!("{items}{CARBINE_AND_SLOW_ROUND}{huge}"),
+            &format!("{}{enemy}", start_kit(2)),
+        );
+
+        let Err(error) = load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID) else {
+            panic!("a round that overflows the player's barrel loaded");
+        };
+
+        let KitLoadError::Kit { kit, source } = &error else {
+            panic!("expected a kit error, got {error:?}");
+        };
+        assert_eq!(kit, ENEMY_KIT_ID);
+        assert!(
+            matches!(
+                source,
+                KitError::NotFiniteFromWeapon { weapon, round }
+                    if *weapon == ItemId::new("rifle") && *round == ItemId::new("round_huge")
+            ),
+            "{source:?}"
+        );
+    }
+
+    #[test]
+    fn a_looted_round_fast_enough_for_the_players_barrel_is_accepted() {
+        let (_dir, roots) = looting_content("round_ball");
+
+        let (catalogue, remains, rounds) =
+            load_start_and_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID).expect("both kits load");
+
+        assert_eq!(catalogue.kit.weapon.muzzle_velocity_factor.get(), 0.5);
+        assert!(matches!(remains.carried.first(), Some(Item::Weapon(_))));
+        assert!(rounds.contains_key(&ItemId::new("round_ball")));
     }
 
     #[test]

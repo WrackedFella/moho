@@ -1,6 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
-use crate::ballistics::RoundStats;
+use crate::ballistics::{MIN_SPEED, RoundStats};
 use crate::inventory::{Item, Remains, RoundStack};
 use crate::item::{ItemDef, ItemId, ItemKind, SlotKind};
 use crate::loadout::Loadout;
@@ -131,6 +131,22 @@ pub enum KitError {
         /// The magazine's capacity.
         capacity: u32,
     },
+    /// The weapon's barrel leaves the round at or below the minimum speed.
+    #[error("round \"{round}\" leaves weapon \"{weapon}\" at or below the minimum speed")]
+    TooSlowFromWeapon {
+        /// The weapon item.
+        weapon: ItemId,
+        /// The round item.
+        round: ItemId,
+    },
+    /// The weapon's barrel launches the round at a speed too large to be finite.
+    #[error("round \"{round}\" leaves weapon \"{weapon}\" at a speed that is not finite")]
+    NotFiniteFromWeapon {
+        /// The weapon item.
+        weapon: ItemId,
+        /// The round item.
+        round: ItemId,
+    },
     /// A carried entry names fields its item does not take, or lacks one it needs.
     #[error("the entry for item \"{id}\" has fields that do not fit its item")]
     EntryFields {
@@ -168,8 +184,10 @@ impl KitDef {
     /// # Errors
     ///
     /// A [`KitError`] naming the offending item: unknown, of the wrong kind, a round of
-    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, or more
-    /// magazines of a kind than the rig has slots of it. Rig magazines that do not fit the weapon are allowed.
+    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, a round in a
+    /// magazine of the weapon's well that its barrel launches at a speed not finite or not above
+    /// [`crate::MIN_SPEED`], or more magazines of a kind than the rig has slots of it. Rig
+    /// magazines that do not fit the weapon are allowed.
     pub fn resolve<'a>(
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
@@ -228,6 +246,10 @@ impl KitDef {
                     magazine: magazine.clone(),
                 });
             }
+            let stats = spec_round.stats();
+            if spec.well == weapon.well {
+                check_launch(&self.weapon, weapon, round, &stats)?;
+            }
             let count = held.unwrap_or(spec.capacity);
             let filled = Magazine::filled(magazine.clone(), spec, round, count).map_err(|_| {
                 KitError::OverCapacity {
@@ -236,7 +258,7 @@ impl KitDef {
                     capacity: spec.capacity,
                 }
             })?;
-            rounds.insert(round.clone(), spec_round.stats());
+            rounds.insert(round.clone(), stats);
             Ok(filled)
         };
 
@@ -315,6 +337,38 @@ impl KitDef {
     }
 }
 
+/// Refuses a round that `weapon`'s barrel launches at a speed that is not finite or is not above
+/// [`MIN_SPEED`], naming the weapon item `weapon_id` and the round item `round_id`.
+///
+/// # Errors
+///
+/// [`KitError::NotFiniteFromWeapon`] when the scaled muzzle velocity overflows, else
+/// [`KitError::TooSlowFromWeapon`] when it is at or below [`MIN_SPEED`].
+pub fn check_launch(
+    weapon_id: &ItemId,
+    weapon: &RifleDef,
+    round_id: &ItemId,
+    stats: &RoundStats,
+) -> Result<(), KitError> {
+    let launch = stats
+        .ballistics
+        .through_barrel(weapon.muzzle_velocity_factor)
+        .muzzle_velocity;
+    if !launch.is_finite() {
+        return Err(KitError::NotFiniteFromWeapon {
+            weapon: weapon_id.clone(),
+            round: round_id.clone(),
+        });
+    }
+    if launch <= MIN_SPEED {
+        return Err(KitError::TooSlowFromWeapon {
+            weapon: weapon_id.clone(),
+            round: round_id.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// What a kit resolves to before it is a player's loadout or an enemy's remains.
 struct Parts {
     weapon: RifleDef,
@@ -331,7 +385,7 @@ mod tests {
     use crate::inventory::{Item, RoundStack};
     use crate::item::{ItemDef, ItemId, MagazineWell};
     use crate::test_support::id;
-    use crate::weapon::{FireBehaviour, RifleDef};
+    use crate::weapon::{FireBehaviour, RifleDef, VelocityFactor};
     use serde_json::{Value, json};
     use std::collections::{BTreeMap, HashMap};
 
@@ -444,8 +498,163 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             }
         );
+    }
+
+    /// The fixture items with a rifle of barrel `factor` and a round `fast` leaving at
+    /// `velocity` in the rifle's caliber.
+    fn barrel_items(factor: f32, velocity: f32) -> HashMap<ItemId, ItemDef> {
+        let mut items = items();
+        for (name, def) in [
+            (
+                "rifle",
+                json!({
+                    "class": "weapon", "size": [2, 5], "condition": 100, "weight": 1.0,
+                    "weapon": {
+                        "well": "rifle", "fire": "semi_auto", "cooldown_ticks": 6,
+                        "reload_ticks": 120, "charge_ticks": 30,
+                        "muzzle_velocity_factor": factor
+                    }
+                }),
+            ),
+            (
+                "round_fast",
+                json!({
+                    "class": "consumable", "size": [1, 1], "weight": 1.0,
+                    "round": {
+                        "caliber": "5.56x45", "muzzle_velocity": velocity,
+                        "drag": 1.0, "damage": 30
+                    }
+                }),
+            ),
+        ] {
+            let def = serde_json::from_value(def)
+                .unwrap_or_else(|e| panic!("fixture item {name} should load: {e}"));
+            items.insert(ItemId::new(name), def);
+        }
+        items
+    }
+
+    fn barrel_kit(loaded_round: &str, stowed: Value) -> KitDef {
+        kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": loaded_round},
+            "magazines": stowed
+        }))
+    }
+
+    fn resolve_with(items: &HashMap<ItemId, ItemDef>, def: &KitDef) -> Result<Kit, KitError> {
+        def.resolve(|item| items.get(item))
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_slows_to_the_minimum_speed_is_refused_naming_both() {
+        let items = barrel_items(0.5, 200.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let error = resolve_with(&items, &def).expect_err("200 x 0.5 is exactly the minimum speed");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::TooSlowFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains("rifle") && text.contains("round_fast"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_leaves_just_above_the_minimum_speed_is_accepted() {
+        let items = barrel_items(0.5, 202.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let kit = resolve_with(&items, &def).expect("202 x 0.5 is above the minimum speed");
+
+        assert!(kit.rounds.contains_key(&id("round_fast")));
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_launches_at_an_infinite_speed_is_refused_naming_both() {
+        let items = barrel_items(1.0e37, 940.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let error = resolve_with(&items, &def).expect_err("940 x 1e37 overflows f32");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::NotFiniteFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains("rifle") && text.contains("round_fast"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_large_but_finite_launch_speed_is_accepted() {
+        let items = barrel_items(10.0, 940.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let kit = resolve_with(&items, &def).expect("940 x 10 is a finite speed");
+
+        assert!(kit.rounds.contains_key(&id("round_fast")));
+    }
+
+    #[test]
+    fn a_stowed_round_the_barrel_slows_too_far_is_refused_naming_both() {
+        let items = barrel_items(0.5, 150.0);
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_rifle", "round": "round_fast"}]
+        }));
+
+        let error = resolve_with(&items, &def).expect_err("150 x 0.5 is 75 on the rig");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::TooSlowFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_slow_round_in_a_magazine_the_weapon_does_not_take_is_not_refused() {
+        let mut items = barrel_items(0.5, 940.0);
+        items.insert(
+            id("round_slow_9mm"),
+            serde_json::from_value(json!({
+                "class": "consumable", "size": [1, 1], "weight": 1.0,
+                "round": {"caliber": "9mm", "muzzle_velocity": 150.0, "drag": 1.0, "damage": 20}
+            }))
+            .expect("the fixture round loads"),
+        );
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_pistol", "round": "round_slow_9mm"}]
+        }));
+
+        let kit =
+            resolve_with(&items, &def).expect("a pistol magazine is not fired by this barrel");
+
+        assert!(kit.rounds.contains_key(&id("round_slow_9mm")));
     }
 
     #[test]

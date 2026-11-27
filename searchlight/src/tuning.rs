@@ -11,7 +11,7 @@ use searchlight_rules::{
 use moho_core::content::ContentRoots;
 
 use crate::brain::EnemyTuning;
-use crate::kit::{EnemyKits, KitLoadError, ResolvedEnemy, load_catalogue};
+use crate::kit::{Catalogue, EnemyKits, KitLoadError, ResolvedEnemy, load_catalogue};
 use crate::sim::{CarryConfig, SimConfig};
 
 /// The player's and every target's body: Source's 0.81 m wide, 1.83 m tall capsule, eye at
@@ -116,6 +116,7 @@ fn build(kit: Kit, carry: CarryConfig) -> SimConfig {
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
         charge_ticks: weapon.charge_ticks,
+        muzzle_velocity_factor: weapon.muzzle_velocity_factor,
         body: BodyProfile {
             max_health: 100,
             head_status: 30,
@@ -193,17 +194,16 @@ fn assemble(
     kit: &str,
     enemy_kit: Option<&str>,
 ) -> Result<SimConfig, KitLoadError> {
-    let catalogue = load_catalogue(roots, kit)?;
     let player = crate::player::load(roots)?;
-    // Grades follow the enemy kit unless the kits define `{enemy_kit}_{grade}`.
-    let (enemy, graded) = match enemy_kit {
+    // Every enemy kit loaded here passes the launch check against the player's barrel; grades
+    // follow the enemy kit unless the kits define `{enemy_kit}_{grade}`.
+    let (catalogue, enemy, graded) = match enemy_kit {
         Some(base) => {
-            let kits = EnemyKits::load(roots)?;
-            let default = kits.resolve(base)?;
-            let graded = graded_remains(&kits, base, &default.0)?;
-            (Some(default), graded)
+            let (catalogue, remains, rounds) = crate::kit::load_start_and_enemy(roots, kit, base)?;
+            let graded = graded_remains(&EnemyKits::load(roots)?, &catalogue, base, &remains)?;
+            (catalogue, Some((remains, rounds)), graded)
         }
-        None => (None, BTreeMap::new()),
+        None => (load_catalogue(roots, kit)?, None, BTreeMap::new()),
     };
     let mut carried = loadout_items(&catalogue.kit.loadout, &catalogue.weapon);
     if let Some((remains, _)) = &enemy {
@@ -235,6 +235,7 @@ fn assemble(
 /// What each grade whose kit differs from `default` leaves, with its rounds' stats.
 fn graded_remains(
     kits: &EnemyKits,
+    catalogue: &Catalogue,
     base: &str,
     default: &Remains,
 ) -> Result<BTreeMap<Grade, ResolvedEnemy>, KitLoadError> {
@@ -242,6 +243,11 @@ fn graded_remains(
     for grade in Grade::LADDER {
         let resolved = kits.resolve_for_grade(base, grade)?;
         if resolved.0 != *default {
+            crate::kit::check_enemy_launch(
+                catalogue,
+                &kits.kit_for_grade(base, grade),
+                &resolved.1,
+            )?;
             graded.insert(grade, resolved);
         }
     }
@@ -291,6 +297,7 @@ mod tests {
     use crate::test_support::{DT, arena_with, mag, rifle_from, rig_spec};
     use glam::Vec3;
     use moho_physics::{Hull, HullShape, Stature};
+    use searchlight_rules::VelocityFactor;
     use searchlight_rules::{
         Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RoundStats,
     };
@@ -304,6 +311,7 @@ mod tests {
             cooldown_ticks: 9,
             reload_ticks: 77,
             charge_ticks: 13,
+            muzzle_velocity_factor: VelocityFactor::default(),
         };
         let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(2));
         rig.stow(mag(17, 17)).unwrap();
@@ -333,6 +341,32 @@ mod tests {
         assert_eq!(config.rounds, rounds);
     }
 
+    fn config_with_barrel(factor: f32) -> SimConfig {
+        let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(1));
+        rig.stow(mag(17, 17)).unwrap();
+        tuning(Kit {
+            weapon: RifleDef {
+                well: MagazineWell::new("test"),
+                fire: FireBehaviour::SemiAuto,
+                cooldown_ticks: 6,
+                reload_ticks: 120,
+                charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::try_from(factor).unwrap(),
+            },
+            loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: BTreeMap::new(),
+        })
+    }
+
+    #[test]
+    fn the_config_takes_its_muzzle_velocity_factor_from_the_kits_weapon() {
+        let short = config_with_barrel(0.8);
+        let long = config_with_barrel(1.1);
+
+        assert_eq!(short.muzzle_velocity_factor.get(), 0.8);
+        assert_eq!(long.muzzle_velocity_factor.get(), 1.1);
+    }
+
     fn shipped_config() -> SimConfig {
         let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(1));
         rig.stow(mag(17, 17)).unwrap();
@@ -343,6 +377,7 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
             rounds: BTreeMap::new(),
@@ -457,6 +492,7 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
             rounds: BTreeMap::new(),

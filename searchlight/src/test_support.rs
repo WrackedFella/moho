@@ -16,7 +16,7 @@ use searchlight_rules::{
     AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, Item, ItemClass,
     ItemDef, ItemId, ItemKind, LeanTuning, Lifecycle, LoadThresholds, Loadout, Magazine,
     MagazineSpec, MagazineWell, PlayerDef, Remains, Rifle, Rig, RigSpec, RoundStats, Size,
-    SlotKind,
+    SlotKind, VelocityFactor,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -199,6 +199,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         cooldown_ticks: 3,
         reload_ticks: 10,
         charge_ticks: 0,
+        muzzle_velocity_factor: VelocityFactor::default(),
         body: test_profile(),
         loadout: Loadout::new(rifle, rig),
         enemy: enemy_tuning(),

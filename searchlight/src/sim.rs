@@ -16,7 +16,7 @@ use searchlight_rules::{
     Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Contribution, Flight, FlightBounds,
     Grade, HitReport, ItemDef, ItemId, Lean, LeanReach, LeanSide, LeanTuning, LoadState,
     LoadThresholds, Loadout, MagazineLevel, Place, PlayerDef, Remains, Rifle, Rig, RoundStats,
-    Shot, Source, SourceLabel, Stat, Verb, Worn, arrival_damage, disc_offset,
+    Shot, Source, SourceLabel, Stat, VelocityFactor, Verb, Worn, arrival_damage, disc_offset,
     equipment_contributions, leaned_parts, load, load_contributions, load_state, resolve,
 };
 
@@ -155,6 +155,8 @@ pub struct SimConfig {
     pub reload_ticks: u32,
     /// Ticks added to `reload_ticks` when the chamber is empty at the press.
     pub charge_ticks: u32,
+    /// How much the player's barrel scales the speed rounds leave at.
+    pub muzzle_velocity_factor: VelocityFactor,
     /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
     /// The rifle in hand and the rig it reloads from.
@@ -521,6 +523,7 @@ pub struct SearchlightSim {
     cooldown_ticks: u32,
     reload_ticks: u32,
     charge_ticks: u32,
+    muzzle_velocity_factor: VelocityFactor,
     loadout: Loadout,
     /// Indexed by target number: the dummies, then the enemies.
     targets: Vec<Target>,
@@ -685,6 +688,7 @@ impl SearchlightSim {
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
             charge_ticks: config.charge_ticks,
+            muzzle_velocity_factor: config.muzzle_velocity_factor,
             loadout: config.loadout.clone(),
             targets,
             dummy_count: spawns.dummies.len(),
@@ -1192,8 +1196,10 @@ impl SearchlightSim {
             tracing::warn!(%round, "the round has no stats, nothing is fired");
             return;
         };
+        let launch = ballistics.through_barrel(self.muzzle_velocity_factor);
         if simple {
-            self.hitscan(origin, direction, state.position, damage);
+            let dealt = arrival_damage(damage, ballistics.muzzle_velocity, launch.muzzle_velocity);
+            self.hitscan(origin, direction, state.position, dealt);
             return;
         }
         let id = self.next_round_id;
@@ -1207,7 +1213,7 @@ impl SearchlightSim {
         });
         self.rounds.push(RoundInFlight {
             id,
-            flight: Flight::fired(origin, direction, &ballistics),
+            flight: Flight::fired(origin, direction, &launch),
             ballistics,
             damage,
             shooter: Some(self.player),
@@ -4135,6 +4141,140 @@ mod tests {
             simple: true,
             ..idle()
         }
+    }
+
+    /// `config` with a barrel of `factor`.
+    fn with_barrel(mut config: SimConfig, factor: f32) -> SimConfig {
+        config.muzzle_velocity_factor = VelocityFactor::try_from(factor).expect("a valid factor");
+        config
+    }
+
+    /// A round of `muzzle_velocity` that sheds no speed, with `damage`.
+    fn undragged(muzzle_velocity: f32, damage: u32) -> SimConfig {
+        with_round(
+            Ballistics {
+                muzzle_velocity,
+                drag: 0.0,
+            },
+            damage,
+        )
+    }
+
+    /// The speed of the one round in the air right after a pull.
+    fn launch_speed(config: SimConfig) -> f32 {
+        let mut sim = dummy_ahead(60.0, BodyPart::Torso, config);
+
+        sim.tick(&pull(), DT);
+
+        let rounds = sim.rounds_in_flight();
+        assert_eq!(rounds.len(), 1, "one pull sends one round");
+        rounds[0].flight.velocity.length()
+    }
+
+    #[test]
+    fn a_round_leaves_the_barrel_at_its_muzzle_velocity_times_the_barrel_factor() {
+        let cases = [(None, 900.0), (Some(0.8), 720.0), (Some(1.1), 990.0)];
+        for (factor, expected) in cases {
+            let config = match factor {
+                Some(factor) => with_barrel(undragged(900.0, 30), factor),
+                None => undragged(900.0, 30),
+            };
+
+            let speed = launch_speed(config);
+
+            assert!(
+                (speed - expected).abs() < 0.01,
+                "factor {factor:?} left at {speed} m/s, not {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_0_8_barrel_hits_a_torso_at_point_blank_for_24_not_30_in_flight() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 0.8),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(health, 76, "30 scaled by 720/900 is 24");
+    }
+
+    #[test]
+    fn a_0_8_barrel_hits_a_torso_for_24_under_simple_at_any_range() {
+        for distance in [1.5, 10.0, 90.0] {
+            let health = dummy_health_after_a_shot(
+                distance,
+                BodyPart::Torso,
+                with_barrel(undragged(900.0, 30), 0.8),
+                simple_pull(),
+            );
+
+            assert_eq!(health, 76, "{distance} m");
+        }
+    }
+
+    #[test]
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage_in_flight() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.1),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(health, 70, "the ratio is capped at 1");
+    }
+
+    #[test]
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage_under_simple() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.1),
+            simple_pull(),
+        );
+
+        assert_eq!(health, 70, "the ratio is capped at 1");
+    }
+
+    /// The damage a level pull does to a torso `distance` metres ahead, and the height the
+    /// round struck it at.
+    fn torso_strike(distance: f32, config: SimConfig) -> (u32, f32) {
+        let mut sim = dummy_ahead(distance, BodyPart::Torso, config);
+
+        let ticks = fire_and_wait(&mut sim, pull(), 60);
+
+        let hits = hits_in(&ticks);
+        let (_, _, point) = *hits
+            .first()
+            .unwrap_or_else(|| panic!("a round at {distance} m never hit: {ticks:?}"));
+        let health = sim.dummy_body(0).expect("dummy 0 exists").health();
+        (100 - health, point.y)
+    }
+
+    #[test]
+    fn at_long_range_a_1_1_barrel_round_drops_less_and_does_at_least_as_much_damage() {
+        let dragged = Ballistics {
+            muzzle_velocity: 900.0,
+            drag: 1.0,
+        };
+
+        let (plain_damage, plain_height) =
+            torso_strike(90.0, with_barrel(with_round(dragged, 30), 1.0));
+        let (long_damage, long_height) =
+            torso_strike(90.0, with_barrel(with_round(dragged, 30), 1.1));
+
+        assert!(
+            long_height > plain_height,
+            "1.1 struck at {long_height}, 1.0 at {plain_height}"
+        );
+        assert!(
+            long_damage >= plain_damage,
+            "1.1 did {long_damage}, 1.0 did {plain_damage}"
+        );
+        assert!(long_damage <= 30, "never above the round's own damage");
     }
 
     #[test]
