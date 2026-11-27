@@ -16,6 +16,7 @@ one definition and its name is the id.
 [rifle]
 class = "weapon"
 size = [2, 5]
+weight = 3.4
 condition = 100
 
 [rifle.weapon]
@@ -73,8 +74,8 @@ are the file's contract.
 
 | Kind | Id | Type | Fields |
 |---|---|---|---|
-| `items` | any item id | `searchlight_rules::ItemDef` | `class` (`weapon`, `consumable`, `tool`, `gear`), `size` (`[width, height]`, each at least 1), `condition` (0 to 100) or `uses`, never both, and at most one section: `weapon`, `magazine`, `round` or `rig` |
-| `kits` | `start` (`START_KIT_ID`) | `searchlight_rules::KitDef` | `rig` and `weapon` (item ids), `loaded`, `magazines` (magazine entries, below) |
+| `items` | any item id | `searchlight_rules::ItemDef` | `class` (`weapon`, `consumable`, `tool`, `gear`), `size` (`[width, height]`, each at least 1), `weight` (kg, finite and 0 or more, required), `condition` (0 to 100) or `uses`, never both, and at most one section: `weapon`, `magazine`, `round`, `rig` or `backpack` |
+| `kits` | `start` (`START_KIT_ID`), `enemy` (`ENEMY_KIT_ID`) | `searchlight_rules::KitDef` | `rig` and `weapon` (item ids), `loaded`, `magazines` (magazine entries, below), optional `backpack` (item id) and `carried` (`KitItem` entries, below) |
 
 Item sections (`ItemKind`), each valid only on its class:
 
@@ -84,8 +85,9 @@ Item sections (`ItemKind`), each valid only on its class:
 | `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity` |
 | `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, above `MIN_SPEED` = 100), `drag` (1/s, 0 or more), `damage` (at least 1: the hit's damage at muzzle velocity, scaled down in proportion to the speed the round arrives at, never below 1); all required, a bad value fails the load naming the round and the field; `searchlight_rules::RoundSpec` |
 | `rig` | `gear` | `magazine_slots` |
+| `backpack` | `gear` | none; the section is `{}` and marks an item for the backpack slot |
 
-A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
+A `carried` entry is `{ item }`, plus `round` and `rounds` when the item is a magazine, or `count` when it is a round. The `start` kit resolves into the player's `Loadout`; the `enemy` kit resolves into the `Remains` every dead enemy leaves (`searchlight::kit::load_enemy`). A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
 full magazine. `Kit` resolution fails (`KitError`) on an unknown item, an item of the wrong kind,
 a round of another caliber than its magazine, more rounds than the magazine holds, a `loaded`
 magazine whose `well` differs from the weapon's, or more magazines than the rig has slots. Rig

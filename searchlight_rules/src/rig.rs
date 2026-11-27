@@ -23,6 +23,26 @@ impl Rig {
         }
     }
 
+    /// A rig of the item `item` holding `slots`, free ones as `None`.
+    ///
+    /// # Errors
+    ///
+    /// Gives `slots` back when their number is not `spec.magazine_slots`.
+    pub fn from_slots(
+        item: ItemId,
+        spec: &RigSpec,
+        slots: Vec<Option<Magazine>>,
+    ) -> Result<Self, Vec<Option<Magazine>>> {
+        if slots.len() != spec.magazine_slots as usize {
+            return Err(slots);
+        }
+        Ok(Self {
+            item,
+            slots,
+            next: 0,
+        })
+    }
+
     /// The item this rig is an instance of.
     #[must_use]
     pub fn item(&self) -> &ItemId {
@@ -73,6 +93,11 @@ impl Rig {
             .find(|&index| self.slots[index].as_ref().is_some_and(&fits))?;
         self.next = index + 1;
         self.slots[index].take().map(|magazine| (index, magazine))
+    }
+
+    /// Takes the magazine out of `slot`; `None` when the slot is free or out of range.
+    pub(crate) fn take_slot(&mut self, slot: usize) -> Option<Magazine> {
+        self.slots.get_mut(slot)?.take()
     }
 
     /// Puts `magazine` in the free slot `slot`.
@@ -244,6 +269,24 @@ mod tests {
         let mut rig = rig_of(3);
 
         assert_eq!(rig.take_next(|_| true), None);
+    }
+
+    #[test]
+    fn from_slots_keeps_the_layout_when_it_matches_the_spec() {
+        let spec = RigSpec { magazine_slots: 3 };
+
+        let rig = Rig::from_slots(id("rig_chest"), &spec, vec![None, Some(named("a")), None]);
+
+        assert_eq!(items(&rig.unwrap()), [None, some("a"), None]);
+    }
+
+    #[test]
+    fn from_slots_with_the_wrong_number_of_slots_gives_them_back() {
+        let spec = RigSpec { magazine_slots: 2 };
+
+        let rig = Rig::from_slots(id("rig_chest"), &spec, vec![Some(named("a")); 3]);
+
+        assert_eq!(rig, Err(vec![Some(named("a")); 3]));
     }
 
     #[test]

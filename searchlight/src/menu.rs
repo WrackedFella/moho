@@ -8,7 +8,7 @@ use crate::controls::{ControlsDraft, label};
 use crate::debug_settings::GameRows;
 use crate::head_bob::HeadBobLevel;
 use crate::input::SearchlightAction;
-use crate::item_lists::ItemAction;
+use crate::inventory::ItemAction;
 
 /// What choosing a menu item asks the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -642,6 +642,7 @@ mod tests {
             "Q",
             "E",
             "F",
+            "Tab",
             "Mouse Right",
         ]
         .map(|text| Some(text.to_owned()))

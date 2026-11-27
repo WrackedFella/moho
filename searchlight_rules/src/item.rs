@@ -189,6 +189,12 @@ pub struct RigSpec {
     pub magazine_slots: u32,
 }
 
+/// The backpack section of an item definition: marks an item that goes in the backpack slot.
+/// It holds nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackpackSpec {}
+
 /// What an item does beyond being carried.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemKind {
@@ -200,6 +206,8 @@ pub enum ItemKind {
     Round(RoundSpec),
     /// A magazine rig.
     Rig(RigSpec),
+    /// A backpack.
+    Backpack(BackpackSpec),
     /// Nothing beyond its class, like a tool.
     Plain,
 }
@@ -209,7 +217,7 @@ impl ItemKind {
     pub(crate) fn required_class(&self) -> Option<ItemClass> {
         match self {
             Self::Weapon(_) => Some(ItemClass::Weapon),
-            Self::Magazine(_) | Self::Rig(_) => Some(ItemClass::Gear),
+            Self::Magazine(_) | Self::Rig(_) | Self::Backpack(_) => Some(ItemClass::Gear),
             Self::Round(_) => Some(ItemClass::Consumable),
             Self::Plain => None,
         }
@@ -222,6 +230,7 @@ impl ItemKind {
             Self::Magazine(_) => Some("magazine"),
             Self::Round(_) => Some("round"),
             Self::Rig(_) => Some("rig"),
+            Self::Backpack(_) => Some("backpack"),
             Self::Plain => None,
         }
     }
@@ -237,14 +246,19 @@ pub struct ItemDef {
     pub size: Size,
     /// Wear or uses.
     pub lifecycle: Lifecycle,
+    /// Mass in kilograms; finite and at least 0.
+    pub weight: f32,
     /// What the item does.
     pub kind: ItemKind,
 }
 
 /// Why an item definition was refused.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum ItemDefError {
+    /// The weight is negative or not finite.
+    #[error("weight must be 0 kg or more, got {0}")]
+    Weight(f32),
     /// Both lifecycle keys were given.
     #[error("an item has either a condition or uses, not both")]
     ConditionAndUses,
@@ -278,10 +292,12 @@ struct RawItemDef {
     size: [u8; 2],
     condition: Option<u8>,
     uses: Option<NonZeroU32>,
+    weight: f32,
     weapon: Option<RifleDef>,
     magazine: Option<MagazineSpec>,
     round: Option<RoundSpec>,
     rig: Option<RigSpec>,
+    backpack: Option<BackpackSpec>,
 }
 
 impl RawItemDef {
@@ -303,6 +319,9 @@ impl TryFrom<RawItemDef> for ItemDef {
 
     fn try_from(raw: RawItemDef) -> Result<Self, Self::Error> {
         let lifecycle = raw.lifecycle()?;
+        if !(raw.weight.is_finite() && raw.weight >= 0.0) {
+            return Err(ItemDefError::Weight(raw.weight));
+        }
         let [width, height] = raw.size;
         if width == 0 || height == 0 {
             return Err(ItemDefError::ZeroSize);
@@ -313,6 +332,7 @@ impl TryFrom<RawItemDef> for ItemDef {
             raw.magazine.map(ItemKind::Magazine),
             raw.round.map(ItemKind::Round),
             raw.rig.map(ItemKind::Rig),
+            raw.backpack.map(ItemKind::Backpack),
         ]
         .into_iter()
         .flatten();
@@ -329,6 +349,7 @@ impl TryFrom<RawItemDef> for ItemDef {
             class,
             size: Size { width, height },
             lifecycle,
+            weight: raw.weight,
             kind,
         })
     }
@@ -341,8 +362,82 @@ mod tests {
     use serde_json::{Value, json};
     use std::num::NonZeroU32;
 
-    fn parse(value: Value) -> Result<ItemDef, serde_json::Error> {
+    fn parse(mut value: Value) -> Result<ItemDef, serde_json::Error> {
+        if let Some(fields) = value.as_object_mut() {
+            fields.entry("weight").or_insert(json!(1.0));
+        }
         serde_json::from_value(value)
+    }
+
+    /// One value of a hand-built item definition, so a weight JSON cannot write (NaN,
+    /// infinity) still reaches the deserializer.
+    enum Field {
+        Text(&'static str),
+        Size([u8; 2]),
+        Float(f32),
+    }
+
+    impl<'de> serde::Deserializer<'de> for Field {
+        type Error = serde::de::value::Error;
+
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            match self {
+                Field::Text(text) => visitor.visit_str(text),
+                Field::Size(size) => visitor
+                    .visit_seq(serde::de::value::SeqDeserializer::<_, Self::Error>::new(
+                        size.into_iter(),
+                    )),
+                Field::Float(float) => visitor.visit_f32(float),
+            }
+        }
+
+        fn deserialize_enum<V: serde::de::Visitor<'de>>(
+            self,
+            _name: &'static str,
+            _variants: &'static [&'static str],
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            match self {
+                Field::Text(text) => {
+                    visitor.visit_enum(serde::de::value::StrDeserializer::<Self::Error>::new(text))
+                }
+                _ => Err(serde::de::Error::custom("only text names an enum variant")),
+            }
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map
+            struct identifier ignored_any
+        }
+    }
+
+    impl serde::de::IntoDeserializer<'_, serde::de::value::Error> for Field {
+        type Deserializer = Self;
+
+        fn into_deserializer(self) -> Self {
+            self
+        }
+    }
+
+    /// The error text of a tool definition weighing `weight` kg, which JSON cannot always say.
+    fn weight_error_text(weight: f32) -> String {
+        let fields = [
+            ("class", Field::Text("tool")),
+            ("size", Field::Size([1, 1])),
+            ("weight", Field::Float(weight)),
+        ];
+        let definition = serde::de::value::MapDeserializer::<_, serde::de::value::Error>::new(
+            fields.into_iter(),
+        );
+
+        ItemDef::deserialize(definition)
+            .expect_err("the weight should be refused")
+            .to_string()
+            .to_lowercase()
     }
 
     fn weapon_section() -> Value {
@@ -673,5 +768,71 @@ mod tests {
 
             assert!(matches!(item.kind, ItemKind::Plain), "{class}");
         }
+    }
+
+    #[test]
+    fn an_item_without_weight_is_refused() {
+        let result = serde_json::from_value::<ItemDef>(json!({"class": "tool", "size": [1, 1]}));
+
+        let text = result
+            .expect_err("an item with no weight is refused")
+            .to_string();
+        assert!(text.contains("weight"), "{text}");
+    }
+
+    #[test]
+    fn a_negative_or_non_finite_weight_is_refused() {
+        let negative = parse(json!({"class": "tool", "size": [1, 1], "weight": -0.5}))
+            .expect_err("a negative weight is refused")
+            .to_string();
+        let texts = [
+            weight_error_text(f32::NAN),
+            weight_error_text(f32::INFINITY),
+            weight_error_text(f32::NEG_INFINITY),
+        ];
+
+        assert!(negative.contains("weight"), "{negative}");
+        assert!(negative.contains("-0.5"), "{negative}");
+        for text in texts {
+            assert!(text.contains("weight"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_weight_of_0_or_more_is_kept() {
+        let none = parse(json!({"class": "tool", "size": [1, 1], "weight": 0.0}))
+            .expect("a weightless item is valid");
+        let some = parse(json!({"class": "tool", "size": [1, 1], "weight": 2.5}))
+            .expect("a positive weight is valid");
+
+        assert_eq!(none.weight, 0.0);
+        assert_eq!(some.weight, 2.5);
+    }
+
+    #[test]
+    fn a_backpack_section_needs_class_gear() {
+        for class in ["weapon", "consumable", "tool"] {
+            let text = error_text(json!({"class": class, "size": [1, 1], "backpack": {}}));
+
+            assert!(text.contains("backpack"), "{class}: {text}");
+            assert!(text.contains(class), "{class}: {text}");
+        }
+        let item = parse(json!({"class": "gear", "size": [3, 3], "backpack": {}}))
+            .expect("gear with a backpack section loads");
+
+        assert!(
+            matches!(item.kind, ItemKind::Backpack(_)),
+            "{:?}",
+            item.kind
+        );
+    }
+
+    #[test]
+    fn a_backpack_section_with_a_key_is_refused() {
+        let text = error_text(json!({
+            "class": "gear", "size": [3, 3], "backpack": {"slots": 4}
+        }));
+
+        assert!(text.contains("slots"), "{text}");
     }
 }

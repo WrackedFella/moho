@@ -48,6 +48,8 @@ pub fn status_text(feedback: &Feedback) -> Option<String> {
         | Feedback::PlayerHit { .. }
         | Feedback::Impact { .. }
         | Feedback::EnemyDied { .. }
+        | Feedback::SearchOpened { .. }
+        | Feedback::SearchCancelled
         | Feedback::PlayerDied => None,
     }
 }
@@ -118,6 +120,17 @@ pub fn use_prompt(key: &str, action: ControlAction) -> String {
     let what = match action {
         ControlAction::NextWave => "Next wave",
     };
+    bracketed(key, what)
+}
+
+/// The prompt for a body in view: the `key` that searches it and `Search`, or `Searching` while
+/// the search is under way.
+pub fn search_prompt(key: &str, searching: bool) -> String {
+    bracketed(key, if searching { "Searching" } else { "Search" })
+}
+
+/// A prompt line: the `key` in brackets, then what it does.
+fn bracketed(key: &str, what: &str) -> String {
     format!("[{key}] {what}")
 }
 
@@ -152,6 +165,8 @@ pub fn shows_strip(feedback: &Feedback) -> bool {
         | Feedback::PlayerHit { .. }
         | Feedback::Impact { .. }
         | Feedback::EnemyDied { .. }
+        | Feedback::SearchOpened { .. }
+        | Feedback::SearchCancelled
         | Feedback::PlayerDied => false,
     }
 }
@@ -418,6 +433,17 @@ mod feedback_tests {
         assert_eq!(bound, "[F] Next wave");
         assert_eq!(rebound, "[Mouse Right] Next wave");
         assert_eq!(unbound, "[unbound] Next wave");
+    }
+
+    #[test]
+    fn the_search_prompt_names_the_key_and_search_or_searching() {
+        let idle = search_prompt("F", false);
+        let under_way = search_prompt("F", true);
+        let unbound = search_prompt("unbound", false);
+
+        assert_eq!(idle, "[F] Search");
+        assert_eq!(under_way, "[F] Searching");
+        assert_eq!(unbound, "[unbound] Search");
     }
 
     #[test]

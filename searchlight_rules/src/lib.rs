@@ -5,6 +5,7 @@ mod accuracy;
 mod ballistics;
 mod body;
 mod grade;
+mod inventory;
 mod item;
 mod kit;
 mod loadout;
@@ -24,11 +25,12 @@ pub use ballistics::{
 };
 pub use body::{Body, BodyPart, BodyProfile, HitReport};
 pub use grade::{Grade, GradeDials, UnknownGrade};
+pub use inventory::{Item, MoveRefused, Place, Remains, RoundStack, Source};
 pub use item::{
-    Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle, MagazineSpec,
-    MagazineWell, RigSpec, RoundSpec, Size,
+    BackpackSpec, Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle,
+    MagazineSpec, MagazineWell, RigSpec, RoundSpec, Size,
 };
-pub use kit::{Kit, KitDef, KitError, KitMagazine};
+pub use kit::{Kit, KitDef, KitError, KitItem, KitMagazine};
 pub use loadout::Loadout;
 pub use magazine::{Magazine, MagazineError, MagazineLevel};
 pub use mix::{GradeMix, GradeMixError, WaveGrades};
