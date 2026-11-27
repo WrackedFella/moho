@@ -176,6 +176,8 @@ pub struct SimConfig {
     pub body_radius: f32,
     /// What every enemy carried and wore, which it leaves as a body when it dies.
     pub enemy_remains: Remains,
+    /// What an enemy of a grade carried and wore instead of `enemy_remains`, by grade.
+    pub grade_remains: BTreeMap<Grade, Remains>,
     /// What the player's load is priced and resolved from.
     pub carry: CarryConfig,
 }
@@ -766,7 +768,7 @@ impl SearchlightSim {
                 }
             }
             Some(InventoryCommand::Move { from, to }) => self.move_item(from, to),
-            None => {}
+            Some(InventoryCommand::Wear { .. }) | None => {}
         }
         match self.loot {
             LootState::Searching { body, left } => {
@@ -1414,6 +1416,11 @@ impl SearchlightSim {
     /// The simulation's tuning, as it was built.
     fn config(&self) -> &SimConfig {
         &self.origin.1
+    }
+
+    /// The definition of item `id` in the carry config, if it has one.
+    pub fn item_def(&self, id: &ItemId) -> Option<&ItemDef> {
+        self.config().carry.items.get(id)
     }
 
     /// The control and the body the player looks at, from one ray as long as either's reach.
@@ -6061,6 +6068,289 @@ mod tests {
 
             assert_eq!(sim.kills(), 1);
         }
+    }
+
+    fn gear_def(
+        kind: searchlight_rules::ItemKind,
+        stats: Vec<searchlight_rules::ItemStat>,
+    ) -> searchlight_rules::ItemDef {
+        searchlight_rules::ItemDef {
+            class: searchlight_rules::ItemClass::Gear,
+            kind,
+            stats,
+            ..crate::test_support::weighing(0.0)
+        }
+    }
+
+    fn capacity_stat(verb: Verb) -> Vec<searchlight_rules::ItemStat> {
+        vec![searchlight_rules::ItemStat {
+            stat: Stat::CarryCapacity,
+            verb,
+        }]
+    }
+
+    fn rig_def(slots: u32, capacity: Option<Verb>) -> searchlight_rules::ItemDef {
+        gear_def(
+            searchlight_rules::ItemKind::Rig(RigSpec {
+                magazine_slots: slots,
+            }),
+            capacity.map(capacity_stat).unwrap_or_default(),
+        )
+    }
+
+    fn pack_def(capacity: Option<Verb>) -> searchlight_rules::ItemDef {
+        gear_def(
+            searchlight_rules::ItemKind::Backpack(searchlight_rules::BackpackSpec {}),
+            capacity.map(capacity_stat).unwrap_or_default(),
+        )
+    }
+
+    fn wearing(from: usize) -> SearchlightCommand {
+        asking(InventoryCommand::Wear { from })
+    }
+
+    fn slotting_inventory_item(index: usize) -> SearchlightCommand {
+        asking(InventoryCommand::Move {
+            from: Source::Inventory(index),
+            to: Place::MagazineSlots,
+        })
+    }
+
+    /// `config` with `inventory` carried, and definitions for the gear the wear tests name: the
+    /// 5-slot `rig_five`, and the backpacks `pack_big` and `pack_frame`.
+    fn with_gear_to_wear(mut config: SimConfig, inventory: Vec<Item>) -> SimConfig {
+        let items = &mut config.carry.items;
+        items.insert(ItemId::new("rig_five"), rig_def(5, None));
+        items.insert(ItemId::new("pack_big"), pack_def(None));
+        items.insert(ItemId::new("pack_frame"), pack_def(Some(Verb::Scale(1.2))));
+        items.insert(ItemId::new("test_rig"), rig_def(1, None));
+        config.loadout = config.loadout.with_inventory(inventory);
+        config
+    }
+
+    fn sim_wearing(spares: Vec<Magazine>, inventory: Vec<Item>) -> SearchlightSim {
+        let config = with_gear_to_wear(test_config(rifle_with(10), spares), inventory);
+        SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config)
+    }
+
+    fn rig_item(id: &str) -> Item {
+        Item::Rig(ItemId::new(id))
+    }
+
+    #[test]
+    fn a_dead_enemys_remains_follow_its_grade() {
+        let veteran_remains = Remains {
+            rig: Some(Rig::new(
+                ItemId::new("rig_five"),
+                &RigSpec { magazine_slots: 5 },
+            )),
+            ..Remains::default()
+        };
+        let default_remains = Remains {
+            rig: Some(Rig::new(
+                ItemId::new("test_rig"),
+                &RigSpec { magazine_slots: 3 },
+            )),
+            ..Remains::default()
+        };
+        let mut config = test_config(rifle_with(10), vec![]);
+        config.enemy_remains = default_remains.clone();
+        config
+            .grade_remains
+            .insert(Grade::Veteran, veteran_remains.clone());
+        let markers = [Vec3::new(5.0, 0.0, 5.0), Vec3::new(-5.0, 0.0, 5.0)];
+        let mut sim = SearchlightSim::with_start(
+            arena_with(&[], Vec3::ZERO, &markers, &[Vec3::new(0.0, 0.0, 40.0)]),
+            config,
+            Start::Empty,
+        );
+        sim.spawn_enemy(0, Grade::Veteran).expect("a free marker");
+        sim.spawn_enemy(1, Grade::Rookie).expect("a free marker");
+
+        sim.kill_enemy(0);
+        sim.kill_enemy(1);
+        sim.tick(&idle(), DT);
+
+        let remains_of = |number: u16| sim.bodies().get(&number).map(|body| body.remains.clone());
+        assert_eq!(remains_of(0), Some(veteran_remains), "the veteran's body");
+        assert_eq!(remains_of(1), Some(default_remains), "the rookie's body");
+    }
+
+    #[test]
+    fn reload_right_after_a_rig_swap_does_not_start() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let mut script = vec![wearing(0), reload(), pull()];
+        script.extend([idle(); 12]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(ticks[1], [], "no reload begins on an empty rig");
+        assert_eq!(ticks[2], [Feedback::Fired], "the pull is not blocked");
+        assert!(ticks[3..].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+        assert_eq!(sim.rig().slots(), [None, None, None, None, None]);
+        assert_eq!(
+            sim.loadout().inventory(),
+            [rig_item("test_rig"), Item::Magazine(mag(30, 30))],
+            "the full magazine is still in the inventory"
+        );
+    }
+
+    #[test]
+    fn reload_after_slotting_a_magazine_in_the_new_rig_takes_it() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let mut script = vec![wearing(0), slotting_inventory_item(1), reload()];
+        script.extend([idle(); 10]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert!(ticks[..12].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(ticks[12], [Feedback::ReloadDone]);
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+        assert_eq!(
+            sim.rig().slots(),
+            [Some(mag(30, 9)), None, None, None, None],
+            "the spent magazine takes the slot the new one left"
+        );
+        assert_eq!(sim.loadout().inventory(), [rig_item("test_rig")]);
+    }
+
+    #[test]
+    fn wearing_a_rig_mid_reload_ends_it_and_the_rifle_keeps_its_magazine() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let mut script = vec![reload(), idle(), wearing(0), pull()];
+        script.extend([idle(); 12]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(
+            ticks[3],
+            [Feedback::Fired],
+            "the reload stopped, so the pull fires"
+        );
+        assert!(
+            ticks.iter().flatten().all(|fb| *fb != Feedback::ReloadDone),
+            "{ticks:?}"
+        );
+        assert_eq!(
+            sim.rifle().magazine(),
+            &mag(30, 8),
+            "the rifle's own magazine, one round chambered and one spent"
+        );
+        assert_eq!(sim.rig().slots(), [None, None, None, None, None]);
+        assert_eq!(
+            sim.loadout().inventory(),
+            [rig_item("test_rig"), Item::Magazine(mag(30, 30))]
+        );
+    }
+
+    #[test]
+    fn wearing_a_backpack_mid_reload_lets_it_finish() {
+        let mut sim = sim_wearing(
+            vec![mag(30, 30)],
+            vec![Item::Other(ItemId::new("pack_big"))],
+        );
+        let mut script = vec![reload(), idle(), wearing(0)];
+        script.extend([idle(); 8]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert!(ticks[..10].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(ticks[10], [Feedback::ReloadDone]);
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+        assert_eq!(sim.rig().slots(), [Some(mag(30, 9))]);
+        assert_eq!(sim.loadout().backpack(), Some(&ItemId::new("pack_big")));
+    }
+
+    #[test]
+    fn a_wear_while_looting_is_ignored() {
+        let config = with_gear_to_wear(
+            loot_config(two_magazines()),
+            vec![rig_item("rig_five"), Item::Other(ItemId::new("pack_big"))],
+        );
+        let mut sim = looting_sim(config);
+        let before = sim.loadout().clone();
+
+        sim.tick(&wearing(0), DT);
+        sim.tick(&wearing(1), DT);
+
+        assert_eq!(sim.looting(), Some(0), "the loot screen stays open");
+        assert_eq!(sim.loadout(), &before);
+
+        sim.tick(&asking(InventoryCommand::Close), DT);
+        sim.tick(&wearing(0), DT);
+
+        assert_eq!(sim.looting(), None);
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+        assert_eq!(sim.loadout().inventory()[0], rig_item("test_rig"));
+    }
+
+    #[test]
+    fn a_wear_while_searching_is_ignored() {
+        let config = with_gear_to_wear(loot_config(two_magazines()), vec![rig_item("rig_five")]);
+        let mut sim = sim_with_a_body(config, &[]);
+        look_down_at_the_body(&mut sim);
+        sim.tick(&using(), DT);
+        assert_eq!(sim.searching(), Some(0), "the search has begun");
+        let before = sim.loadout().clone();
+
+        sim.tick(&wearing(0), DT);
+
+        assert_eq!(sim.searching(), Some(0), "the search goes on");
+        assert_eq!(sim.loadout(), &before);
+    }
+
+    #[test]
+    fn a_backpack_swap_changes_resolved_capacity_on_the_next_tick() {
+        let mut config = with_gear_to_wear(
+            test_config(rifle_with(10), vec![]),
+            vec![Item::Other(ItemId::new("pack_big"))],
+        );
+        config.carry.items.insert(
+            ItemId::new("backpack_small"),
+            pack_def(Some(Verb::Add(10.0))),
+        );
+        config
+            .carry
+            .items
+            .insert(ItemId::new("pack_big"), pack_def(Some(Verb::Add(15.0))));
+        config.loadout = config.loadout.with_backpack(ItemId::new("backpack_small"));
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        assert_eq!(sim.carry_sheet().capacity, 40.0);
+
+        sim.tick(&wearing(0), DT);
+        let on_the_wear_tick = sim.carry_sheet().capacity;
+        sim.tick(&idle(), DT);
+
+        assert_eq!(on_the_wear_tick, 45.0);
+        assert_eq!(sim.carry_sheet().capacity, 45.0);
+        assert_eq!(sim.stat(Stat::CarryCapacity), 45.0);
+        assert_eq!(
+            sim.loadout().inventory(),
+            [Item::Other(ItemId::new("backpack_small"))]
+        );
+    }
+
+    #[test]
+    fn a_rig_swap_changes_resolved_capacity_through_the_rigs_stats() {
+        let mut config = with_gear_to_wear(
+            test_config(rifle_with(10), vec![]),
+            vec![rig_item("rig_five")],
+        );
+        config
+            .carry
+            .items
+            .insert(ItemId::new("test_rig"), rig_def(0, Some(Verb::Add(2.0))));
+        config
+            .carry
+            .items
+            .insert(ItemId::new("rig_five"), rig_def(5, Some(Verb::Add(5.0))));
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        assert_eq!(sim.carry_sheet().capacity, 32.0);
+
+        sim.tick(&wearing(0), DT);
+
+        assert_eq!(sim.carry_sheet().capacity, 35.0);
     }
 }
 

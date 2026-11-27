@@ -1174,7 +1174,7 @@ impl SearchlightGame {
         let sim = self.mode.sim();
         match sim.looted_remains() {
             Some(remains) => inventory::loot_lists(sim.loadout(), remains),
-            None => inventory::gear_lists(sim.loadout()),
+            None => inventory::gear_lists(sim.loadout(), |id| sim.item_def(id)),
         }
     }
 
@@ -1348,7 +1348,9 @@ impl SearchlightGame {
                 MenuEvent::ActionPicked {
                     action: MenuAction::ItemAction(action),
                     ..
-                } => match action {},
+                } => match action {
+                    inventory::ItemAction::Wear => {}
+                },
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
                 | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}
@@ -8656,6 +8658,56 @@ mod tests {
             before
         );
         assert_eq!(game.sim().loadout(), &loadout);
+    }
+
+    #[test]
+    fn picking_wear_on_a_gear_screen_rig_row_queues_a_wear() {
+        use crate::inventory::INVENTORY;
+        use searchlight_rules::{ItemClass, ItemDef, ItemId, ItemKind, RigSpec};
+
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        config.carry.items.insert(
+            ItemId::new("rig_five"),
+            ItemDef {
+                class: ItemClass::Gear,
+                kind: ItemKind::Rig(RigSpec { magazine_slots: 5 }),
+                ..crate::test_support::weighing(0.0)
+            },
+        );
+        config.loadout = config.loadout.with_inventory(vec![
+            Item::Other(ItemId::new("bandage")),
+            Item::Rig(ItemId::new("rig_five")),
+        ]);
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 1.5)],
+            &[Vec3::new(0.0, 0.0, 10.0)],
+        );
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::default();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let events_clock = GameClock::default();
+        let mut ctx = EventContext::new(&events_clock, None, None);
+        game.route_input(&mut ctx, TAB, true, false);
+        game.route_input(&mut ctx, TAB, false, false);
+        assert_eq!(game.screen, Screen::Inventory);
+        let inventory_at = position_of(&game, INVENTORY);
+
+        tap_keys(
+            &mut game,
+            &mut ctx,
+            &[
+                vec![Key::ArrowRight; inventory_at],
+                vec![Key::ArrowDown, Key::Space, Key::Enter],
+            ]
+            .concat(),
+        );
+        let command = game.command();
+
+        assert_eq!(command.inventory, Some(InventoryCommand::Wear { from: 1 }));
     }
 
     #[test]

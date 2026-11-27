@@ -139,6 +139,7 @@ fn build(kit: Kit, carry: CarryConfig) -> SimConfig {
         search_reach: SEARCH_REACH,
         body_radius: BODY_RADIUS,
         enemy_remains: Remains::default(),
+        grade_remains: BTreeMap::new(),
         carry,
     }
 }

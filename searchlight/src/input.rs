@@ -142,6 +142,8 @@ pub fn build_action_map(
 pub enum InventoryCommand {
     /// Moves one item between the body, the inventory and the magazine slots.
     Move { from: Source, to: Place },
+    /// Wears the rig or backpack at index `from` of the inventory.
+    Wear { from: usize },
     /// Ends the looting and closes the screen.
     Close,
 }

@@ -2,7 +2,9 @@
 //! screen only shows and asks; the sim owns the items and applies every move.
 
 use moho_ui_shell::{ItemList, ItemLists, ListId};
-use searchlight_rules::{Item, LoadThresholds, Loadout, Magazine, Place, Remains, Source};
+use searchlight_rules::{
+    Item, ItemDef, ItemId, LoadThresholds, Loadout, Magazine, Place, Remains, Source,
+};
 
 use crate::menu::{MenuAction, item_row};
 
@@ -23,7 +25,14 @@ pub const BODY: ListId = ListId(3);
 /// A row is labelled with its item's id; a magazine's count is its rounds and a stack of
 /// rounds' is its size. The magazine slots list has one row per slot, a free one labelled
 /// [`EMPTY_SLOT`] with no count.
-pub fn gear_lists(loadout: &Loadout) -> ItemLists<MenuAction> {
+///
+/// The rig and backpack rows of the inventory offer [`ItemAction::Wear`], `lookup` telling a
+/// backpack from other items, and the slot list's title names the worn rig and its slot count.
+pub fn gear_lists<'a>(
+    loadout: &Loadout,
+    lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+) -> ItemLists<MenuAction> {
+    let _ = lookup;
     ItemLists {
         lists: vec![
             list(EQUIPMENT, "Equipment", loadout, None),
@@ -94,9 +103,12 @@ pub fn load_header(load_kg: f32, capacity_kg: f32, thresholds: &LoadThresholds) 
     }
 }
 
-/// An action a row of the inventory offers; the enum has no variants.
+/// An action a row of the inventory offers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ItemAction {}
+pub enum ItemAction {
+    /// Wears the rig or backpack the row shows.
+    Wear,
+}
 
 /// One row before it is drawn: what it shows and what moving it means.
 struct Entry {
@@ -287,10 +299,16 @@ mod tests {
     fn the_gear_screen_still_has_equipment_magazine_slots_and_inventory() {
         let loadout = player(3, 2);
 
-        let shown = gear_lists(&loadout);
+        let shown = gear_lists(&loadout, |_| None);
 
         assert_eq!(list_ids(&shown), [EQUIPMENT, MAGAZINE_SLOTS, INVENTORY]);
-        assert_eq!(titles(&shown), ["Equipment", "Magazine slots", "Inventory"]);
+        let shown_titles = titles(&shown);
+        assert_eq!(shown_titles[0], "Equipment");
+        assert!(
+            shown_titles[1].starts_with("Magazine slots"),
+            "{shown_titles:?}"
+        );
+        assert_eq!(shown_titles[2], "Inventory");
         assert_eq!(shown.back, Some(MenuAction::Back));
     }
 
@@ -298,7 +316,7 @@ mod tests {
     fn the_loot_screens_inventory_list_is_the_one_the_gear_screen_shows() {
         let loadout = sparse_player();
 
-        let gear = gear_lists(&loadout);
+        let gear = gear_lists(&loadout, |_| None);
         let loot = loot_lists(&loadout, &full_body());
 
         assert_eq!(labels(&loot, INVENTORY), labels(&gear, INVENTORY));
@@ -342,7 +360,7 @@ mod tests {
         };
 
         let loot = loot_lists(&loadout, &remains);
-        let gear = gear_lists(&loadout);
+        let gear = gear_lists(&loadout, |_| None);
 
         let count_of = |shown: &ItemLists<MenuAction>, list: ListId| {
             shown
@@ -364,16 +382,23 @@ mod tests {
     fn without_a_body_the_screen_lists_only_the_players_side() {
         let loadout = player(3, 1);
 
-        let shown = gear_lists(&loadout);
+        let shown = gear_lists(&loadout, |_| None);
 
-        assert_eq!(titles(&shown), ["Equipment", "Magazine slots", "Inventory"]);
+        let shown_titles = titles(&shown);
+        assert_eq!(shown_titles[0], "Equipment");
+        assert!(
+            shown_titles[1].starts_with("Magazine slots"),
+            "{shown_titles:?}"
+        );
+        assert_eq!(shown_titles[2], "Inventory");
+        assert_eq!(shown_titles.len(), 3);
     }
 
     #[test]
     fn the_equipment_list_shows_the_worn_rig_and_backpack() {
         let loadout = player(3, 0);
 
-        let shown = gear_lists(&loadout);
+        let shown = gear_lists(&loadout, |_| None);
 
         assert_eq!(labels(&shown, EQUIPMENT), ["test_rig", "backpack_small"]);
     }
@@ -382,7 +407,7 @@ mod tests {
     fn free_magazine_slots_show_as_empty_rows() {
         let loadout = player(4, 1);
 
-        let shown = gear_lists(&loadout);
+        let shown = gear_lists(&loadout, |_| None);
 
         assert_eq!(
             labels(&shown, MAGAZINE_SLOTS),
@@ -440,7 +465,7 @@ mod tests {
         let loadout = sparse_player();
         let remains = full_body();
 
-        let shown = gear_lists(&loadout);
+        let shown = gear_lists(&loadout, |_| None);
         let loot = loot_lists(&loadout, &remains);
 
         assert_eq!(
@@ -570,6 +595,164 @@ mod tests {
 
         assert_eq!(header.text, "20.0 of 30.0 kg");
         assert_eq!(header.marks, [18.0, 24.0, 30.0]);
+    }
+
+    fn gear_defs() -> std::collections::BTreeMap<ItemId, ItemDef> {
+        use crate::test_support::weighing;
+        use searchlight_rules::{BackpackSpec, ItemClass, ItemKind};
+
+        let rig = |slots| ItemDef {
+            class: ItemClass::Gear,
+            kind: ItemKind::Rig(RigSpec {
+                magazine_slots: slots,
+            }),
+            ..weighing(1.0)
+        };
+        let pack = ItemDef {
+            class: ItemClass::Gear,
+            kind: ItemKind::Backpack(BackpackSpec {}),
+            ..weighing(1.0)
+        };
+        [
+            ("test_rig", rig(3)),
+            ("rig_assault", rig(5)),
+            ("backpack_small", pack.clone()),
+            ("backpack_large", pack),
+            ("bandage", weighing(0.05)),
+            ("rag", weighing(0.1)),
+        ]
+        .into_iter()
+        .map(|(id, def)| (ItemId::new(id), def))
+        .collect()
+    }
+
+    fn wear_action() -> moho_ui_shell::RowAction<MenuAction> {
+        moho_ui_shell::RowAction {
+            label: "Wear".to_owned(),
+            action: MenuAction::ItemAction(ItemAction::Wear),
+            target: moho_ui_shell::ActionTarget::Itself,
+        }
+    }
+
+    fn actions_of(
+        lists: &ItemLists<MenuAction>,
+        list: ListId,
+    ) -> Vec<Vec<moho_ui_shell::RowAction<MenuAction>>> {
+        lists
+            .lists
+            .iter()
+            .find(|candidate| candidate.id == list)
+            .unwrap_or_else(|| panic!("no list {list:?} on the screen"))
+            .rows
+            .iter()
+            .map(|row| row.actions.clone())
+            .collect()
+    }
+
+    /// A player whose inventory holds a bandage, a 5-slot rig, a large backpack and a rag.
+    fn player_with_spare_gear() -> Loadout {
+        player(3, 1).with_inventory(vec![
+            bandage(),
+            Item::Rig(ItemId::new("rig_assault")),
+            Item::Other(ItemId::new("backpack_large")),
+            Item::Other(ItemId::new("rag")),
+        ])
+    }
+
+    #[test]
+    fn gear_screen_rig_and_backpack_rows_offer_wear() {
+        let defs = gear_defs();
+        let loadout = player_with_spare_gear();
+
+        let shown = gear_lists(&loadout, |id| defs.get(id));
+
+        assert_eq!(
+            actions_of(&shown, INVENTORY),
+            [vec![], vec![wear_action()], vec![wear_action()], vec![]]
+        );
+        assert!(
+            actions_of(&shown, EQUIPMENT).iter().all(Vec::is_empty),
+            "worn gear offers no wear"
+        );
+        assert!(
+            actions_of(&shown, MAGAZINE_SLOTS).iter().all(Vec::is_empty),
+            "a magazine slot offers no wear"
+        );
+        assert_eq!(list_ids(&shown), [EQUIPMENT, MAGAZINE_SLOTS, INVENTORY]);
+    }
+
+    #[test]
+    fn a_rig_or_backpack_with_no_definition_offers_no_wear() {
+        let defs = gear_defs();
+        let loadout = player(3, 0).with_inventory(vec![
+            Item::Rig(ItemId::new("rig_unknown")),
+            Item::Other(ItemId::new("backpack_unknown")),
+            Item::Other(ItemId::new("rig_assault")),
+            Item::Other(ItemId::new("backpack_large")),
+        ]);
+
+        let shown = gear_lists(&loadout, |id| defs.get(id));
+
+        assert_eq!(
+            actions_of(&shown, INVENTORY),
+            [vec![], vec![], vec![], vec![wear_action()]],
+            "an unknown rig, an unknown backpack and a rig carried as a plain item offer none"
+        );
+    }
+
+    #[test]
+    fn loot_screen_rows_offer_no_wear() {
+        let loadout = player_with_spare_gear();
+        let remains = full_body();
+
+        let shown = loot_lists(&loadout, &remains);
+
+        assert_eq!(
+            actions_of(&shown, INVENTORY),
+            vec![Vec::<moho_ui_shell::RowAction<MenuAction>>::new(); 4]
+        );
+        let body = actions_of(&shown, BODY);
+        assert_eq!(
+            body.len(),
+            6,
+            "the body's rig, two magazines, backpack, two items"
+        );
+        assert!(body.iter().all(Vec::is_empty), "{body:?}");
+    }
+
+    #[test]
+    fn the_slot_list_title_names_the_worn_rig_and_its_slots() {
+        let defs = gear_defs();
+        let three = player(3, 0);
+        let five = Loadout::new(
+            rifle_from(mag(30, 30)),
+            Rig::new(ItemId::new("rig_assault"), &RigSpec { magazine_slots: 5 }),
+        );
+
+        let before = gear_lists(&three, |id| defs.get(id));
+        let after = gear_lists(&five, |id| defs.get(id));
+
+        let title = |shown: &ItemLists<MenuAction>| {
+            shown
+                .lists
+                .iter()
+                .find(|list| list.id == MAGAZINE_SLOTS)
+                .expect("the gear screen has the slot list")
+                .title
+                .clone()
+        };
+        let (before, after) = (title(&before), title(&after));
+        assert!(before.starts_with("Magazine slots"), "{before}");
+        assert!(
+            before.contains("test_rig") && before.contains('3'),
+            "{before}"
+        );
+        assert!(after.starts_with("Magazine slots"), "{after}");
+        assert!(
+            after.contains("rig_assault") && after.contains('5'),
+            "{after}"
+        );
+        assert!(!after.contains("test_rig"), "{after}");
     }
 
     #[test]
