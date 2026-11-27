@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use glam::{Mat3, Mat4, Quat, Vec3};
+use glam::{Affine3A, Mat3, Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
@@ -18,9 +18,7 @@ use moho_render_api::{
     Renderable, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId,
     UiTextureSet, UiVertex, WorldMesh, WorldMeshId,
 };
-use moho_renderer::{
-    EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle, WorldMeshes,
-};
+use moho_renderer::{EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle};
 use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
@@ -33,7 +31,7 @@ use moho_ui_shell::{
 };
 
 use crate::aim::{Magnification, aimed_fov_y, look_scale};
-use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
+use crate::arena::{box_mesh, control_mesh_id};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::controls::{Capture, ControlsDraft, label};
 use crate::debug_settings::{DebugSettings, GameRows};
@@ -60,10 +58,9 @@ use crate::{TICK_HZ, hud};
 const FLASH_TICKS: u32 = TICK_HZ / 6;
 /// Dummy segment mesh ids start here, clear of the arena's (which count up from 0).
 const DUMMY_MESH_BASE: u64 = 1 << 32;
-/// Enemy segment mesh ids start here, clear of the arena's and the dummies'.
-const ENEMY_MESH_BASE: u64 = 2 << 32;
-/// Mesh ids reserved per enemy: six body parts and the gun.
-const ENEMY_MESH_SLOTS: u64 = 8;
+/// The unit box every enemy segment is placed from, clear of the arena's, the dummies' and the
+/// controls' ids.
+const ENEMY_BOX_MESH_ID: WorldMeshId = WorldMeshId(2 << 32);
 /// Ticks a damage edge bar takes to fade out.
 const EDGE_TICKS: u32 = TICK_HZ / 4;
 /// Width of a damage edge bar, in pixels.
@@ -256,32 +253,18 @@ const DUMMY_OUTLINE: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
 /// because the markers are cleared before each placement.
 const OUTLINE_ID_BASE: u64 = 1 << 32;
 
-/// One enemy as box segments: the six body parts and the gun, which flashes when it fires.
+/// One enemy's gun flash: its box segments are placed each frame, the gun struck while it flashes.
 #[derive(Debug)]
 struct EnemyRig {
     target: u16,
-    /// Whether the segments are in the scene.
-    shown: bool,
     gun_flash: u32,
-}
-
-impl EnemyRig {
-    fn mesh_id(&self, slot: usize) -> WorldMeshId {
-        WorldMeshId(ENEMY_MESH_BASE + u64::from(self.target) * ENEMY_MESH_SLOTS + slot as u64)
-    }
-
-    /// Takes the segments out of the scene and clears the gun flash.
-    fn hide(&mut self, meshes: &mut WorldMeshes) {
-        for slot in 0..ENEMY_SEGMENT_COUNT {
-            meshes.remove(self.mesh_id(slot));
-        }
-        self.shown = false;
-        self.gun_flash = 0;
-    }
 }
 
 /// The six body parts and the gun.
 const ENEMY_SEGMENT_COUNT: usize = 7;
+
+/// The gun's place in [`enemy_segments`].
+const GUN_SLOT: usize = ENEMY_SEGMENT_COUNT - 1;
 
 /// The enemy's segments as `(offset, half extents)` in its body frame, gun last.
 fn enemy_segments(body: &CharacterBody) -> [(Vec3, Vec3); ENEMY_SEGMENT_COUNT] {
@@ -580,6 +563,9 @@ impl Stage {
         let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
         let tracer_material = scene.material_table.find_or_push(&Paint::Tracer);
         let impact_material = scene.material_table.find_or_push(&Paint::ImpactMark);
+        scene
+            .world_meshes_mut()
+            .upsert_movable(ENEMY_BOX_MESH_ID, box_mesh(Vec3::ZERO, Vec3::splat(0.5)));
         Self {
             scene,
             backdrop: Scene::new(),
@@ -722,7 +708,6 @@ impl Stage {
             .unwrap_or_else(|| {
                 self.enemies.push(EnemyRig {
                     target,
-                    shown: false,
                     gun_flash: 0,
                 });
                 self.enemies.len() - 1
@@ -739,43 +724,31 @@ impl Stage {
         self.edge_left[edge as usize] = EDGE_TICKS;
     }
 
-    /// Puts every living enemy's segments where the sim has it, and takes the dead ones out.
+    /// Places every living enemy's segments where the sim has it for this frame; a dead or
+    /// missing enemy is not placed.
     fn sync_enemies(&mut self, sim: &SearchlightSim) {
-        let known = self.dummy_count + sim.enemy_count();
-        for rig in &mut self.enemies {
-            if usize::from(rig.target) >= known && rig.shown {
-                rig.hide(self.scene.world_meshes_mut());
-            }
-        }
+        let segments = enemy_segments(sim.character_body());
         for index in 0..sim.enemy_count() {
             let target = u16::try_from(self.dummy_count + index)
                 .expect("the sim numbers its targets with a u16");
-            let rig_index = self.rig_index(target);
-            let rig = &mut self.enemies[rig_index];
-            let meshes = self.scene.world_meshes_mut();
+            let gun_flash = self.enemy_rig(target).gun_flash;
             let Some(state) = sim.enemy_state(index) else {
-                if rig.shown {
-                    rig.hide(meshes);
-                }
                 continue;
             };
-            rig.shown = true;
-            let gun_flash = rig.gun_flash;
-            let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
             let facing = Quat::from_rotation_y(state.yaw);
-            for (slot, (offset, half)) in
-                enemy_segments(sim.character_body()).into_iter().enumerate()
-            {
-                let material = if slot == 6 && gun_flash > 0 {
+            let meshes = self.scene.world_meshes_mut();
+            for (slot, (offset, half)) in segments.into_iter().enumerate() {
+                let material = if slot == GUN_SLOT && gun_flash > 0 {
                     self.struck_material
                 } else {
                     self.enemy_material
                 };
-                meshes.upsert(
-                    ids[slot],
-                    oriented_box_mesh(state.position + facing * offset, half, facing),
-                    material,
+                let transform = Affine3A::from_scale_rotation_translation(
+                    half * 2.0,
+                    facing,
+                    state.position + facing * offset,
                 );
+                meshes.place(ENEMY_BOX_MESH_ID, transform, material);
             }
         }
     }
@@ -3757,16 +3730,7 @@ mod tests {
             .iter()
             .map(|segment| segment.id.0)
             .collect();
-        let enemies: Vec<u64> = (0..64u16)
-            .flat_map(|target| {
-                let rig = EnemyRig {
-                    target,
-                    shown: false,
-                    gun_flash: 0,
-                };
-                (0..ENEMY_MESH_SLOTS as usize).map(move |slot| rig.mesh_id(slot).0)
-            })
-            .collect();
+        let enemies: Vec<u64> = vec![ENEMY_BOX_MESH_ID.0];
 
         for (name, others) in [("arena", &arena), ("dummy", &dummies), ("enemy", &enemies)] {
             let shared: Vec<&u64> = controls.iter().filter(|id| others.contains(id)).collect();
@@ -8961,7 +8925,7 @@ mod mutation_tests {
         frame_with(&mut game, &mut renderer);
         let menu_draws = renderer.draws.len();
         let menu_crosshair = crosshair_vertices(&game);
-        let menu_enemies = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        let menu_enemies = game.stage.enemies.len();
 
         assert_eq!(menu_draws, 0, "world meshes drawn behind the menu");
         assert_eq!(menu_crosshair, 0, "crosshair drawn on the menu");
@@ -8999,7 +8963,7 @@ mod mutation_tests {
 
         game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
         frame_with(&mut game, &mut renderer);
-        let shown = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        let shown = game.stage.enemies.len();
         let menu = game.stage.shell().ui_frame([1280, 720]);
 
         assert_eq!(game.screen, Screen::Paused);
@@ -9086,7 +9050,7 @@ mod mutation_tests {
             1 + 6,
             "the arena and its dummies are drawn, as in play"
         );
-        let enemies = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        let enemies = game.stage.enemies.len();
         assert_eq!(enemies, 0, "enemies synced behind the menu");
         assert_eq!(crosshair_vertices(&game), 0, "crosshair drawn on the menu");
     }
@@ -9244,7 +9208,7 @@ mod enemy_and_hud_tests {
     use searchlight_rules::Grade;
 
     use super::*;
-    use crate::arena::{Arena, ArenaMarkers};
+    use crate::arena::{Arena, ArenaMarkers, oriented_box_mesh};
     use crate::sim::{Start, dummy_hit_volumes};
     use crate::test_support::{arena_with, level_marker, mag, rifle_from, test_config};
 
@@ -9476,30 +9440,6 @@ mod enemy_and_hud_tests {
     }
 
     #[test]
-    fn enemy_mesh_ids_start_at_two_times_two_to_the_32_and_hold_eight_slots_per_enemy() {
-        let rig = EnemyRig {
-            target: 5,
-            shown: false,
-            gun_flash: 0,
-        };
-
-        let ids: Vec<WorldMeshId> = [0, 3, 6]
-            .into_iter()
-            .map(|slot| rig.mesh_id(slot))
-            .collect();
-
-        let base = 2 * (1u64 << 32) + 5 * 8;
-        assert_eq!(
-            ids,
-            [
-                WorldMeshId(base),
-                WorldMeshId(base + 3),
-                WorldMeshId(base + 6)
-            ]
-        );
-    }
-
-    #[test]
     fn syncing_draws_each_living_enemy_as_seven_boxes_at_its_pose() {
         let sim = lone_enemy();
         let state = sim.enemy_state(0).expect("the enemy spawned");
@@ -9581,7 +9521,6 @@ mod enemy_and_hud_tests {
 
         assert_eq!(before, 3 * 7);
         assert_eq!(after, 7, "stale enemy models are still drawn");
-        assert_eq!(stage.enemies.iter().filter(|rig| rig.shown).count(), 1);
     }
 
     #[test]
