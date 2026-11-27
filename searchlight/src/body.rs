@@ -700,4 +700,65 @@ mod tests {
 
         assert_refused(&art, BODY, "head is not a joint");
     }
+
+    impl Gltf {
+        /// Sets the influences of the body mesh's first vertex.
+        fn set_first_vertex_influences(&mut self, joints: [u8; 4], weights: [f32; 4]) {
+            let mesh = self.json["nodes"][self.skinned_node()]["mesh"]
+                .as_u64()
+                .expect("mesh index") as usize;
+            let attributes = &self.json["meshes"][mesh]["primitives"][0]["attributes"];
+            let joints_accessor = attributes["JOINTS_0"].as_u64().expect("joints") as usize;
+            let weights_accessor = attributes["WEIGHTS_0"].as_u64().expect("weights") as usize;
+            let start = |accessor: usize| {
+                let view = self.json["accessors"][accessor]["bufferView"]
+                    .as_u64()
+                    .expect("bufferView") as usize;
+                self.json["bufferViews"][view]["byteOffset"]
+                    .as_u64()
+                    .unwrap_or(0) as usize
+            };
+            let (joints_at, weights_at) = (start(joints_accessor), start(weights_accessor));
+            self.bin[joints_at..joints_at + 4].copy_from_slice(&joints);
+            for (slot, weight) in weights.into_iter().enumerate() {
+                let at = weights_at + slot * 4;
+                self.bin[at..at + 4].copy_from_slice(&weight.to_le_bytes());
+            }
+        }
+    }
+
+    #[test]
+    fn head_without_attach_is_refused() {
+        let art = art_editing(&[HEAD], |gltf| gltf.rename_node("attach", "mount"));
+
+        assert_refused(&art, HEAD, "attach");
+    }
+
+    #[test]
+    fn zero_weight_on_head_in_headless_body_passes() {
+        let art = art_editing(&[PLAYER_BODY], |gltf| {
+            gltf.set_first_vertex_influences([0, 3, 0, 0], [1.0, 0.0, 0.0, 0.0]);
+        });
+
+        let result = check_over(Some(art.path()));
+
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
+
+    #[test]
+    fn unskinned_part_on_a_bone_of_a_skinned_body_passes() {
+        let art = art_editing(&[BODY], |gltf| {
+            let hand = gltf.node("hand_r");
+            let strap = gltf.json["nodes"].as_array().expect("nodes").len();
+            gltf.json["nodes"]
+                .as_array_mut()
+                .expect("nodes")
+                .push(json!({ "name": "strap", "mesh": 0 }));
+            gltf.push_child(hand, strap);
+        });
+
+        let result = check_over(Some(art.path()));
+
+        assert!(result.is_ok(), "{:?}", result.err());
+    }
 }
