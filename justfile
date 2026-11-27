@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check
+check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check package-test
 
 fmt-check:
     cargo fmt --all --check
@@ -200,6 +200,84 @@ assets-check:
 [macos, windows]
 assets-check:
     @echo "assets-check: skipped, Linux only"
+
+# Release build of `game` laid out for copying: the executable with its committed `assets`
+# and `content` beside it, in target/package/<game>/.
+package game:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p {{game}}
+    exe="target/release/{{game}}"
+    [[ -f "$exe.exe" ]] && exe="$exe.exe"
+    out="target/package/{{game}}"
+    scripts/package.sh {{game}} "$exe" "$out"
+    echo "packaged {{game}} in $out"
+
+# Self-test of scripts/package.sh with a stub executable: the package holds the executable and
+# the committed assets and content, no generator tool or README, and a second run drops
+# whatever the first left in the output folder. It never builds.
+package-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d)"
+    local_dir=searchlight/assets/local
+    probe="$local_dir/probe.glb"
+    made_local=0
+    [[ -d "$local_dir" ]] || made_local=1
+    wrote_probe=0
+    cleanup() {
+        rm -rf "$work"
+        [[ $wrote_probe == 0 ]] || rm -f "$probe"
+        [[ $made_local == 0 ]] || rmdir "$local_dir" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+    exe="$work/searchlight"
+    out="$work/out"
+    printf '#!/bin/sh\n' > "$exe"
+    chmod +x "$exe"
+    fail() { echo "package-test: $1" >&2; exit 1; }
+    # A git-ignored local map must stay out of the package.
+    [[ ! -e "$probe" ]] || fail "$probe already exists; move it away before running the test"
+    mkdir -p "$local_dir"
+    echo probe > "$probe"
+    wrote_probe=1
+    mkdir -p "$out"
+    echo stale > "$out/stale.txt"
+    scripts/package.sh searchlight "$exe" "$out"
+    [[ -f "$out/searchlight" && -x "$out/searchlight" ]] || fail "executable missing or not executable"
+    expected="$(git ls-files searchlight/assets searchlight/content | grep -v '/tools/' | grep -v '\.md$' | sed 's#^searchlight/##' | LC_ALL=C sort)"
+    packaged="$(find "$out/assets" "$out/content" -type f | sed "s#^$out/##" | LC_ALL=C sort)"
+    [[ -n "$expected" ]] || fail "no committed assets or content found"
+    for must in assets/arena.glb assets/proving_ground.glb assets/rifle_shot.wav content/items.toml content/kits.toml; do
+        [[ -f "$out/$must" ]] || fail "$must missing from the package"
+    done
+    [[ "$packaged" == "$expected" ]] || fail "package files differ from the committed files (expected, then packaged): $expected -- $packaged"
+    [[ ! -e "$out/assets/local" ]] || fail "the git-ignored local map shipped"
+    [[ ! -e "$out/assets/tools" ]] || fail "assets/tools shipped"
+    [[ -z "$(find "$out" -name '*.md')" ]] || fail "a markdown file shipped"
+    [[ ! -e "$out/stale.txt" ]] || fail "stale file survived the first run"
+    echo stale > "$out/stale.txt"
+    scripts/package.sh searchlight "$exe" "$out"
+    [[ ! -e "$out/stale.txt" ]] || fail "stale file survived a second run"
+    # An output folder that is, or holds, the working directory or the executable's folder is
+    # refused before anything is deleted.
+    root="$(pwd -P)"
+    guard="$work/guard"
+    mkdir -p "$guard/sub"
+    echo keep > "$guard/sentinel"
+    refuses() {
+        local dir=$1 target=$2 rc=0
+        (cd "$dir" && "$root/scripts/package.sh" searchlight "$exe" "$target") > /dev/null 2>&1 || rc=$?
+        [[ $rc -ne 0 ]] || fail "output '$target' from $dir was accepted"
+        [[ -f "$guard/sentinel" && -f "$exe" ]] || fail "output '$target' from $dir deleted files"
+    }
+    refuses "$guard" .
+    refuses "$guard/sub" ..
+    refuses "$guard/sub" "$guard"
+    refuses "$guard/sub" "$guard/sub/../.."
+    refuses "$root" "$work"
+    refuses "$guard" /
+    echo "package-test: OK"
 
 run-record-test:
     #!/usr/bin/env bash

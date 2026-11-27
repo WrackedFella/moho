@@ -3,6 +3,7 @@
 pub mod assets;
 pub mod content;
 pub mod events;
+pub mod install;
 pub mod persist;
 pub mod pointer;
 pub mod prefs;
