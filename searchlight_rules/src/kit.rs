@@ -244,22 +244,7 @@ impl KitDef {
             }
             let stats = spec_round.stats();
             if spec.well == weapon.well {
-                let launch = stats
-                    .ballistics
-                    .through_barrel(weapon.muzzle_velocity_factor)
-                    .muzzle_velocity;
-                if !launch.is_finite() {
-                    return Err(KitError::NotFiniteFromWeapon {
-                        weapon: self.weapon.clone(),
-                        round: round.clone(),
-                    });
-                }
-                if launch <= MIN_SPEED {
-                    return Err(KitError::TooSlowFromWeapon {
-                        weapon: self.weapon.clone(),
-                        round: round.clone(),
-                    });
-                }
+                check_launch(&self.weapon, weapon, round, &stats)?;
             }
             let count = held.unwrap_or(spec.capacity);
             let filled = Magazine::filled(magazine.clone(), spec, round, count).map_err(|_| {
@@ -331,6 +316,33 @@ impl KitDef {
             rounds,
         })
     }
+}
+
+/// Refuses a round that `weapon`'s barrel launches at a speed that is not finite or is not above
+/// [`MIN_SPEED`], naming the weapon item `weapon_id` and the round item `round_id`.
+fn check_launch(
+    weapon_id: &ItemId,
+    weapon: &RifleDef,
+    round_id: &ItemId,
+    stats: &RoundStats,
+) -> Result<(), KitError> {
+    let launch = stats
+        .ballistics
+        .through_barrel(weapon.muzzle_velocity_factor)
+        .muzzle_velocity;
+    if !launch.is_finite() {
+        return Err(KitError::NotFiniteFromWeapon {
+            weapon: weapon_id.clone(),
+            round: round_id.clone(),
+        });
+    }
+    if launch <= MIN_SPEED {
+        return Err(KitError::TooSlowFromWeapon {
+            weapon: weapon_id.clone(),
+            round: round_id.clone(),
+        });
+    }
+    Ok(())
 }
 
 /// What a kit resolves to before it is a player's loadout or an enemy's remains.
