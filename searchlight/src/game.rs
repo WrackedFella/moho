@@ -991,9 +991,10 @@ pub struct SearchlightGame {
     head_bob: HeadBobLevel,
     /// Aim was held as of the last tick: view state, read from the tick's frame once per tick.
     aiming: bool,
-    /// The aim state the pending look was sampled under: `aiming` as of the last tick, kept
-    /// while the console drops `aiming` so a look already drawn scaled stays scaled.
-    look_aiming: bool,
+    /// The scale the pending look was sampled under: 1 unless `aiming` as of the last tick.
+    /// Kept while the console drops `aiming`, and fixed when sampled so a later zoom change
+    /// cannot rescale a look already drawn.
+    look_scale: f32,
     /// How much a held Aim magnifies the view. Saved with the debug settings.
     zoom: Magnification,
     /// The view bob after the last tick, and the tick before it for blending.
@@ -1038,7 +1039,7 @@ impl SearchlightGame {
             round_gravity: GravityScale::default(),
             head_bob: HeadBobLevel::DEFAULT,
             aiming: false,
-            look_aiming: false,
+            look_scale: 1.0,
             zoom: Magnification::DEFAULT,
             bob: Bob::REST,
             previous_bob: Bob::REST,
@@ -1321,11 +1322,7 @@ impl SearchlightGame {
 
     /// The scale of the pending look, by the aim state it was sampled under: 1 unzoomed.
     fn aim_look_scale(&self) -> f32 {
-        if self.look_aiming {
-            look_scale(self.zoom)
-        } else {
-            1.0
-        }
+        self.look_scale
     }
 
     /// The vertical field of view the play view draws with, in degrees.
@@ -1682,7 +1679,11 @@ impl Game for SearchlightGame {
         (command.movement.yaw_delta, command.movement.pitch_delta) =
             look_to_turn(scale_look(frame.look(), self.aim_look_scale()));
         self.aiming = frame.held(SearchlightAction::Aim);
-        self.look_aiming = self.aiming;
+        self.look_scale = if self.aiming {
+            look_scale(self.zoom)
+        } else {
+            1.0
+        };
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
@@ -7193,6 +7194,43 @@ mod tests {
         assert!(
             forward_of(before).distance(forward_of(resumed)) < 1e-5,
             "the view jumped on resume"
+        );
+        let landed = game.sim().player();
+        assert!(
+            (landed.yaw - (start.yaw - look_x / 10.0)).abs() < 1e-6,
+            "{landed:?}"
+        );
+        assert!(
+            (landed.pitch - (start.pitch - look_y / 10.0)).abs() < 1e-6,
+            "{landed:?}"
+        );
+    }
+
+    #[test]
+    fn zooming_from_the_console_does_not_rescale_the_look_already_drawn() {
+        let mut game = turning_game(false);
+        let clock = GameClock::default();
+        let mut renderer = SettingsRenderer::default();
+        hold_aim(&mut game);
+        game.command();
+        let start = game.sim().player();
+        mouse(&mut game, 120.0, 40.0);
+        let before = draw_frame(&mut game, &mut renderer);
+        let (look_x, look_y) = game.input.pending_look();
+
+        open_the_console(&mut game, &clock);
+        game.command();
+        type_into_console(&game, "zoom 2");
+        game.command();
+        let behind_the_console = draw_frame(&mut game, &mut renderer);
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, BACKTICK, true, false);
+        tick_once(&mut game);
+
+        assert!(look_x.abs() > 0.1, "the frames sampled no look");
+        assert!(
+            forward_of(before).distance(forward_of(behind_the_console)) < 1e-5,
+            "the view jumped when the zoom changed"
         );
         let landed = game.sim().player();
         assert!(
