@@ -44,11 +44,21 @@ impl AudioSystem {
 
         debug!("Audio system initialized successfully");
 
-        Ok(Self::with_output(output, AudioCache::new()?))
+        Ok(Self::with_output(output, AudioCache::new(None)?))
     }
 }
 
 impl<O: AudioOutput> AudioSystem<O> {
+    /// An audio system whose UI events play the file at `ui_click`, or nothing when it is `None`.
+    #[cfg(test)]
+    pub(crate) fn with_output_and_click(
+        _output: O,
+        _audio_cache: AudioCache,
+        _ui_click: Option<std::path::PathBuf>,
+    ) -> Self {
+        todo!("with_output_and_click")
+    }
+
     pub(crate) fn with_output(output: O, audio_cache: AudioCache) -> Self {
         Self {
             output,
@@ -328,6 +338,62 @@ mod tests {
             assert_volume_eq(voices[0].volume, volume);
             assert!(!voices[0].looped, "{event:?}");
             assert!(voices[0].detached && !voices[0].stopped, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn ui_events_play_the_given_click() {
+        let named = "/somewhere/else/click.mp3";
+        let rows = [
+            (AudioEvent::ButtonClick, 0.8),
+            (AudioEvent::MenuNavigate, 0.6),
+            (AudioEvent::Confirm, 0.8),
+            (AudioEvent::Cancel, 0.7),
+            (AudioEvent::Error, 0.9),
+        ];
+
+        for (event, volume) in rows {
+            let cache = AudioCache::seeded(&[], &[(named, wav_bytes(7, 700))]);
+            let output = RecordingOutput::default();
+            let mut system = AudioSystem::with_output_and_click(
+                output.clone(),
+                cache,
+                Some(std::path::PathBuf::from(named)),
+            );
+            system.set_settings(full_volume());
+
+            let result = system.handle_event(event.clone());
+
+            result.unwrap_or_else(|e| panic!("{event:?} failed: {e}"));
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{event:?}");
+            assert_eq!(voices[0].path, named, "{event:?}");
+            assert_eq!(voices[0].bytes, wav_bytes(7, 700), "{event:?}");
+            assert_volume_eq(voices[0].volume, volume);
+            assert!(voices[0].detached && !voices[0].looped, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn without_a_click_ui_events_are_silent() {
+        let events = [
+            AudioEvent::ButtonClick,
+            AudioEvent::MenuNavigate,
+            AudioEvent::Confirm,
+            AudioEvent::Cancel,
+            AudioEvent::Error,
+        ];
+
+        for event in events {
+            let cache = AudioCache::seeded(&[], &[(CLICK, wav_bytes(10, 500))]);
+            let output = RecordingOutput::default();
+            let mut system = AudioSystem::with_output_and_click(output.clone(), cache, None);
+            system.set_settings(full_volume());
+
+            let result = system.handle_event(event.clone());
+
+            assert!(result.is_ok(), "{event:?}: {result:?}");
+            assert!(output.voices().is_empty(), "{event:?}");
         }
     }
 

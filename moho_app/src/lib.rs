@@ -3,6 +3,7 @@
 pub mod clock;
 pub mod fixed_step;
 pub mod headless;
+pub mod launch;
 mod loop_requests;
 pub mod pacing;
 pub mod runner;

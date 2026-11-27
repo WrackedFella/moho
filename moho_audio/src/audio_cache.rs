@@ -21,8 +21,8 @@ pub struct AudioCache {
 }
 
 impl AudioCache {
-    /// Create a new audio cache and pre-load common UI sounds
-    pub fn new() -> AudioResult<Self> {
+    /// Create a new audio cache and pre-load the UI click, when one is given.
+    pub fn new(_ui_click: Option<&std::path::Path>) -> AudioResult<Self> {
         let mut cache = Self {
             audio_cache: HashMap::new(),
             ui_sound_cache: HashMap::new(),
@@ -176,5 +176,41 @@ mod tests {
             "{audio:?}"
         );
         assert!(matches!(ui, Err(AudioError::FileNotFound(_))), "{ui:?}");
+    }
+
+    #[test]
+    fn preloads_only_the_given_click() {
+        let click = temp_file(b"click-bytes");
+        let given = AudioCache::new(Some(click.path())).expect("a readable click preloads");
+        let none = AudioCache::new(None).expect("no click is allowed");
+        let mut given = given;
+        let mut none = none;
+
+        let preloaded: Vec<&String> = given.ui_sound_cache.keys().collect();
+        let click_path = click.path().to_str().expect("utf-8 path").to_owned();
+        assert_eq!(preloaded, vec![&click_path]);
+        assert!(none.ui_sound_cache.is_empty(), "{:?}", none.ui_sound_cache);
+        assert!(none.audio_cache.is_empty());
+        click.close().expect("delete temp file");
+        assert_eq!(given.get_ui_sound(&click_path).unwrap(), b"click-bytes");
+        assert!(none.get_ui_sound(&click_path).is_err());
+    }
+
+    #[test]
+    fn an_unreadable_given_click_is_an_error_naming_it() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let missing = dir.path().join("absent.mp3");
+
+        let cache = AudioCache::new(Some(&missing));
+
+        match cache {
+            Err(AudioError::FileNotFound(message)) => {
+                assert!(
+                    message.contains(&missing.display().to_string()),
+                    "{message}"
+                );
+            }
+            other => panic!("expected FileNotFound, got {other:?}"),
+        }
     }
 }

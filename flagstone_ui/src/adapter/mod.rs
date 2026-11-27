@@ -151,6 +151,13 @@ impl EguiAdapter {
         }
     }
 
+    /// Plays the file at `path` as looping menu music while the main menu shows; `None` means
+    /// the menu is silent.
+    #[must_use]
+    pub fn with_menu_music(self, _path: Option<PathBuf>) -> Self {
+        todo!("with_menu_music")
+    }
+
     /// Update the current game state (called by main app each frame)
     /// The console is open exactly while the game is in `ConsoleOpen`, whichever transition got
     /// it there or took it out.
@@ -831,6 +838,47 @@ mod tests {
         adapter.set_visible(true);
 
         let frame = adapter.ui_frame([800, 600]);
+
+        assert!(frame.is_some(), "the menu still paints");
+        let events = music_events(&rx);
+        assert!(events.is_empty(), "events: {events:?}");
+    }
+
+    fn audio_adapter_with_music(
+        music: Option<PathBuf>,
+    ) -> (EguiAdapter, std::sync::mpsc::Receiver<AudioEvent>) {
+        let (adapter, rx) = audio_adapter();
+        (adapter.with_menu_music(music), rx)
+    }
+
+    #[test]
+    fn menu_plays_the_given_music() {
+        let given = PathBuf::from("/somewhere/else/menu.ogg");
+        let (mut adapter, rx) = audio_adapter_with_music(Some(given.clone()));
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+
+        adapter.ui_frame([800, 600]);
+        adapter.ui_frame([800, 600]);
+
+        let events = music_events(&rx);
+        assert_eq!(events.len(), 1, "events: {events:?}");
+        assert!(
+            matches!(&events[0], AudioEvent::MusicStart { path, looped: true, volume }
+                if path == &given.display().to_string() && (volume - 1.0).abs() < f32::EPSILON),
+            "unexpected {:?}",
+            events[0]
+        );
+    }
+
+    #[test]
+    fn without_menu_music_the_menu_starts_none() {
+        let (mut adapter, rx) = audio_adapter_with_music(None);
+        adapter.set_game_state(GameState::Menu);
+        adapter.set_visible(true);
+
+        let frame = adapter.ui_frame([800, 600]);
+        adapter.ui_frame([800, 600]);
 
         assert!(frame.is_some(), "the menu still paints");
         let events = music_events(&rx);
