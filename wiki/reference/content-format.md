@@ -77,7 +77,7 @@ are the file's contract.
 |---|---|---|---|
 | `items` | any item id | `searchlight_rules::ItemDef` | `class` (`weapon`, `consumable`, `tool`, `gear`), `size` (`[width, height]`, each at least 1), `weight` (kg, finite and 0 or more, required), `condition` (0 to 100) or `uses`, never both, and at most one section: `weapon`, `magazine`, `round`, `rig` or `backpack`, and optional `stats` (list of `{ stat, add }`, `{ stat, scale }` or `{ stat, cap }`, exactly one verb each; `stat` is `carry_capacity`, `movement_speed` or `stamina`), which a worn rig or backpack contributes to that stat; `searchlight_rules::ItemStat` |
 | `player` | `player` | `searchlight_rules::PlayerDef` | `strength`, `carry_capacity_per_strength`, `movement_speed`, `stamina_pool` (all finite, 0 or more), `slowed_scale` (0 to 1) and `thresholds` (`slowed`, `no_sprint`, `cannot_move`: finite and strictly increasing from above 0, as fractions of carry capacity); see [load and stats](../searchlight/architecture.md#11-load-and-stats) |
-| `kits` | `start` (`START_KIT_ID`), `enemy` (`ENEMY_KIT_ID`) | `searchlight_rules::KitDef` | `rig` and `weapon` (item ids), `loaded`, `magazines` (magazine entries, below), optional `backpack` (item id) and `carried` (`KitItem` entries, below) |
+| `kits` | `start` (`START_KIT_ID`), `enemy` (`ENEMY_KIT_ID`), optional `enemy_<grade>` (`rookie`, `novice`, `experienced`, `veteran`, `professional`) | `searchlight_rules::KitDef` | `rig` and `weapon` (item ids), `loaded`, `magazines` (magazine entries, below), optional `backpack` (item id) and `carried` (`KitItem` entries, below) |
 
 Item sections (`ItemKind`), each valid only on its class:
 
@@ -89,7 +89,7 @@ Item sections (`ItemKind`), each valid only on its class:
 | `rig` | `gear` | `magazine_slots` |
 | `backpack` | `gear` | none; the section is `{}` and marks an item for the backpack slot |
 
-A `carried` entry is `{ item }`, plus `round` and `rounds` when the item is a magazine, or `count` when it is a round. The `start` kit resolves into the player's `Loadout`; the `enemy` kit resolves into the `Remains` every dead enemy leaves (`searchlight::kit::load_enemy`). A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
+A `carried` entry is `{ item }`, plus `round` and `rounds` when the item is a magazine, or `count` when it is a round. The `start` kit resolves into the player's `Loadout`; the `enemy` kit resolves into the `Remains` a dead enemy leaves (`searchlight::kit::load_enemy`), and a grade with an `enemy_<grade>` kit leaves that kit's remains instead (`load_enemy_for_grade`); a grade without one leaves the `enemy` kit's. A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
 full magazine. `Kit` resolution fails (`KitError`) on an unknown item, an item of the wrong kind,
 a round of another caliber than its magazine, more rounds than the magazine holds, a `loaded`
 magazine whose `well` differs from the weapon's, or more magazines than the rig has slots. Rig
