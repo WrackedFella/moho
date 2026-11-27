@@ -1,14 +1,18 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
-    AccuracyTuning, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains, RoundStats,
+    AccuracyTuning, BodyPart, BodyProfile, Carried, ItemId, Kit, LeanTuning, LoadThresholds,
+    PlayerDef, Remains, RoundStats, loadout_items, remains_items,
 };
 
+use moho_core::content::ContentRoots;
+
 use crate::brain::EnemyTuning;
-use crate::sim::SimConfig;
+use crate::kit::{KitLoadError, load_catalogue};
+use crate::sim::{CarryConfig, SimConfig};
 
 /// The player's and every target's body: Source's 0.81 m wide, 1.83 m tall capsule, eye at
 /// 1.63 m.
@@ -36,6 +40,21 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
     },
 };
 
+/// The player's attribute sheet as `content/player.toml` ships it, for a config built with no
+/// content roots at hand.
+pub const SHIPPED_PLAYER: PlayerDef = PlayerDef {
+    strength: 10.0,
+    carry_capacity_per_strength: 3.0,
+    movement_speed: 1.0,
+    stamina_pool: 5.0,
+    slowed_scale: 0.7,
+    thresholds: LoadThresholds {
+        slowed: 0.6,
+        no_sprint: 0.8,
+        cannot_move: 1.0,
+    },
+};
+
 /// Ticks the rig strip stays up after a reload or switch.
 pub const STRIP_FADE_TICKS: u32 = 180;
 
@@ -50,7 +69,26 @@ pub const SEARCH_REACH: f32 = 2.5;
 pub const BODY_RADIUS: f32 = 0.8;
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
+///
+/// The carry config's item definitions are weightless placeholders, one per item the loadout
+/// holds, so load is 0 here. Only tests build a config without content; the shipped game uses
+/// [`shipped`], whose definitions come from the item catalogue.
+#[cfg(test)]
 pub fn tuning(kit: Kit) -> SimConfig {
+    let weapon = rifle_item();
+    let items = weightless(&distinct(loadout_items(&kit.loadout, &weapon)));
+    build(
+        kit,
+        CarryConfig {
+            player: SHIPPED_PLAYER,
+            items,
+            weapon,
+        },
+    )
+}
+
+/// The tuning around the starting `kit` with `carry` as its carry config.
+fn build(kit: Kit, carry: CarryConfig) -> SimConfig {
     let Kit {
         weapon,
         loadout,
@@ -101,12 +139,86 @@ pub fn tuning(kit: Kit) -> SimConfig {
         search_reach: SEARCH_REACH,
         body_radius: BODY_RADIUS,
         enemy_remains: Remains::default(),
+        carry,
     }
+}
+
+/// The item id of the rifle the player holds, in [`tuning`]'s carry config.
+#[cfg(test)]
+fn rifle_item() -> ItemId {
+    ItemId::new("rifle")
+}
+
+/// The distinct item ids among `carried`, in id order.
+fn distinct(carried: Vec<Carried>) -> Vec<ItemId> {
+    let ids: BTreeSet<ItemId> = carried.into_iter().map(|(id, _)| id).collect();
+    ids.into_iter().collect()
+}
+
+/// A weightless plain definition for each of `ids`.
+#[cfg(test)]
+fn weightless(ids: &[ItemId]) -> BTreeMap<ItemId, searchlight_rules::ItemDef> {
+    ids.iter()
+        .map(|id| (id.clone(), crate::test_support::weighing(0.0)))
+        .collect()
+}
+
+/// The shipped game's tuning: the kit `kit` of the content `roots`, with the catalogue's
+/// definitions of everything it carries and `player.toml` as its carry config.
+///
+/// # Errors
+///
+/// A [`KitLoadError`] when the kit, the items or the player sheet cannot be loaded.
+pub fn shipped(roots: &ContentRoots, kit: &str) -> Result<SimConfig, KitLoadError> {
+    assemble(roots, kit, None)
+}
+
+/// [`shipped`] with the kit `enemy_kit` as what every enemy leaves, its items defined by the
+/// catalogue too.
+///
+/// # Errors
+///
+/// As [`shipped`], and for the enemy kit.
+pub fn shipped_with_enemy(
+    roots: &ContentRoots,
+    kit: &str,
+    enemy_kit: &str,
+) -> Result<SimConfig, KitLoadError> {
+    assemble(roots, kit, Some(enemy_kit))
+}
+
+fn assemble(
+    roots: &ContentRoots,
+    kit: &str,
+    enemy_kit: Option<&str>,
+) -> Result<SimConfig, KitLoadError> {
+    let catalogue = load_catalogue(roots, kit)?;
+    let player = crate::player::load(roots)?;
+    let enemy = enemy_kit
+        .map(|enemy_kit| crate::kit::load_enemy(roots, enemy_kit))
+        .transpose()?;
+    let mut carried = loadout_items(&catalogue.kit.loadout, &catalogue.weapon);
+    if let Some((remains, _)) = &enemy {
+        carried.extend(remains_items(remains, &catalogue.weapon));
+    }
+    let items = catalogue.define(&distinct(carried))?;
+    let config = build(
+        catalogue.kit,
+        CarryConfig {
+            player,
+            items,
+            weapon: catalogue.weapon,
+        },
+    );
+    Ok(match enemy {
+        Some((remains, rounds)) => with_enemy(config, remains, rounds),
+        None => config,
+    })
 }
 
 /// `config` with `remains` as what every enemy leaves when it dies, and `rounds` joined to
 /// the round stats the sim flies and scores rounds with, so a looted round still fires.
-pub fn with_enemy_kit(
+fn with_enemy(
     mut config: SimConfig,
     remains: Remains,
     rounds: BTreeMap<ItemId, RoundStats>,
@@ -116,6 +228,21 @@ pub fn with_enemy_kit(
     }
     config.enemy_remains = remains;
     config
+}
+
+/// [`with_enemy`] for a config built by [`tuning`], where items of `remains` the carry config
+/// does not define get weightless placeholders.
+#[cfg(test)]
+pub fn with_enemy_kit(
+    mut config: SimConfig,
+    remains: Remains,
+    rounds: BTreeMap<ItemId, RoundStats>,
+) -> SimConfig {
+    let weapon = config.carry.weapon.clone();
+    for (id, def) in weightless(&distinct(remains_items(&remains, &weapon))) {
+        config.carry.items.entry(id).or_insert(def);
+    }
+    with_enemy(config, remains, rounds)
 }
 
 #[cfg(test)]
@@ -230,6 +357,28 @@ mod tests {
             sim.player_eye().y
         );
         assert!((target.position.y - 0.915).abs() < 0.03, "{target:?}");
+    }
+
+    #[test]
+    fn the_shipped_start_kit_carries_a_finite_positive_load_that_is_fine() {
+        let roots = ContentRoots::base(&crate::content_root()).expect("the shipped content");
+
+        let config = shipped(&roots, crate::kit::START_KIT_ID).expect("the shipped tuning loads");
+
+        let kg = searchlight_rules::load(&config.loadout, &config.carry.weapon, |id| {
+            config.carry.items.get(id)
+        })
+        .expect("every item in the start kit has a definition");
+        let capacity = config
+            .carry
+            .player
+            .baseline(searchlight_rules::Stat::CarryCapacity);
+        assert!(kg.is_finite() && kg > 0.0, "{kg}");
+        assert_eq!(
+            searchlight_rules::load_state(kg, capacity, &config.carry.player.thresholds),
+            searchlight_rules::LoadState::Fine,
+            "{kg} kg of {capacity}"
+        );
     }
 
     #[test]

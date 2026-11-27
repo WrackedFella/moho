@@ -34,6 +34,7 @@ class = "gear"
 size = [4, 4]
 weight = 0.9
 backpack = {}
+stats = [{ stat = "carry_capacity", add = 10.0 }]
 
 [bandage]
 class = "consumable"

@@ -1,7 +1,8 @@
 # Content format
 
 **Source:** `moho_core/src/content.rs`, `searchlight_rules/src/item.rs`, `searchlight_rules/src/kit.rs`,
-`searchlight/src/kit.rs`, `searchlight/src/tuning.rs`, `searchlight/content/`.
+`searchlight_rules/src/stats.rs`, `searchlight_rules/src/load.rs`, `searchlight/src/kit.rs`,
+`searchlight/src/player.rs`, `searchlight/src/tuning.rs`, `searchlight/content/`.
 
 Tunable game numbers live in definition files, not in code. `moho_core::content` loads
 them; each game line owns the types they deserialize into.
@@ -74,7 +75,8 @@ are the file's contract.
 
 | Kind | Id | Type | Fields |
 |---|---|---|---|
-| `items` | any item id | `searchlight_rules::ItemDef` | `class` (`weapon`, `consumable`, `tool`, `gear`), `size` (`[width, height]`, each at least 1), `weight` (kg, finite and 0 or more, required), `condition` (0 to 100) or `uses`, never both, and at most one section: `weapon`, `magazine`, `round`, `rig` or `backpack` |
+| `items` | any item id | `searchlight_rules::ItemDef` | `class` (`weapon`, `consumable`, `tool`, `gear`), `size` (`[width, height]`, each at least 1), `weight` (kg, finite and 0 or more, required), `condition` (0 to 100) or `uses`, never both, and at most one section: `weapon`, `magazine`, `round`, `rig` or `backpack`, and optional `stats` (list of `{ stat, add }`, `{ stat, scale }` or `{ stat, cap }`, exactly one verb each; `stat` is `carry_capacity`, `movement_speed` or `stamina`), which a worn rig or backpack contributes to that stat; `searchlight_rules::ItemStat` |
+| `player` | `player` | `searchlight_rules::PlayerDef` | `strength`, `carry_capacity_per_strength`, `movement_speed`, `stamina_pool` (all finite, 0 or more), `slowed_scale` (0 to 1) and `thresholds` (`slowed`, `no_sprint`, `cannot_move`: finite and strictly increasing from above 0, as fractions of carry capacity); see [load and stats](../searchlight/architecture.md#11-load-and-stats) |
 | `kits` | `start` (`START_KIT_ID`), `enemy` (`ENEMY_KIT_ID`) | `searchlight_rules::KitDef` | `rig` and `weapon` (item ids), `loaded`, `magazines` (magazine entries, below), optional `backpack` (item id) and `carried` (`KitItem` entries, below) |
 
 Item sections (`ItemKind`), each valid only on its class:
@@ -95,6 +97,6 @@ magazines of another `well` are allowed; reload skips them.
 
 `weapons.toml` is no longer read: a mod that still ships one is ignored without an error.
 
-`searchlight::kit::load` resolves a kit and `searchlight::tuning::tuning(Kit)` builds the
-`SimConfig` from it; the remaining sim numbers (movement, body profile, enemy tuning) are still
+`searchlight::kit::load` resolves a kit and `searchlight::tuning::shipped` builds the
+`SimConfig` from the content roots (kit, item definitions and `player.toml`); the remaining sim numbers (movement, body profile, enemy tuning) are still
 set in code.

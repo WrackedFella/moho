@@ -211,12 +211,12 @@ pub fn label(action: SearchlightAction) -> &'static str {
         SearchlightAction::Fire => "Fire",
         SearchlightAction::Reload => "Reload",
         SearchlightAction::CheckMagazine => "Check magazine",
-        SearchlightAction::CheckGear => "Check gear",
         SearchlightAction::Restart => "Restart",
         SearchlightAction::LeanLeft => "Lean left",
         SearchlightAction::LeanRight => "Lean right",
         SearchlightAction::Use => "Use",
         SearchlightAction::Inventory => "Inventory",
+        SearchlightAction::Character => "Character",
         SearchlightAction::Aim => "Aim",
     }
 }
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn capture_keeps_check_magazines_second_binding() {
+    fn a_primary_capture_replaces_check_magazines_hold_r() {
         let mut draft = draft();
 
         let outcome = draft.capture(
@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(outcome, Capture::Set);
         assert_eq!(
             draft.bindings().get(SearchlightAction::CheckMagazine),
-            [Binding::key(Key::Z), Binding::key(Key::R).held()]
+            [Binding::key(Key::Z)]
         );
     }
 
@@ -430,27 +430,27 @@ mod tests {
     #[test]
     fn replace_empties_only_the_slot_that_held_the_input() {
         let mut draft = draft();
-        let outcome = draft.capture(SearchlightAction::Fire, Slot::Primary, Input::Key(Key::C));
+        let outcome = draft.capture(SearchlightAction::Fire, Slot::Primary, Input::Key(Key::Tab));
 
         draft.replace();
 
         assert_eq!(
             outcome,
             Capture::Conflict {
-                by: SearchlightAction::CheckMagazine,
+                by: SearchlightAction::Inventory,
                 slot: Some(Slot::Primary)
             }
         );
         assert_eq!(
-            draft.slots(SearchlightAction::CheckMagazine),
-            [None, Some(Binding::key(Key::R).held())],
-            "Check magazine keeps Hold R"
+            draft.slots(SearchlightAction::Inventory),
+            [None, Some(Binding::key(Key::I))],
+            "Inventory keeps I"
         );
         assert_eq!(
             draft.slots(SearchlightAction::Fire),
-            [Some(Binding::key(Key::C)), None]
+            [Some(Binding::key(Key::Tab)), None]
         );
-        assert!(!draft.is_unbound(SearchlightAction::CheckMagazine));
+        assert!(!draft.is_unbound(SearchlightAction::Inventory));
     }
 
     #[test]
@@ -635,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn a_secondary_capture_replaces_check_magazines_hold_r() {
+    fn a_secondary_capture_adds_beside_check_magazines_hold_r() {
         let mut draft = draft();
 
         let outcome = draft.capture(
@@ -647,7 +647,7 @@ mod tests {
         assert_eq!(outcome, Capture::Set);
         assert_eq!(
             draft.bindings().get(SearchlightAction::CheckMagazine),
-            [Binding::key(Key::C), Binding::key(Key::Z)]
+            [Binding::key(Key::R).held(), Binding::key(Key::Z)]
         );
     }
 
@@ -830,7 +830,7 @@ mod tests {
     }
 
     #[test]
-    fn reset_all_restores_check_magazines_two_defaults() {
+    fn reset_all_restores_check_magazines_hold_r_default() {
         let mut draft = draft();
         draft.capture(
             SearchlightAction::CheckMagazine,
@@ -844,7 +844,7 @@ mod tests {
 
         assert_eq!(
             draft.bindings().get(SearchlightAction::CheckMagazine),
-            [Binding::key(Key::C), Binding::key(Key::R).held()]
+            [Binding::key(Key::R).held()]
         );
         assert_eq!(draft.bindings(), defaults());
         assert!(!draft.is_unbound(SearchlightAction::Jump));
