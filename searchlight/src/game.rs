@@ -2178,6 +2178,29 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_without_audio_or_renderer_still_stores_the_listener_at_its_alpha() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_left = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &lean_left);
+        tick_with(&mut game, &mut clock, &lean_left);
+        let frame_clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &frame_clock, None, None);
+
+        game.frame(&mut ctx, 0.25);
+
+        let (view, _) = game.frame_view(0.25);
+        assert_eq!(game.frame_listener(), moho_audio::Listener::from_view(view));
+        assert_ne!(
+            game.frame_listener(),
+            moho_audio::Listener::from_view(game.frame_view(1.0).0)
+        );
+    }
+
+    #[test]
     fn no_shot_file_plays_no_shot_sound() {
         let stage = Stage::new();
 
