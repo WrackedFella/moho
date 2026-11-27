@@ -113,8 +113,11 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 
 /// The prompt for a control in reach, such as `[F] Next wave`: the label of the use key, then
 /// what using the control does.
-pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
-    String::new()
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    let what = match action {
+        ControlAction::NextWave => "Next wave",
+    };
+    format!("[{key}] {what}")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.

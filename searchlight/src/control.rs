@@ -10,18 +10,23 @@ pub enum ControlAction {
 
 impl ControlAction {
     /// The action a level's `action` extra names, if it is on the list.
-    pub fn parse(_name: &str) -> Option<Self> {
-        None
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether only the host may trigger it.
     pub fn is_host_action(self) -> bool {
-        false
+        match self {
+            Self::NextWave => true,
+        }
     }
 
-    /// Whether a use from player `slot` triggers it.
-    pub fn honored_from(self, _slot: u8) -> bool {
-        true
+    /// Whether a use from player `slot` triggers it: a host action only from slot 0.
+    pub fn honored_from(self, slot: u8) -> bool {
+        !self.is_host_action() || slot == 0
     }
 }
 
