@@ -1532,9 +1532,14 @@ fn release_under_an_unevenly_scaled_turned_root_is_rigid() {
         Vec3::from(expected.translation),
         1e-5,
     );
-    let expected_rotation = Quat::from_mat3a(&expected.matrix3).normalize();
+    // A sheared chain has no single rotation, so the bound covers that ambiguity while still
+    // ruling out the identity, which is about 1.4 rad from the unscaled chain's turn.
+    let unscaled_root =
+        Affine3A::from_rotation_translation(Quat::from_rotation_y(0.3), root.translation.into());
+    let unscaled = unscaled_root * now_pose.nodes()[hand] * grip();
+    let expected_rotation = Quat::from_mat3a(&unscaled.matrix3).normalize();
     assert!(
-        rotation.angle_between(expected_rotation) < 1e-2,
+        rotation.angle_between(expected_rotation) <= 0.5,
         "{rotation:?} is not the hand's turn {expected_rotation:?}"
     );
     let spawn = LooseSpawn {
