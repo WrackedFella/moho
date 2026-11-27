@@ -110,7 +110,7 @@ turns a collider handle, such as the one a movement `Impact` reports, into its t
 character's tagged `HitVolume` boxes, each posed (offset and rotation) and sized in the
 character's body frame, for per-body-part hits. Volumes are sensors parented to the character's body: they follow its position and yaw
 (never pitch) on `step`, are removed with the character, never block movement or props,
-and only rays see them. A ray ignoring a character skips its volumes too. New volumes are defined for rays only after the next `step`, so a game poses volumes before stepping and resolves shots after.
+and only rays see them. A ray ignoring a character skips its volumes too. New or changed volumes are seen by rays as soon as `set_hit_volumes` returns, placed at the body's pose as it stands then; the next `step` carries them with the body.
 
 ### 2.1 Level files
 

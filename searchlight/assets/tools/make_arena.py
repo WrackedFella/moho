@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Generates the FPS prototype's greybox levels (arena.glb, proving_ground.glb) and rifle shot
-(rifle_shot.wav).
+"""Generates the FPS prototype's greybox levels (arena.glb, proving_ground.glb, parkour.glb)
+and rifle shot (rifle_shot.wav).
 
 Standard library only. Output is deterministic, so rerunning the script leaves the
 committed files unchanged unless the layout below changes.
@@ -261,9 +261,10 @@ def block(name, material, x_range, y_range, z_range):
     return (name, material, box(centre, half))
 
 
-def digit_slabs(name, digit, centre_x, far_z):
-    """The slabs of one digit; screen right is world -X, screen up is world +Z."""
-    w, h, s = DIGIT_WIDTH, DIGIT_HEIGHT, DIGIT_STROKE
+def digit_slabs(name, digit, centre_x, far_z, scale=1.0, material="mark"):
+    """The slabs of one digit, `scale` times the standard size; screen right is world -X,
+    screen up is world +Z."""
+    w, h, s = DIGIT_WIDTH * scale, DIGIT_HEIGHT * scale, DIGIT_STROKE * scale
     upper = (h / 2 + s / 2, h - s)
     lower = (s, h / 2 - s / 2)
     # segment: (u range, v range)
@@ -280,22 +281,30 @@ def digit_slabs(name, digit, centre_x, far_z):
     out = []
     for segment in SEGMENTS[digit]:
         (u0, u1), (v0, v1) = layout[segment]
-        out.append(block(f"{name}_{segment}", "mark",
+        out.append(block(f"{name}_{segment}", material,
                          (centre_x - u1, centre_x - u0), (0.0, MARK_HEIGHT),
                          (z0 + v0, z0 + v1)))
     return out
 
 
-def number_slabs(distance):
-    """The distance written in digits, centred on x = 0, just short of its strip."""
-    text = str(distance)
-    total = len(text) * DIGIT_WIDTH + (len(text) - 1) * DIGIT_GAP
-    far_z = distance - STRIP_DEPTH / 2 - DIGIT_STRIP_GAP
+def label_slabs(name, text, centre_x, far_z, scale=1.0, material="mark"):
+    """`text` in block digits `scale` times the standard size, centred on `centre_x`, its far
+    edge at `far_z`."""
+    digit_width = DIGIT_WIDTH * scale
+    gap = DIGIT_GAP * scale
+    total = len(text) * digit_width + (len(text) - 1) * gap
     out = []
     for index, digit in enumerate(text):
-        screen_x = -total / 2 + DIGIT_WIDTH / 2 + index * (DIGIT_WIDTH + DIGIT_GAP)
-        out.extend(digit_slabs(f"mark_{distance}_{index}", digit, -screen_x, far_z))
+        screen_x = -total / 2 + digit_width / 2 + index * (digit_width + gap)
+        out.extend(digit_slabs(f"{name}_{index}", digit, centre_x - screen_x, far_z,
+                               scale, material))
     return out
+
+
+def number_slabs(distance):
+    """The distance written in digits, centred on x = 0, just short of its strip."""
+    far_z = distance - STRIP_DEPTH / 2 - DIGIT_STRIP_GAP
+    return label_slabs(f"mark_{distance}", str(distance), 0.0, far_z)
 
 
 def proving_ground_solids():
@@ -340,6 +349,141 @@ def proving_ground_markers():
     out = [("player_spawn", (0.0, 0.0, 0.0), None)]
     for index, distance in enumerate(DUMMY_DISTANCES, start=1):
         out.append((f"dummy_{index:02d}", (0.0, 0.0, float(distance)), None))
+    return out
+
+
+# Parkour level, +Z the direction of travel. Everything stands on y = 0 floors.
+# Gap ladder: one 2 m lane per width, side by side along X, each a run-up platform, a gap of
+# the lane's width over a pit, and a landing platform. The widths are labelled in decimetres.
+# (width in metres, clears): `clears` is the smallest movement that clears the gap: `stand` (a
+# jump from standing), `run` (a jump out of a run-up at walking speed) or `none`. Set from what
+# the headless jump tests measure with the shipped movement tuning; regenerate these when that
+# tuning changes.
+GAPS = [
+    (0.5, "stand"),
+    (1.0, "run"),
+    (1.5, "run"),
+    (2.0, "run"),
+    (2.5, "run"),
+    (3.0, "run"),
+    (3.5, "run"),
+    (4.0, "run"),
+    (4.5, "run"),
+    (5.0, "none"),
+]
+LANE_WIDTH = 2.0
+RUN_UP_LENGTH = 6.0
+LANDING_LENGTH = 6.0
+PIT_DEPTH = 2.0
+APRON_Z = (-12.0, -RUN_UP_LENGTH)
+WALKWAY_X = (10.0, 15.0)
+LABEL_SCALE = 0.4
+LADDER_LABEL_FAR_Z = -1.2
+
+# Course: one 3 m lane per piece, past the ladder. Each piece starts at COURSE_FOOT_Z, with a
+# marker at its foot, and rises to a top platform COURSE_TOP_DEPTH deep.
+# (kind, value, passable): steps and ledges in metres, slopes in degrees. `passable` is
+# `walk`, `jump` or `none`, set from what the headless climb tests measure.
+COURSE = [
+    ("step", 0.3, "walk"),
+    ("step", 0.5, "walk"),
+    ("step", 0.6, "jump"),
+    ("ledge", 1.0, "jump"),
+    ("ledge", 1.2, "jump"),
+    ("ledge", 1.4, "jump"),
+    ("slope", 30.0, "walk"),
+    ("slope", 45.0, "walk"),
+    ("slope", 50.0, "jump"),
+]
+COURSE_LANE_WIDTH = 3.0
+COURSE_FLOOR_Z = (11.0, 20.0)
+COURSE_FOOT_Z = 20.0
+COURSE_TOP_DEPTH = 6.0
+RAMP_HEIGHT = 2.0
+COURSE_HALF_WIDTH = 15.0
+PARKOUR_SPAWN = (0.0, 0.0, -9.0)
+
+PARKOUR_MATERIALS = {**PROVING_MATERIALS, "mark_run": [0.3, 0.85, 0.35, 1.0]}
+
+
+def lane_centre(index, count, width):
+    return (index - (count - 1) / 2) * width
+
+
+def ramp(name, material, x_range, height, run, z_start):
+    """A wedge rising from y = 0 at `z_start` to `height` at `z_start + run`, across x_range."""
+    profile = [(z_start, 0.0), (z_start + run, 0.0), (z_start + run, height)]
+    positions, normals, indices = prism(profile, *x_range)
+    # The profile's X is world Z and its extrusion is world X: a reflection, so the
+    # triangles are reversed to stay counter-clockwise from outside.
+    positions = [(pz, py, px) for px, py, pz in positions]
+    normals = [(nz, ny, nx) for nx, ny, nz in normals]
+    flipped = []
+    for i in range(0, len(indices), 3):
+        a, b, c = indices[i:i + 3]
+        flipped += [a, c, b]
+    return (name, material, (positions, normals, flipped))
+
+
+def parkour_solids():
+    """Every solid of the parkour level as (name, material, geometry)."""
+    ladder_half = len(GAPS) * LANE_WIDTH / 2
+    out = [
+        block("apron", "floor", (-ladder_half, ladder_half), (-FLOOR_THICKNESS, 0.0), APRON_Z),
+        block("walkway", "floor", WALKWAY_X, (-FLOOR_THICKNESS, 0.0),
+              (APRON_Z[0], COURSE_FLOOR_Z[0])),
+        block("course_floor", "floor", (-COURSE_HALF_WIDTH, COURSE_HALF_WIDTH),
+              (-FLOOR_THICKNESS, 0.0), COURSE_FLOOR_Z),
+    ]
+    for index, (width, clears) in enumerate(GAPS):
+        centre = lane_centre(index, len(GAPS), LANE_WIDTH)
+        lane = (centre - LANE_WIDTH / 2, centre + LANE_WIDTH / 2)
+        number = index + 1
+        out.append(block(f"pit_{number:02d}", "wall",
+                         lane, (-PIT_DEPTH - FLOOR_THICKNESS, -PIT_DEPTH),
+                         (-RUN_UP_LENGTH, width + LANDING_LENGTH)))
+        out.append(block(f"runup_{number:02d}", "floor", lane, (-PIT_DEPTH, 0.0),
+                         (-RUN_UP_LENGTH, 0.0)))
+        out.append(block(f"landing_{number:02d}", "floor", lane, (-PIT_DEPTH, 0.0),
+                         (width, width + LANDING_LENGTH)))
+        decimetres = str(round(width * 10))
+        # Raised digits across a lane stop a capsule, so the clears colour is in the digits,
+        # which are sparse, not in a strip.
+        colour = "mark_run" if clears == "run" else "mark"
+        out.extend(label_slabs(f"label_{number:02d}", decimetres, centre,
+                               LADDER_LABEL_FAR_Z, LABEL_SCALE, colour))
+    for index, (kind, value, _) in enumerate(COURSE):
+        centre = lane_centre(index, len(COURSE), COURSE_LANE_WIDTH)
+        lane = (centre - COURSE_LANE_WIDTH / 2, centre + COURSE_LANE_WIDTH / 2)
+        number = index + 1
+        if kind == "slope":
+            run = RAMP_HEIGHT / math.tan(math.radians(value))
+            out.append(ramp(f"piece_{number:02d}", "cover", lane, RAMP_HEIGHT, run,
+                            COURSE_FOOT_Z))
+            out.append(block(f"top_{number:02d}", "cover", lane, (0.0, RAMP_HEIGHT),
+                             (COURSE_FOOT_Z + run, COURSE_FOOT_Z + run + COURSE_TOP_DEPTH)))
+            text = str(round(value))
+        else:
+            out.append(block(f"piece_{number:02d}", "cover", lane, (0.0, value),
+                             (COURSE_FOOT_Z, COURSE_FOOT_Z + COURSE_TOP_DEPTH)))
+            text = str(round(value * 100))
+        out.extend(label_slabs(f"course_label_{number:02d}", text, centre,
+                               COURSE_FOOT_Z - 1.0, LABEL_SCALE))
+    return out
+
+
+def parkour_markers():
+    """The parkour level's markers: a spawn, a `gap_NN` at each take-off edge and a
+    `course_NN` at the foot of each piece, all on their floors and facing +Z."""
+    out = [("player_spawn", PARKOUR_SPAWN, None)]
+    for index, (width, clears) in enumerate(GAPS, start=1):
+        centre = lane_centre(index - 1, len(GAPS), LANE_WIDTH)
+        out.append((f"gap_{index:02d}", (centre, 0.0, 0.0),
+                    {"width": width, "clears": clears}))
+    for index, (kind, value, passable) in enumerate(COURSE, start=1):
+        centre = lane_centre(index - 1, len(COURSE), COURSE_LANE_WIDTH)
+        out.append((f"course_{index:02d}", (centre, 0.0, COURSE_FOOT_Z),
+                    {"kind": kind, "value": value, "passable": passable}))
     return out
 
 
@@ -452,6 +596,8 @@ def main():
     (target / "arena.glb").write_bytes(build_glb(arena, markers(), MATERIALS))
     (target / "proving_ground.glb").write_bytes(
         build_glb(proving_ground_solids(), proving_ground_markers(), PROVING_MATERIALS))
+    (target / "parkour.glb").write_bytes(
+        build_glb(parkour_solids(), parkour_markers(), PARKOUR_MATERIALS))
     build_shot(target / "rifle_shot.wav")
 
 

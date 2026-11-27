@@ -271,6 +271,85 @@ fn lean_volumes(upright: &[HitVolume; 6], lean: Lean, tuning: &LeanTuning) -> [H
     leaned
 }
 
+/// How much shallower than the thinnest of the torso and legs the hip piece is, in metres, so a
+/// shot from the front or back meets any of those parts before the piece.
+const HIP_PIECE_DEPTH_MARGIN: f32 = 0.01;
+
+/// The seventh hit volume of a player who is not upright, reported as torso, spanning the hip
+/// band that `volumes` (the six posed volumes in [`BodyPart::ALL`] order) leave open: across
+/// from the outer edge of one leg to the other, up from the lower of the legs' tops and the
+/// torso's lowest bottom corner to the highest point of the torso's and arms' bottom edges.
+///
+/// Built from the posed boxes, not the standing constants, so any pose that moves the six
+/// parts gets a matching piece.
+fn hip_piece(volumes: &[HitVolume; 6]) -> HitVolume {
+    let of = |part: BodyPart| {
+        let slot = BodyPart::ALL
+            .iter()
+            .position(|&p| p == part)
+            .expect("BodyPart::ALL lists every part");
+        volumes[slot]
+    };
+    let bottom_corners = |volume: HitVolume| {
+        let half = volume.half_extents;
+        [-1.0_f32, 1.0].into_iter().flat_map(move |x| {
+            [-1.0_f32, 1.0].into_iter().map(move |z| {
+                volume.offset + volume.rotation * Vec3::new(x * half.x, -half.y, z * half.z)
+            })
+        })
+    };
+    let torso = of(BodyPart::Torso);
+    let legs = [of(BodyPart::LeftLeg), of(BodyPart::RightLeg)];
+    let arms = [of(BodyPart::LeftArm), of(BodyPart::RightArm)];
+
+    // Half the extent of the box's rotated shape along each world axis.
+    let reach = |volume: HitVolume| {
+        let axes = glam::Mat3::from_quat(volume.rotation);
+        let half = volume.half_extents;
+        axes.x_axis.abs() * half.x + axes.y_axis.abs() * half.y + axes.z_axis.abs() * half.z
+    };
+
+    let left = legs
+        .iter()
+        .map(|&leg| leg.offset.x - reach(leg).x)
+        .fold(f32::INFINITY, f32::min);
+    let right = legs
+        .iter()
+        .map(|&leg| leg.offset.x + reach(leg).x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let low = legs
+        .iter()
+        .map(|&leg| leg.offset.y + reach(leg).y)
+        .chain(bottom_corners(torso).map(|corner| corner.y))
+        .fold(f32::INFINITY, f32::min);
+    let high = bottom_corners(torso)
+        .chain(arms.into_iter().flat_map(bottom_corners))
+        .map(|corner| corner.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let half_depth = legs
+        .iter()
+        .map(|&leg| reach(leg).z)
+        .fold(reach(torso).z, f32::min)
+        - HIP_PIECE_DEPTH_MARGIN;
+
+    HitVolume {
+        offset: Vec3::new((left + right) / 2.0, (low + high) / 2.0, 0.0),
+        rotation: Quat::IDENTITY,
+        half_extents: Vec3::new((right - left) / 2.0, (high - low) / 2.0, half_depth),
+        tag: SurfaceTag::Player(BodyPart::Torso).into(),
+    }
+}
+
+/// The hit volumes the physics world holds for the player: the six `leaned` volumes, and the
+/// hip piece after them unless the lean is upright.
+fn player_world_volumes(leaned: &[HitVolume; 6], lean: Lean) -> Vec<HitVolume> {
+    let mut volumes = leaned.to_vec();
+    if lean.amount() != 0.0 {
+        volumes.push(hip_piece(leaned));
+    }
+    volumes
+}
+
 /// The six hit volumes every body shares, in [`BodyPart::ALL`] order, each tagged by `tag_of`
 /// for its part. The legs run from the torso's bottom to the feet of `body`'s hull.
 fn body_volumes(body: &CharacterBody, tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
@@ -737,10 +816,12 @@ impl SearchlightSim {
         if lean != self.lean {
             self.lean = lean;
             self.leaned_volumes = lean_volumes(&self.upright_volumes, lean, &self.lean_tuning);
-            // Takes effect at the next world step, so a tick's rays meet the lean of the tick
-            // before.
+            // Rays after this, this tick's shots included, meet the new lean.
             self.world
-                .set_hit_volumes(self.player, &self.leaned_volumes)
+                .set_hit_volumes(
+                    self.player,
+                    &player_world_volumes(&self.leaned_volumes, lean),
+                )
                 .expect("the sim never removes the player");
         }
     }
@@ -3198,6 +3279,432 @@ mod tests {
             );
             previous = sim.player_lean().amount();
         }
+    }
+
+    /// The player's volume for `part` among six in [`BodyPart::ALL`] order or any other.
+    fn volume_of(volumes: &[HitVolume; 6], part: BodyPart) -> HitVolume {
+        *volumes
+            .iter()
+            .find(|v| v.tag == SurfaceTag::Player(part).into())
+            .expect("the player has a volume for every part")
+    }
+
+    /// The player's six volumes leaning `amount` of a full lean (right positive), in the body
+    /// frame.
+    fn volumes_leaning(amount: f32, tuning: &LeanTuning) -> [HitVolume; 6] {
+        let side = if amount < 0.0 {
+            LeanSide::Left
+        } else {
+            LeanSide::Right
+        };
+        let lean = Lean::default().step(
+            Some(side),
+            LeanReach::FULL,
+            amount.abs() * tuning.blend_seconds,
+            tuning,
+        );
+        lean_volumes(&player_hit_volumes(), lean, tuning)
+    }
+
+    /// The body-frame heights of the hip band the lean opens in `volumes`: from the lower of the
+    /// legs' tops and the torso's lowest bottom corner, up to the highest point of the torso's
+    /// and arms' bottom edges.
+    fn hip_band(volumes: &[HitVolume; 6]) -> (f32, f32) {
+        let bottom_corners = |part| {
+            let v = volume_of(volumes, part);
+            [-1.0, 1.0].into_iter().flat_map(move |sx| {
+                [-1.0, 1.0].into_iter().map(move |sz| {
+                    let local = Vec3::new(
+                        sx * v.half_extents.x,
+                        -v.half_extents.y,
+                        sz * v.half_extents.z,
+                    );
+                    (v.offset + v.rotation * local).y
+                })
+            })
+        };
+        let leg_top = |part| {
+            let v = volume_of(volumes, part);
+            v.offset.y + v.half_extents.y
+        };
+        let torso = bottom_corners(BodyPart::Torso);
+        let arms = bottom_corners(BodyPart::LeftArm).chain(bottom_corners(BodyPart::RightArm));
+        let lowest_torso = bottom_corners(BodyPart::Torso).fold(f32::INFINITY, f32::min);
+        let low = leg_top(BodyPart::LeftLeg)
+            .min(leg_top(BodyPart::RightLeg))
+            .min(lowest_torso);
+        let high = torso.chain(arms).fold(f32::NEG_INFINITY, f32::max);
+        (low, high)
+    }
+
+    /// A sim on open ground whose player has turned `yaw` radians and is leaning `side` about
+    /// halfway, with the amount a tick before the last (its hit volumes stand a step further
+    /// on, which moves the hip band by millimetres).
+    fn half_leaned_player(yaw: f32, side: LeanSide) -> (SearchlightSim, f32) {
+        let mut sim = open_sim();
+        let turn = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: yaw,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&turn, DT);
+        let mut previous = sim.player_lean().amount();
+        for _ in 0..SETTLE_TICKS {
+            sim.tick(&leaning(Some(side)), DT);
+            let now = sim.player_lean().amount();
+            if now.abs() >= 0.5 {
+                assert!(previous.abs() > 0.4, "not about half: {previous}");
+                return (sim, previous);
+            }
+            previous = now;
+        }
+        panic!("the lean never reached half");
+    }
+
+    /// Ray targets at the centre line of the leg on the side away from a lean to `side`, 5 cm
+    /// above the leg tops, in the body frame.
+    fn far_hip(side: LeanSide) -> Vec3 {
+        let x = match side {
+            LeanSide::Right => 0.12,
+            LeanSide::Left => -0.12,
+        };
+        Vec3::new(x, -0.05, 0.0)
+    }
+
+    #[test]
+    fn a_shot_at_the_far_hip_of_a_leaning_player_hits_the_torso() {
+        for yaw in [0.0, FRAC_PI_2] {
+            for side in [LeanSide::Right, LeanSide::Left] {
+                let sim = leaned_player(yaw, side);
+
+                let struck = struck_at(&sim, far_hip(side));
+
+                assert_eq!(
+                    struck,
+                    Some(SurfaceTag::Player(BodyPart::Torso)),
+                    "leaning {side:?} at yaw {yaw}: a shot at the far hip"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn level_shots_across_a_leaning_players_hips_all_hit_a_part() {
+        for yaw in [0.0, FRAC_PI_2] {
+            for side in [LeanSide::Right, LeanSide::Left] {
+                for full in [false, true] {
+                    let (sim, amount) = if full {
+                        let sim = leaned_player(yaw, side);
+                        let amount = sim.player_lean().amount();
+                        (sim, amount)
+                    } else {
+                        half_leaned_player(yaw, side)
+                    };
+                    let (_, top) = hip_band(&volumes_leaning(amount, sim.lean_tuning()));
+                    let legs_top = -0.10;
+                    let mut misses = Vec::new();
+
+                    for column in 0..44 {
+                        let x = -0.215 + 0.01 * column as f32;
+                        let mut y = legs_top + 0.005;
+                        while y < top - 0.005 {
+                            let struck = struck_at(&sim, Vec3::new(x, y, 0.0));
+                            if !matches!(struck, Some(SurfaceTag::Player(_))) {
+                                misses.push((x, y, struck));
+                            }
+                            y += 0.01;
+                        }
+                    }
+
+                    assert!(
+                        misses.is_empty(),
+                        "yaw {yaw}, {side:?}, full {full}, amount {amount}: {} shots passed \
+                         through, first {:?}",
+                        misses.len(),
+                        misses.first()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_upright_player_has_exactly_the_six_part_volumes() {
+        // The notch beside each hip, between the torso's side and the leg's outer edge below
+        // the arm: only a hip piece present while upright would fill it.
+        let notches = [0.21, -0.21].map(|x| Vec3::new(x, -0.075, 0.0));
+        for yaw in [0.0, FRAC_PI_2] {
+            let mut sim = open_sim();
+            sim.tick(
+                &SearchlightCommand {
+                    movement: CharacterCommand {
+                        yaw_delta: yaw,
+                        ..CharacterCommand::default()
+                    },
+                    ..SearchlightCommand::default()
+                },
+                DT,
+            );
+
+            let at_parts = BodyPart::ALL.map(|part| struck_at(&sim, upright_centre(part)));
+            let at_notches = notches.map(|notch| struck_at(&sim, notch));
+
+            assert_eq!(
+                at_parts,
+                BodyPart::ALL.map(|part| Some(SurfaceTag::Player(part))),
+                "yaw {yaw}: a shot at the centre of each part"
+            );
+            assert_eq!(
+                at_notches,
+                [None, None],
+                "yaw {yaw}: the notches beside the hips"
+            );
+        }
+    }
+
+    #[test]
+    fn releasing_the_lean_leaves_the_six_upright_volumes() {
+        for side in [LeanSide::Right, LeanSide::Left] {
+            let mut sim = leaned_player(0.0, side);
+            let while_leaning = struck_at(&sim, far_hip(side));
+
+            hold(&mut sim, &leaning(None), SETTLE_TICKS);
+
+            assert_eq!(sim.player_lean().amount(), 0.0, "the lean never released");
+            assert_eq!(
+                while_leaning,
+                Some(SurfaceTag::Player(BodyPart::Torso)),
+                "{side:?}: the hip piece was there while leaning"
+            );
+            let notch = struck_at(&sim, Vec3::new(far_hip(side).x * 1.75, -0.075, 0.0));
+            assert_eq!(
+                notch, None,
+                "{side:?}: the notch beside the hip once upright"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shot_at_a_leaning_players_leg_top_still_hits_the_leg() {
+        // 1 cm under the leg tops, where the piece reaches down beside the legs but a shot from
+        // the front meets the leg first.
+        let legs = [(0.12, BodyPart::LeftLeg), (-0.12, BodyPart::RightLeg)];
+        for yaw in [0.0, FRAC_PI_2] {
+            for side in [LeanSide::Right, LeanSide::Left] {
+                let sim = leaned_player(yaw, side);
+
+                for (x, leg) in legs {
+                    let struck = struck_at(&sim, Vec3::new(x, -0.11, 0.0));
+
+                    assert_eq!(
+                        struck,
+                        Some(SurfaceTag::Player(leg)),
+                        "leaning {side:?} at yaw {yaw}: a shot at the top of the {leg:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn level_shots_across_the_hips_all_hit_a_part_while_the_lean_is_released() {
+        for side in [LeanSide::Right, LeanSide::Left] {
+            let mut sim = leaned_player(0.0, side);
+            let mut previous = sim.player_lean().amount();
+            let mut now = previous;
+            while now.abs() > 0.5 {
+                previous = now;
+                sim.tick(&leaning(None), DT);
+                now = sim.player_lean().amount();
+            }
+            // The world holds the lean of one of the two ticks (which one is the physics
+            // world's business); a shot inside the band of both must hit either way.
+            let (_, top_before) = hip_band(&volumes_leaning(previous, sim.lean_tuning()));
+            let (_, top_now) = hip_band(&volumes_leaning(now, sim.lean_tuning()));
+            let top = top_before.min(top_now);
+            let mut misses = Vec::new();
+
+            for column in 0..88 {
+                let x = -0.2175 + 0.005 * column as f32;
+                let mut y = -0.10 + 0.0005;
+                while y < top - 0.0005 {
+                    let struck = struck_at(&sim, Vec3::new(x, y, 0.0));
+                    if !matches!(struck, Some(SurfaceTag::Player(_))) {
+                        misses.push((x, y, struck));
+                    }
+                    y += 0.001;
+                }
+            }
+
+            assert!(
+                misses.is_empty(),
+                "{side:?}, released from {previous} to {now}: {} shots passed through, \
+                 first {:?}, last {:?}",
+                misses.len(),
+                misses.first(),
+                misses.last()
+            );
+        }
+    }
+
+    /// An open-ground sim with a ball dropped high overhead, so it falls through every tick.
+    fn sim_with_a_falling_ball() -> (SearchlightSim, moho_physics::LooseId) {
+        let mut sim = open_sim();
+        let mut spawn =
+            moho_physics::LooseSpawn::new(moho_physics::LooseShape::Sphere { radius: 0.2 }, 1.0);
+        spawn.position = Vec3::new(4.0, 50.0, 4.0);
+        let ball = sim.world.spawn_loose(&spawn);
+        (sim, ball)
+    }
+
+    /// Everything the world holds that moves, as `sim` has it now.
+    fn dynamic_state(
+        sim: &SearchlightSim,
+        ball: moho_physics::LooseId,
+    ) -> (
+        CharacterState,
+        moho_physics::LooseState,
+        moho_physics::LoosePoses,
+    ) {
+        (
+            sim.player(),
+            sim.world.loose(ball).expect("the ball is in the world"),
+            sim.world
+                .loose_poses(ball)
+                .expect("the ball is in the world"),
+        )
+    }
+
+    #[test]
+    fn starting_and_ending_a_lean_advance_the_world_no_extra_tick() {
+        for side in [LeanSide::Right, LeanSide::Left] {
+            let (mut leaner, ball) = sim_with_a_falling_ball();
+            let (mut stander, _) = sim_with_a_falling_ball();
+            // The lean starts on tick 0 and, after 10 ticks held, ends once the blend is back
+            // at upright.
+            let mut ticks = 0;
+            let mut ended = false;
+            let mut started_or_ended_ticks = 0;
+
+            while ticks < 60 {
+                let want = if ticks < 10 { Some(side) } else { None };
+                let before = leaner.player_lean().amount();
+                leaner.tick(&leaning(want), DT);
+                stander.tick(&idle(), DT);
+                ticks += 1;
+                let after = leaner.player_lean().amount();
+                if (before == 0.0) != (after == 0.0) {
+                    started_or_ended_ticks += 1;
+                    ended |= after == 0.0;
+                }
+
+                assert_eq!(
+                    dynamic_state(&leaner, ball),
+                    dynamic_state(&stander, ball),
+                    "{side:?}, tick {ticks}: lean {before} -> {after}"
+                );
+            }
+
+            assert!(ended, "{side:?}: the lean never came back to upright");
+            assert_eq!(started_or_ended_ticks, 2, "{side:?}: one start and one end");
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn the_hip_piece_covers_every_point_between_the_legs_and_the_leaned_upper_body(
+            amount in -1.0f32..=1.0,
+            across in -1.0f32..=1.0,
+            up in 0.0f32..=1.0,
+            depth in -1.0f32..=1.0,
+        ) {
+            let tuning = test_config(rifle_with(5), vec![]).lean;
+            let volumes = volumes_leaning(amount, &tuning);
+            let (low, high) = hip_band(&volumes);
+            let point = Vec3::new(across * 0.22, low + up * (high - low), depth * 0.09);
+
+            let piece = hip_piece(&volumes);
+            let local = piece.rotation.inverse() * (point - piece.offset);
+
+            proptest::prop_assert_eq!(piece.tag, SurfaceTag::Player(BodyPart::Torso).into());
+            proptest::prop_assert!(
+                local.abs().cmple(piece.half_extents + Vec3::splat(1e-4)).all(),
+                "amount {amount}: {point:?} is outside the piece {piece:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_hip_piece_follows_legs_that_are_rotated() {
+        let mut volumes = player_hit_volumes();
+        for part in [BodyPart::LeftLeg, BodyPart::RightLeg] {
+            let slot = BodyPart::ALL
+                .iter()
+                .position(|&p| p == part)
+                .expect("BodyPart::ALL lists every part");
+            volumes[slot].rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        }
+        let legs = [
+            volume_of(&volumes, BodyPart::LeftLeg),
+            volume_of(&volumes, BodyPart::RightLeg),
+        ];
+        let corners = |leg: HitVolume| {
+            let half = leg.half_extents;
+            [-1.0_f32, 1.0]
+                .into_iter()
+                .flat_map(move |x| {
+                    [-1.0_f32, 1.0].into_iter().flat_map(move |y| {
+                        [-1.0_f32, 1.0].into_iter().map(move |z| {
+                            leg.offset
+                                + leg.rotation * Vec3::new(x * half.x, y * half.y, z * half.z)
+                        })
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let top_of = |leg: HitVolume| corners(leg).iter().map(|c| c.y).fold(f32::MIN, f32::max);
+        let thickness_of = |leg: HitVolume| {
+            corners(leg)
+                .iter()
+                .map(|c| (c.z - leg.offset.z).abs())
+                .fold(f32::MIN, f32::max)
+        };
+        let outer_left = legs
+            .iter()
+            .flat_map(|&leg| corners(leg))
+            .map(|c| c.x)
+            .fold(f32::MAX, f32::min);
+        let outer_right = legs
+            .iter()
+            .flat_map(|&leg| corners(leg))
+            .map(|c| c.x)
+            .fold(f32::MIN, f32::max);
+        let lowest_top = legs.iter().map(|&leg| top_of(leg)).fold(f32::MAX, f32::min);
+        let thinnest = legs
+            .iter()
+            .map(|&leg| thickness_of(leg))
+            .fold(f32::MAX, f32::min);
+        let tolerance = 1e-4;
+
+        let piece = hip_piece(&volumes);
+
+        assert!(
+            piece.offset.y - piece.half_extents.y <= lowest_top + tolerance,
+            "the piece starts at {} but the rotated legs end at {lowest_top}: {piece:?}",
+            piece.offset.y - piece.half_extents.y
+        );
+        assert!(
+            piece.offset.x - piece.half_extents.x <= outer_left + tolerance
+                && piece.offset.x + piece.half_extents.x >= outer_right - tolerance,
+            "the piece does not span the legs' x edges {outer_left}..{outer_right}: {piece:?}"
+        );
+        assert!(
+            piece.half_extents.z <= thinnest + tolerance,
+            "the piece is {} deep but the legs are only {thinnest} thick: {piece:?}",
+            piece.half_extents.z
+        );
     }
 
     fn first_enemy_claim(sim: &SearchlightSim) -> Option<usize> {

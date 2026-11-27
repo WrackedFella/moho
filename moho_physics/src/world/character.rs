@@ -231,10 +231,11 @@ impl PhysicsWorld {
 
     /// Replace all of the character's hit volumes with `volumes`.
     ///
-    /// The volumes take effect when the world steps: rays cast before the next step may see
-    /// the old poses, or a mix of old poses and new shapes and tags. They follow the body,
-    /// never block movement or props, and are removed with the character. An unchanged count
-    /// updates the colliders in place; any other count rebuilds them.
+    /// Rays cast after the call see the new volumes, poses, shapes and tags together, even
+    /// before the next step. They follow the body, never block movement or props, and are
+    /// removed with the character. An unchanged count updates the colliders in place, a
+    /// changed count rebuilds them; either way the poses are placed at the body's pose as it
+    /// stands now.
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
@@ -269,9 +270,14 @@ impl PhysicsWorld {
             }
         }
 
+        let body = *self.rigid_body_set[handle.0].position();
         for (&collider, volume) in character.volumes.iter().zip(volumes) {
+            let beside_body = Pose::from_parts(volume.offset, volume.rotation);
             let collider = &mut self.collider_set[collider];
-            collider.set_position_wrt_parent(Pose::from_parts(volume.offset, volume.rotation));
+            collider.set_position_wrt_parent(beside_body);
+            // The world pose is what rays read; left alone it would follow only at the next
+            // step, leaving the new shape at the old place.
+            collider.set_position(body * beside_body);
             collider.set_shape(SharedShape::cuboid(
                 volume.half_extents.x,
                 volume.half_extents.y,
@@ -279,6 +285,7 @@ impl PhysicsWorld {
             ));
             collider.user_data = encode_tag(volume.tag);
         }
+        self.index_for_queries();
         Ok(())
     }
 
@@ -3889,6 +3896,48 @@ mod tests {
         assert_eq!(head.tag, HEAD);
         assert!((head.distance - 2.8).abs() < 0.02, "{head:?}");
         assert_eq!(torso.map(|hit| hit.tag), Some(TORSO));
+    }
+
+    #[test]
+    fn a_ray_hits_volumes_set_with_a_changed_count_before_any_step() {
+        let (mut world, h) = standing_on_floor();
+        set_one_volume(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::splat(0.2), HEAD),
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        attach_head_and_torso(&mut world, h);
+        let head = cast(&world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None);
+        let torso = cast(&world, at + Vec3::new(-3.0, 0.1, 0.0), Vec3::X, None);
+
+        assert_eq!(head.map(|hit| hit.tag), Some(HEAD));
+        assert_eq!(torso.map(|hit| hit.tag), Some(TORSO));
+    }
+
+    #[test]
+    fn a_same_count_update_moves_poses_and_shapes_together_before_any_step() {
+        let (mut world, h) = standing_on_floor();
+        set_one_volume(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::splat(0.2), HEAD),
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        set_one_volume(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.05, 0.15), HEAD),
+        );
+        let old_place = cast(&world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None);
+        let new_place = cast(&world, at + Vec3::new(-3.0, 0.1, 0.0), Vec3::X, None);
+
+        assert_eq!(old_place.map(|hit| hit.tag), None);
+        assert_eq!(new_place.map(|hit| hit.tag), Some(HEAD));
     }
 
     #[test]
