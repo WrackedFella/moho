@@ -9238,31 +9238,95 @@ mod title_and_aspect_tests {
 mod enemy_and_hud_tests {
     use std::collections::HashMap;
 
+    use moho_app::GameClock;
+    use moho_input::bindings::ActionBindings;
     use moho_renderer::FrameError;
     use searchlight_rules::Grade;
 
     use super::*;
+    use crate::arena::{Arena, ArenaMarkers};
     use crate::sim::{Start, dummy_hit_volumes};
-    use crate::test_support::{arena_with, mag, rifle_from, test_config};
+    use crate::test_support::{arena_with, level_marker, mag, rifle_from, test_config};
 
-    /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
+    /// Keeps the vertices of every mesh uploaded, the draws of the last frame, and counts what
+    /// crosses the backend seam: uploads over the renderer's life, draw calls and instances in
+    /// the last frame.
     #[derive(Default)]
     struct RecordingRenderer {
         next_handle: u32,
         uploads: HashMap<u32, Vec<[f32; 3]>>,
+        normals: HashMap<u32, Vec<[f32; 3]>>,
         materials: Vec<MaterialGpu>,
         draws: Vec<(u32, InstanceGpu)>,
+        /// `register_indexed_mesh` calls so far.
+        registered: usize,
+        /// `enqueue_*draw` calls with at least one instance in the last frame.
+        draw_calls: usize,
+        /// Instances in those calls.
+        instances: usize,
     }
 
     impl RecordingRenderer {
-        /// Each draw as its mesh's centre and half extents, then its material, in draw order.
+        fn count(&mut self, instances: &[InstanceGpu]) {
+            if !instances.is_empty() {
+                self.draw_calls += 1;
+                self.instances += instances.len();
+            }
+        }
+
+        /// The handles uploaded with exactly the unit box `box_mesh(ZERO, splat(0.5))`.
+        fn unit_box_handles(&self) -> Vec<u32> {
+            let unit = box_mesh(Vec3::ZERO, Vec3::splat(0.5));
+            self.uploads
+                .iter()
+                .filter(|(_, vertices)| vertices.as_slice() == unit.positions())
+                .map(|(handle, _)| *handle)
+                .collect()
+        }
+
+        /// Every instance of the unit box in the last frame, in draw order.
+        fn unit_box_instances(&self) -> Vec<InstanceGpu> {
+            let handles = self.unit_box_handles();
+            self.draws
+                .iter()
+                .filter(|(handle, _)| handles.contains(handle))
+                .map(|(_, instance)| *instance)
+                .collect()
+        }
+
+        /// Each instance of the unit box as its vertices' world position and unit normal, the
+        /// model applied to the uploaded mesh.
+        fn placed_vertices(&self) -> Vec<Vec<(Vec3, Vec3)>> {
+            let handles = self.unit_box_handles();
+            self.draws
+                .iter()
+                .filter(|(handle, _)| handles.contains(handle))
+                .map(|(handle, instance)| {
+                    let model = Mat4::from_cols_array_2d(&instance.model);
+                    self.uploads[handle]
+                        .iter()
+                        .zip(&self.normals[handle])
+                        .map(|(&point, &normal)| {
+                            (
+                                model.transform_point3(Vec3::from(point)),
+                                model.transform_vector3(Vec3::from(normal)).normalize(),
+                            )
+                        })
+                        .collect()
+                })
+                .collect()
+        }
+
+        /// Each draw as its mesh's world-space centre and half extents, then its material, in
+        /// draw order.
         fn drawn(&self) -> Vec<(Vec3, Vec3, MaterialGpu)> {
             self.draws
                 .iter()
                 .map(|(handle, instance)| {
+                    let model = Mat4::from_cols_array_2d(&instance.model);
                     let points: Vec<Vec3> = self.uploads[handle]
                         .iter()
-                        .map(|&p| Vec3::from(p))
+                        .map(|&p| model.transform_point3(Vec3::from(p)))
                         .collect();
                     let min = points.iter().fold(Vec3::MAX, |a, &p| a.min(p));
                     let max = points.iter().fold(Vec3::MIN, |a, &p| a.max(p));
@@ -9284,7 +9348,7 @@ mod enemy_and_hud_tests {
         fn register_indexed_mesh(
             &mut self,
             vertices: &[[f32; 3]],
-            _normals: &[[f32; 3]],
+            normals: &[[f32; 3]],
             _ao: &[f32],
             _geometry_type: &[u32],
             _light_level: &[f32],
@@ -9294,17 +9358,25 @@ mod enemy_and_hud_tests {
             _indices: &[u32],
         ) -> u32 {
             self.next_handle += 1;
+            self.registered += 1;
             self.uploads.insert(self.next_handle, vertices.to_vec());
+            self.normals.insert(self.next_handle, normals.to_vec());
             self.next_handle
         }
         fn unregister_mesh(&mut self, _mesh: u32) {}
         fn begin_frame(&mut self, _camera: (Mat4, Mat4, Vec3)) -> Result<(), FrameError> {
             self.draws.clear();
+            self.draw_calls = 0;
+            self.instances = 0;
             Ok(())
         }
         fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+            self.count(instances);
             self.draws
                 .extend(instances.iter().map(|instance| (mesh, *instance)));
+        }
+        fn enqueue_shadow_only_draw(&mut self, _mesh: u32, instances: &[InstanceGpu]) {
+            self.count(instances);
         }
         fn submit_frame(&mut self) {}
         fn set_materials(&mut self, materials: &[MaterialGpu]) {
@@ -9590,6 +9662,325 @@ mod enemy_and_hud_tests {
         assert_eq!(stage.enemies.len(), 2);
         assert_eq!(stage.enemy_rig(8).target, 8);
         assert_eq!(stage.enemy_rig(3).target, 3);
+    }
+
+    /// A game on `arena` with `enemies` enemies spawned from its first markers, loaded as the
+    /// binary loads one. The enemies never notice the player, so only their routes move them.
+    fn game_on(arena: Arc<Arena>, enemies: usize) -> SearchlightGame {
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        config.enemy.sight_range = 0.5;
+        let mode = ArenaMode::without_waves(Arc::clone(&arena), config);
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_named_arena(
+                arena.meshes.clone(),
+                &arena.material_names,
+                &arena.dummy_spawns,
+            )
+            .with_controls(arena.controls.iter().map(|control| control.mesh.clone()));
+        for marker in 0..enemies {
+            game.mode
+                .sim_mut()
+                .spawn_enemy(marker, Grade::default())
+                .expect("the marker is free");
+        }
+        game
+    }
+
+    /// One enemy at (3, 0, 4) whose only waypoint is ten metres to +X, so it faces +X.
+    fn lone_game() -> SearchlightGame {
+        game_on(
+            arena_with(
+                &[],
+                Vec3::new(0.0, 0.0, -20.0),
+                &[Vec3::new(3.0, 0.0, 4.0)],
+                &[Vec3::new(13.0, 0.0, 4.0)],
+            ),
+            1,
+        )
+    }
+
+    fn play_tick(game: &mut SearchlightGame) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(1.0 / 60.0),
+            clock: &mut clock,
+        };
+        game.tick(&mut ctx, &SearchlightCommand::default());
+    }
+
+    fn play_frame(game: &mut SearchlightGame, renderer: &mut RecordingRenderer) {
+        let clock = GameClock::default();
+        let backend: &mut dyn RendererBackend = renderer;
+        let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, Some(backend), None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    fn translation_of(instance: &InstanceGpu) -> Vec3 {
+        Mat4::from_cols_array_2d(&instance.model).w_axis.truncate()
+    }
+
+    #[test]
+    fn an_enemy_draws_each_segment_at_its_old_box() {
+        let mut game = lone_game();
+        let state = game.sim().enemy_state(0).expect("the enemy spawned");
+        let mut renderer = RecordingRenderer::default();
+
+        play_frame(&mut game, &mut renderer);
+        let placed = renderer.placed_vertices();
+
+        let segments = enemy_segments(game.sim().character_body());
+        assert_eq!(placed.len(), segments.len(), "one placed box per segment");
+        let facing = Quat::from_rotation_y(state.yaw);
+        for (slot, ((offset, half), got)) in segments.into_iter().zip(&placed).enumerate() {
+            let want = oriented_box_mesh(state.position + facing * offset, half, facing);
+            let want: Vec<Vec3> = want.positions().iter().map(|&p| Vec3::from(p)).collect();
+            assert_eq!(got.len(), want.len(), "slot {slot}");
+            for corner in &want {
+                let placed_there = got.iter().any(|(at, _)| at.abs_diff_eq(*corner, 1e-4));
+                assert!(placed_there, "slot {slot}: nothing placed at {corner:?}");
+            }
+            for (at, _) in got {
+                let wanted = want.iter().any(|corner| corner.abs_diff_eq(*at, 1e-4));
+                assert!(wanted, "slot {slot}: a corner strays to {at:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_placed_segment_keeps_outward_normals_under_scale() {
+        let mut game = lone_game();
+        let state = game.sim().enemy_state(0).expect("the enemy spawned");
+        let mut renderer = RecordingRenderer::default();
+
+        play_frame(&mut game, &mut renderer);
+        let placed = renderer.placed_vertices();
+
+        let segments = enemy_segments(game.sim().character_body());
+        assert_eq!(placed.len(), segments.len(), "one placed box per segment");
+        let facing = Quat::from_rotation_y(state.yaw);
+        for (slot, ((offset, half), got)) in segments.into_iter().zip(&placed).enumerate() {
+            let want = oriented_box_mesh(state.position + facing * offset, half, facing);
+            assert_eq!(got.len(), want.normals().len(), "slot {slot}");
+            for (&point, &normal) in want.positions().iter().zip(want.normals()) {
+                let (point, normal) = (Vec3::from(point), Vec3::from(normal));
+                let kept = got
+                    .iter()
+                    .any(|(at, n)| at.abs_diff_eq(point, 1e-4) && n.abs_diff_eq(normal, 1e-4));
+                assert!(kept, "slot {slot}: no normal {normal:?} at {point:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_firing_enemy_places_its_gun_struck_and_its_body_plain() {
+        let mut game = lone_game();
+        let mut renderer = RecordingRenderer::default();
+        let (struck, plain) = (game.stage.struck_material, game.stage.enemy_material);
+
+        game.stage.react(&Feedback::EnemyFired { target: 0 }, None);
+        play_frame(&mut game, &mut renderer);
+        let flashing: Vec<u32> = renderer
+            .unit_box_instances()
+            .iter()
+            .map(|instance| instance.material)
+            .collect();
+        for _ in 0..FLASH_TICKS {
+            game.stage.tick_flashes();
+        }
+        play_frame(&mut game, &mut renderer);
+        let settled: Vec<u32> = renderer
+            .unit_box_instances()
+            .iter()
+            .map(|instance| instance.material)
+            .collect();
+
+        assert_eq!(flashing, [plain, plain, plain, plain, plain, plain, struck]);
+        assert_eq!(settled, [plain; 7]);
+    }
+
+    #[test]
+    fn a_killed_enemy_is_not_placed() {
+        let mut game = game_on(
+            arena_with(
+                &[],
+                Vec3::new(0.0, 0.0, -20.0),
+                &[Vec3::new(-3.0, 0.0, 4.0), Vec3::new(3.0, 0.0, 4.0)],
+                &[Vec3::new(13.0, 0.0, 4.0)],
+            ),
+            2,
+        );
+        let mut renderer = RecordingRenderer::default();
+        play_frame(&mut game, &mut renderer);
+        let before = renderer.unit_box_instances().len();
+
+        game.mode.sim_mut().kill_enemy(0);
+        play_tick(&mut game);
+        let survivor = game.sim().enemy_state(1).expect("the second enemy lives");
+        assert!(
+            game.sim().enemy_state(0).is_none(),
+            "the first enemy is out"
+        );
+        play_frame(&mut game, &mut renderer);
+        let after = renderer.unit_box_instances();
+
+        assert_eq!(before, 2 * 7);
+        assert_eq!(after.len(), 7);
+        let (torso_offset, _) = enemy_segments(game.sim().character_body())[0];
+        let facing = Quat::from_rotation_y(survivor.yaw);
+        let want = survivor.position + facing * torso_offset;
+        assert!(
+            translation_of(&after[0]).abs_diff_eq(want, 1e-4),
+            "the placed boxes are the survivor's"
+        );
+    }
+
+    #[test]
+    fn a_turned_enemy_places_its_segments_around_its_position() {
+        let mut game = game_on(
+            arena_with(
+                &[],
+                Vec3::new(0.0, 0.0, -20.0),
+                &[Vec3::new(3.0, 0.0, 4.0)],
+                &[Vec3::new(10.0, 0.0, 11.0)],
+            ),
+            1,
+        );
+        let state = game.sim().enemy_state(0).expect("the enemy spawned");
+        let facing = Quat::from_rotation_y(state.yaw);
+        assert!(
+            !(facing * GUN_OFFSET).abs_diff_eq(GUN_OFFSET, 0.1),
+            "the enemy must be turned for the offsets to move: yaw {}",
+            state.yaw
+        );
+        let mut renderer = RecordingRenderer::default();
+
+        play_frame(&mut game, &mut renderer);
+        let placed = renderer.unit_box_instances();
+
+        let segments = enemy_segments(game.sim().character_body());
+        assert_eq!(placed.len(), segments.len(), "one placed box per segment");
+        for (slot, ((offset, half), instance)) in segments.into_iter().zip(&placed).enumerate() {
+            let model = Mat4::from_cols_array_2d(&instance.model);
+            let (scale, rotation, at) = model.to_scale_rotation_translation();
+            assert!(
+                scale.abs_diff_eq(half * 2.0, 1e-4),
+                "slot {slot}: {scale:?}"
+            );
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                assert!(
+                    (rotation * axis).abs_diff_eq(facing * axis, 1e-4),
+                    "slot {slot}: axis {axis:?} is not turned to the enemy's facing"
+                );
+            }
+            let want = state.position + facing * offset;
+            assert!(
+                at.abs_diff_eq(want, 1e-4),
+                "slot {slot}: {at:?} not {want:?}"
+            );
+        }
+    }
+
+    /// The shipped arena with fifty enemy spawn markers added on a grid over its open floor,
+    /// and fifty enemies spawned. Also how many static arena meshes and control posts it draws.
+    fn fifty_enemy_game() -> (SearchlightGame, usize) {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
+        let mut level = moho_level::load(&path).expect("the shipped arena loads");
+        level
+            .markers
+            .retain(|marker| !marker.name.starts_with("enemy_spawn_"));
+        let rows = [-14.0, -11.0, -8.0, -1.5, 1.0];
+        let spawns = rows.into_iter().flat_map(|z| {
+            (0..10u8).map(move |column| Vec3::new(-12.0 + 2.5 * f32::from(column), 0.0, z))
+        });
+        for (number, at) in spawns.enumerate() {
+            level
+                .markers
+                .push(level_marker(&format!("enemy_spawn_{:02}", number + 1), at));
+        }
+        let markers = ArenaMarkers::from_level(&level).expect("the markers sort");
+        let arena = Arena::from_level(&level, &markers).expect("the arena builds");
+        assert_eq!(arena.enemy_spawns.len(), 50);
+        let statics = arena.meshes.len() + arena.controls.len();
+        (game_on(Arc::new(arena), 50), statics)
+    }
+
+    #[test]
+    fn fifty_moving_enemies_upload_nothing_after_the_first_frame() {
+        let (mut game, _) = fifty_enemy_game();
+        let mut renderer = RecordingRenderer::default();
+        for _ in 0..5 {
+            play_tick(&mut game);
+        }
+        play_frame(&mut game, &mut renderer);
+        let first = renderer.registered;
+        let start = game.sim().enemy_state(0).expect("the enemy lives").position;
+
+        for _ in 0..10 {
+            play_tick(&mut game);
+            play_frame(&mut game, &mut renderer);
+        }
+
+        let end = game.sim().enemy_state(0).expect("the enemy lives").position;
+        assert!(start.distance(end) > 0.05, "the enemies must be moving");
+        assert!(first > 0, "the first frame uploads the world");
+        assert_eq!(
+            renderer.registered, first,
+            "meshes uploaded after frame one"
+        );
+    }
+
+    #[test]
+    fn fifty_moving_enemies_draw_once_per_distinct_mesh() {
+        let (mut game, statics) = fifty_enemy_game();
+        let mut renderer = RecordingRenderer::default();
+        for _ in 0..5 {
+            play_tick(&mut game);
+        }
+        play_frame(&mut game, &mut renderer);
+
+        play_tick(&mut game);
+        play_frame(&mut game, &mut renderer);
+
+        let dummies = game.stage.segments.len();
+        assert_eq!(renderer.draw_calls, statics + dummies + 1);
+    }
+
+    #[test]
+    fn fifty_moving_enemies_place_seven_segments_each() {
+        let (mut game, statics) = fifty_enemy_game();
+        let mut renderer = RecordingRenderer::default();
+        for _ in 0..5 {
+            play_tick(&mut game);
+        }
+        let dummies = game.stage.segments.len();
+
+        play_frame(&mut game, &mut renderer);
+
+        assert_eq!(renderer.unit_box_instances().len(), 50 * 7);
+        assert_eq!(renderer.instances, statics + dummies + 50 * 7);
+
+        for index in 0..10 {
+            game.mode.sim_mut().kill_enemy(index);
+        }
+        play_tick(&mut game);
+        play_frame(&mut game, &mut renderer);
+
+        assert_eq!(renderer.unit_box_instances().len(), 40 * 7);
+        assert_eq!(renderer.instances, statics + dummies + 40 * 7);
+    }
+
+    #[test]
+    fn a_paused_frame_still_places_living_enemies() {
+        let mut game = lone_game();
+        let mut renderer = RecordingRenderer::default();
+        game.pause();
+
+        play_frame(&mut game, &mut renderer);
+
+        assert_eq!(game.screen, Screen::Paused);
+        assert_eq!(renderer.unit_box_instances().len(), 7);
     }
 
     #[test]
