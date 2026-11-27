@@ -742,7 +742,6 @@ fn frame_with_modifiers(ctx: &egui::Context, menu: &mut SettingsMenu, mods: egui
     });
 }
 
-/// Draws the modal's content and returns its text.
 fn modal_text(modal: &mut dyn flagstone_ui::modal::Modal) -> String {
     let ctx = egui::Context::default();
     let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
