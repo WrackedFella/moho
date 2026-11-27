@@ -36,8 +36,12 @@ impl VelocityFactor {
 impl TryFrom<f32> for VelocityFactor {
     type Error = VelocityFactorError;
 
-    fn try_from(_factor: f32) -> Result<Self, Self::Error> {
-        todo!("FPS-F15-08: refuse non-finite and non-positive factors")
+    fn try_from(factor: f32) -> Result<Self, Self::Error> {
+        if factor.is_finite() && factor > 0.0 {
+            Ok(Self(factor))
+        } else {
+            Err(VelocityFactorError::NotPositive(factor))
+        }
     }
 }
 

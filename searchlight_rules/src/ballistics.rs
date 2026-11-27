@@ -27,8 +27,11 @@ impl Ballistics {
     /// These ballistics fired through a barrel: the muzzle velocity scaled by `factor`, the
     /// drag unchanged.
     #[must_use]
-    pub fn through_barrel(self, _factor: VelocityFactor) -> Self {
-        todo!("FPS-F15-08: scale the muzzle velocity by the barrel factor")
+    pub fn through_barrel(self, factor: VelocityFactor) -> Self {
+        Self {
+            muzzle_velocity: self.muzzle_velocity * factor.get(),
+            drag: self.drag,
+        }
     }
 }
 

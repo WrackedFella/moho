@@ -469,6 +469,7 @@ pub struct SearchlightSim {
     cooldown_ticks: u32,
     reload_ticks: u32,
     charge_ticks: u32,
+    muzzle_velocity_factor: VelocityFactor,
     loadout: Loadout,
     /// Indexed by target number: the dummies, then the enemies.
     targets: Vec<Target>,
@@ -630,6 +631,7 @@ impl SearchlightSim {
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
             charge_ticks: config.charge_ticks,
+            muzzle_velocity_factor: config.muzzle_velocity_factor,
             loadout: config.loadout.clone(),
             targets,
             dummy_count: spawns.dummies.len(),
@@ -1115,8 +1117,10 @@ impl SearchlightSim {
             tracing::warn!(%round, "the round has no stats, nothing is fired");
             return;
         };
+        let launch = ballistics.through_barrel(self.muzzle_velocity_factor);
         if simple {
-            self.hitscan(origin, direction, state.position, damage);
+            let dealt = arrival_damage(damage, ballistics.muzzle_velocity, launch.muzzle_velocity);
+            self.hitscan(origin, direction, state.position, dealt);
             return;
         }
         let id = self.next_round_id;
@@ -1130,7 +1134,7 @@ impl SearchlightSim {
         });
         self.rounds.push(RoundInFlight {
             id,
-            flight: Flight::fired(origin, direction, &ballistics),
+            flight: Flight::fired(origin, direction, &launch),
             ballistics,
             damage,
             shooter: Some(self.player),

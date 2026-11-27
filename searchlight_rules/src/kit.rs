@@ -1,6 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
-use crate::ballistics::RoundStats;
+use crate::ballistics::{MIN_SPEED, RoundStats};
 use crate::inventory::{Item, Remains, RoundStack};
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
@@ -234,6 +234,19 @@ impl KitDef {
                     magazine: magazine.clone(),
                 });
             }
+            let stats = spec_round.stats();
+            if spec.well == weapon.well
+                && stats
+                    .ballistics
+                    .through_barrel(weapon.muzzle_velocity_factor)
+                    .muzzle_velocity
+                    <= MIN_SPEED
+            {
+                return Err(KitError::TooSlowFromWeapon {
+                    weapon: self.weapon.clone(),
+                    round: round.clone(),
+                });
+            }
             let count = held.unwrap_or(spec.capacity);
             let filled = Magazine::filled(magazine.clone(), spec, round, count).map_err(|_| {
                 KitError::OverCapacity {
@@ -242,7 +255,7 @@ impl KitDef {
                     capacity: spec.capacity,
                 }
             })?;
-            rounds.insert(round.clone(), spec_round.stats());
+            rounds.insert(round.clone(), stats);
             Ok(filled)
         };
 

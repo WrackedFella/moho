@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{
     AccuracyTuning, BodyPart, BodyProfile, ItemId, Kit, LeanTuning, Remains, RoundStats,
-    VelocityFactor,
 };
 
 use crate::brain::EnemyTuning;
@@ -79,7 +78,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
         charge_ticks: weapon.charge_ticks,
-        muzzle_velocity_factor: VelocityFactor::default(),
+        muzzle_velocity_factor: weapon.muzzle_velocity_factor,
         body: BodyProfile {
             max_health: 100,
             head_status: 30,
@@ -128,6 +127,7 @@ mod tests {
     use crate::test_support::{DT, arena_with, mag, rifle_from};
     use glam::Vec3;
     use moho_physics::{Hull, HullShape, Stature};
+    use searchlight_rules::VelocityFactor;
     use searchlight_rules::{
         Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
         RoundStats,
