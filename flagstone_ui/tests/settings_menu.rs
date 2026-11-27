@@ -590,7 +590,7 @@ fn modifiers_frame(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
     render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
 }
 
-/// Shift down, Shift up, Alt down: the release-then-press order that leaks on unfixed code.
+/// Shift down, Shift up, Alt down: a second modifier arriving after a conflict ends listening.
 fn press_shift_then_alt(menu: &mut SettingsMenu) {
     modifiers_frame(menu, egui::Modifiers::SHIFT);
     modifiers_frame(menu, egui::Modifiers::NONE);
