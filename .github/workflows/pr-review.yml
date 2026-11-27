@@ -495,6 +495,7 @@ jobs:
           fi
       - name: Later round and devflow source
         run: |
+          git fetch -q origin '+refs/pull/*/head:refs/remotes/pull/*' || true
           ARGS=""
           if [ -n "$PRIOR" ]; then
             [[ $PRIOR =~ ^[0-9]+/[0-9]+$ ]] || { echo "::error::dry_run_prior must be <pr>/<review id>."; exit 1; }
