@@ -15,8 +15,7 @@ use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
 
-/// Cue played when a mined block yields a resource.
-const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
+/// Volume of the cue played when a mined block yields a resource.
 const PICKUP_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
@@ -234,7 +233,7 @@ impl EventProcessor {
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
-                path: PICKUP_SOUND.to_string(),
+                path: app.sounds.pickup.to_string_lossy().into_owned(),
                 volume: PICKUP_VOLUME,
             });
             tracing::debug!(
@@ -1322,9 +1321,10 @@ mod tests {
         app.adopt_settings(saved);
         run_console_shadow_command(&mut app, 1);
 
-        let restarted = App::from_config(crate::app::config::AppConfig::from_prefs_struct(
-            Prefs::load_from(&path).0,
-        ));
+        let restarted = App::from_config(
+            crate::app::config::AppConfig::from_prefs_struct(Prefs::load_from(&path).0),
+            crate::app::sounds::Sounds::in_checkout(),
+        );
 
         let keys = forward_keys(&restarted);
         assert!(keys.contains(&Binding::key(Key::Q)), "bindings: {keys:?}");
@@ -1383,9 +1383,10 @@ mod tests {
         let restarted_prefs = Prefs::load_from(&path).0;
         assert_eq!(restarted_prefs.mouse_sensitivity(), 1.8);
         assert!(restarted_prefs.invert_mouse_y());
-        let mut restarted = App::from_config(crate::app::config::AppConfig::from_prefs_struct(
-            restarted_prefs,
-        ));
+        let mut restarted = App::from_config(
+            crate::app::config::AppConfig::from_prefs_struct(restarted_prefs),
+            crate::app::sounds::Sounds::in_checkout(),
+        );
         let again = look_after_mouse_up(&mut restarted);
         assert!(
             (again.1 - 100.0 * per_count).abs() < 1e-5,
@@ -1667,7 +1668,7 @@ mod tests {
     }
 
     fn pickup_asset_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/pickup.wav")
+        crate::app::sounds::Sounds::in_checkout().pickup
     }
 
     #[test]
@@ -1703,7 +1704,7 @@ mod tests {
     }
 
     fn dig_asset_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+        crate::app::sounds::Sounds::in_checkout().dig
     }
 
     #[test]

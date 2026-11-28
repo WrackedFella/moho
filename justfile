@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check
+check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check package-test
 
 fmt-check:
     cargo fmt --all --check
@@ -201,6 +201,101 @@ assets-check:
 assets-check:
     @echo "assets-check: skipped, Linux only"
 
+# Release build of `game` laid out for copying: the executable with its committed `assets`
+# and `content` beside it, in target/package/<game>/.
+package game:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release -p {{game}}
+    exe="target/release/{{game}}"
+    [[ -f "$exe.exe" ]] && exe="$exe.exe"
+    out="target/package/{{game}}"
+    scripts/package.sh {{game}} "$exe" "$out"
+    echo "packaged {{game}} in $out"
+
+# Self-test of scripts/package.sh with a stub executable: the package holds the executable and
+# the committed assets and content, no generator tool or README, and a second run drops
+# whatever the first left in the output folder. The flagstone layout is checked the same way
+# (assets only). It never builds.
+package-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    work="$(mktemp -d)"
+    local_dir=searchlight/assets/local
+    probe="$local_dir/probe.glb"
+    made_local=0
+    [[ -d "$local_dir" ]] || made_local=1
+    wrote_probe=0
+    cleanup() {
+        rm -rf "$work"
+        [[ $wrote_probe == 0 ]] || rm -f "$probe"
+        [[ $made_local == 0 ]] || rmdir "$local_dir" 2>/dev/null || true
+    }
+    trap cleanup EXIT
+    exe="$work/searchlight"
+    out="$work/out"
+    printf '#!/bin/sh\n' > "$exe"
+    chmod +x "$exe"
+    fail() { echo "package-test: $1" >&2; exit 1; }
+    # A git-ignored local map must stay out of the package.
+    [[ ! -e "$probe" ]] || fail "$probe already exists; move it away before running the test"
+    mkdir -p "$local_dir"
+    echo probe > "$probe"
+    wrote_probe=1
+    mkdir -p "$out"
+    echo stale > "$out/stale.txt"
+    scripts/package.sh searchlight "$exe" "$out"
+    [[ -f "$out/searchlight" && -x "$out/searchlight" ]] || fail "executable missing or not executable"
+    expected="$(git ls-files searchlight/assets searchlight/content | grep -v '/tools/' | grep -v '\.md$' | sed 's#^searchlight/##' | LC_ALL=C sort)"
+    packaged="$(find "$out/assets" "$out/content" -type f | sed "s#^$out/##" | LC_ALL=C sort)"
+    [[ -n "$expected" ]] || fail "no committed assets or content found"
+    for must in assets/arena.glb assets/proving_ground.glb assets/rifle_shot.wav content/items.toml content/kits.toml; do
+        [[ -f "$out/$must" ]] || fail "$must missing from the package"
+    done
+    [[ "$packaged" == "$expected" ]] || fail "package files differ from the committed files (expected, then packaged): $expected -- $packaged"
+    [[ ! -e "$out/assets/local" ]] || fail "the git-ignored local map shipped"
+    [[ ! -e "$out/assets/tools" ]] || fail "assets/tools shipped"
+    [[ -z "$(find "$out" -name '*.md')" ]] || fail "a markdown file shipped"
+    [[ ! -e "$out/stale.txt" ]] || fail "stale file survived the first run"
+    echo stale > "$out/stale.txt"
+    scripts/package.sh searchlight "$exe" "$out"
+    [[ ! -e "$out/stale.txt" ]] || fail "stale file survived a second run"
+    # An output folder that is, or holds, the working directory or the executable's folder is
+    # refused before anything is deleted.
+    root="$(pwd -P)"
+    guard="$work/guard"
+    mkdir -p "$guard/sub"
+    echo keep > "$guard/sentinel"
+    refuses() {
+        local dir=$1 target=$2 rc=0
+        (cd "$dir" && "$root/scripts/package.sh" searchlight "$exe" "$target") > /dev/null 2>&1 || rc=$?
+        [[ $rc -ne 0 ]] || fail "output '$target' from $dir was accepted"
+        [[ -f "$guard/sentinel" && -f "$exe" ]] || fail "output '$target' from $dir deleted files"
+    }
+    refuses "$guard" .
+    refuses "$guard/sub" ..
+    refuses "$guard/sub" "$guard"
+    refuses "$guard/sub" "$guard/sub/../.."
+    refuses "$root" "$work"
+    refuses "$guard" /
+    # Flagstone ships its four cues under assets/ and no content folder.
+    flagstone_exe="$work/flagstone"
+    flagstone_out="$work/flagstone-out"
+    printf '#!/bin/sh\n' > "$flagstone_exe"
+    chmod +x "$flagstone_exe"
+    scripts/package.sh flagstone "$flagstone_exe" "$flagstone_out"
+    [[ -f "$flagstone_out/flagstone" && -x "$flagstone_out/flagstone" ]] || fail "flagstone executable missing or not executable"
+    flagstone_expected="$(git ls-files flagstone/assets | grep -v '/tools/' | grep -v '\.md$' | sed 's#^flagstone/##' | LC_ALL=C sort)"
+    flagstone_packaged="$(find "$flagstone_out/assets" -type f | sed "s#^$flagstone_out/##" | LC_ALL=C sort)"
+    for must in assets/pickup.wav assets/dig.wav assets/mark.wav assets/unmark.wav; do
+        [[ -f "$flagstone_out/$must" ]] || fail "$must missing from the flagstone package"
+    done
+    [[ "$flagstone_packaged" == "$flagstone_expected" ]] || fail "flagstone package files differ from the committed files (expected, then packaged): $flagstone_expected -- $flagstone_packaged"
+    [[ ! -e "$flagstone_out/assets/tools" ]] || fail "flagstone assets/tools shipped"
+    [[ ! -e "$flagstone_out/content" ]] || fail "flagstone shipped a content folder"
+    [[ -z "$(find "$flagstone_out" -name '*.md')" ]] || fail "a markdown file shipped with flagstone"
+    echo "package-test: OK"
+
 run-record-test:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -213,6 +308,18 @@ run-record-test:
     done
     diff "$f/table.md" <(scripts/run-record.sh table < "$f/records.jsonl")
     diff "$f/digest.md" <(scripts/run-record.sh digest < "$f/records.jsonl")
+    # The meter: cache write by TTL, a cache miss (a rewrite after a step's first call), tool-result
+    # bytes by tool including MCP tools, and the report a subagent handed back.
+    diff "$f/record-meter.jsonl" <(
+        ISSUE=8 GATE_CLASS=glue HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
+            scripts/run-record.sh record "$f/execution-meter.json" | jq -c 'del(.at)')
+    diff "$f/table-meter.md" <(scripts/run-record.sh table < "$f/record-meter.jsonl")
+    diff "$f/digest-meter.md" <(cat "$f/records.jsonl" "$f/record-meter.jsonl" | scripts/run-record.sh digest)
+    # A record from before the meter has no meter: the table skips it and the digest shows `-`.
+    jq -c 'del(.steps[].meter)' "$f/records.jsonl" | scripts/run-record.sh table | grep -q 'Context and cache' \
+        && { echo "run-record: a record without a meter must print no meter table"; exit 1; }
+    jq -c 'del(.steps[].meter)' "$f/records.jsonl" | scripts/run-record.sh digest | grep -q '| orchestrator | 1 | - | 3 | - | - |' \
+        || { echo "run-record: a record without a meter must show - in the digest"; exit 1; }
     # Entries of a split message carry a partial output count: step outputs must still add up to the
     # result's per-model output exactly, and input and cache counts to within 20% (a real run
     # showed 2-16% unattributed, from calls the log does not hold).

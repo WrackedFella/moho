@@ -134,8 +134,8 @@ The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
 queries, spatial audio, content roots, save envelope, scene import ([ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md), seams 1 to 8),
 the UI shell and debug values ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md), seams 9 and 10; menus and settings controls join them in [ADR-0026](../../_todo/adr/0026-menus-and-settings-controls-are-ui-shell-seams.md)), and navigation
-([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md), seam 11), and asset roots
-([ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md)). Adding or changing
+([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md), seam 11), and asset roots and the install locator (`moho_core::install::Install::locate`)
+([ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md), rules 1 to 5 and 6). Adding or changing
 one is an ADR-level change.
 
 ## 4 Fixed-step loop (`moho_app`)

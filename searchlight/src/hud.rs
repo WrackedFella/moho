@@ -1,7 +1,7 @@
 //! Wording the player reads for rifle state.
 
 use glam::Vec3;
-use searchlight_rules::{BodyPart, MagazineLevel, Rig};
+use searchlight_rules::{BodyPart, LoadState, MagazineLevel, Rig};
 
 use crate::control::ControlAction;
 use crate::mode::Tally;
@@ -183,6 +183,24 @@ pub fn strip_text(marks: &[SlotMark]) -> String {
         .join(" ")
 }
 
+/// The colour of the load icon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadIcon {
+    White,
+    Yellow,
+    Red,
+}
+
+/// The icon colour for `state`: white while fine, yellow while slowed or unable to sprint, red
+/// while unable to move.
+pub fn load_icon(state: LoadState) -> LoadIcon {
+    match state {
+        LoadState::Fine => LoadIcon::White,
+        LoadState::Slowed | LoadState::NoSprint => LoadIcon::Yellow,
+        LoadState::CannotMove => LoadIcon::Red,
+    }
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -227,9 +245,7 @@ mod tests {
     fn rig_holding(slots: u32, magazines: Vec<searchlight_rules::Magazine>) -> Rig {
         let mut rig = Rig::new(
             searchlight_rules::ItemId::new("test_rig"),
-            &searchlight_rules::RigSpec {
-                magazine_slots: slots,
-            },
+            &crate::test_support::rig_spec(slots),
         );
         for magazine in magazines {
             rig.stow(magazine).expect("the rig has a slot per magazine");
@@ -299,6 +315,20 @@ mod tests {
         let rig = rig_holding(0, vec![]);
 
         assert_eq!(rig_strip(&rig), []);
+    }
+
+    #[test]
+    fn the_load_icon_is_white_yellow_or_red_by_load_state() {
+        let icons = [
+            (LoadState::Fine, LoadIcon::White),
+            (LoadState::Slowed, LoadIcon::Yellow),
+            (LoadState::NoSprint, LoadIcon::Yellow),
+            (LoadState::CannotMove, LoadIcon::Red),
+        ];
+
+        for (state, icon) in icons {
+            assert_eq!(load_icon(state), icon, "{state:?}");
+        }
     }
 }
 

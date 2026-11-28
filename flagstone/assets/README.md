@@ -7,6 +7,28 @@
 | `unmark.wav` | A placeholder cue for cancelling a mark: the same blip falling (780 to 520 Hz). |
 | `dig.wav` | A placeholder cue for a pawn digging a block: a 0.15 s falling thud with a little noise (22.05 kHz, mono, 16-bit). |
 
+## Where the game finds its sounds
+
+Each file resolves one at a time through these folders, the first holding it winning:
+
+1. A folder named with `--assets <folder>`, if given.
+2. The `assets` folder beside the executable, else this folder in the checkout.
+
+The four cues above are required: a start where none of the folders holds one stops with an
+error naming the file and every folder searched. Two more files are optional, looked for under
+the same names in any of the folders, and neither is committed:
+
+| File | What it is |
+|---|---|
+| `audio/ui/button_click.mp3` | The sound of a UI button press and menu navigation. Without it the UI is silent. |
+| `audio/music/menu.ogg` | Music looped on the main menu. Without it the menu has no music. |
+
+The log says, once for each, when one is not found and which folders were searched. A local
+copy of the git-ignored root `assets/` folder plays with `cargo run -p flagstone -- --assets assets`.
+
+`just package flagstone` builds a release executable and lays it out with this folder as
+`assets/` beside it in `target/package/flagstone/`; copy that folder anywhere and it runs.
+
 ## Origin
 
 `mark.wav` and `unmark.wav` use the same envelope and format as `pickup.wav` with other

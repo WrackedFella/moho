@@ -5,6 +5,7 @@ pub mod aim;
 pub mod arena;
 pub mod body;
 pub mod brain;
+pub mod character;
 pub mod console_commands;
 pub mod control;
 pub mod controls;
@@ -22,6 +23,7 @@ pub mod levels;
 pub mod menu;
 pub mod menu_feed;
 pub mod mode;
+pub mod player;
 pub mod round;
 pub mod shot;
 pub mod sim;
@@ -37,14 +39,22 @@ use moho_ui_shell::CONSOLE_BINDING;
 /// Ticks per second the prototype runs at.
 pub const TICK_HZ: u32 = 60;
 
-/// The base content folder, beside the crate like `assets`.
-pub fn content_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("content")
+/// The folders a packaged build holds beside its executable.
+pub const SHIPPED_FOLDERS: &[&str] = &["assets", "content"];
+
+/// The source checkout's crate folder, holding the shipped folders.
+pub fn checkout_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The baked levels and sounds, beside the crate like `content`.
+/// The checkout's content folder (test placeholders and the dev fallback).
+pub fn content_root() -> PathBuf {
+    checkout_root().join("content")
+}
+
+/// The checkout's baked levels and sounds (test placeholders and the dev fallback).
 pub fn assets_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
+    checkout_root().join("assets")
 }
 
 /// Where the FPS keeps its preferences.

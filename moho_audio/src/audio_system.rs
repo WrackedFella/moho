@@ -9,10 +9,8 @@ use crate::output::{AudioOutput, Playback};
 use crate::rodio_output::RodioOutput;
 use crate::spatial::{Listener, distance_gain, rear_gain, stereo_pan};
 use glam::Vec3;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
-
-const CLICK_SOUND: &str = "assets/audio/ui/button_click.mp3";
 
 /// Main audio system for the Moho engine.
 ///
@@ -27,6 +25,9 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
     /// Audio cache manager (handles loading and caching)
     audio_cache: AudioCache,
 
+    /// The file UI events play; none means they are silent.
+    ui_click: Option<PathBuf>,
+
     /// Looping background music voice, kept for live volume changes.
     music_voice: Option<O::Voice>,
 
@@ -36,24 +37,32 @@ pub struct AudioSystem<O: AudioOutput = RodioOutput> {
 impl AudioSystem {
     /// Create a new audio system playing through the default audio device.
     ///
+    /// UI events play the file at `ui_click`, or nothing when it is `None`.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the device or the UI sound cache cannot be opened.
-    pub fn new() -> AudioResult<Self> {
+    /// Returns an error if the device cannot be opened or the click cannot be read.
+    pub fn new(ui_click: Option<PathBuf>) -> AudioResult<Self> {
         let output = RodioOutput::open_default()?;
+        let cache = AudioCache::new(ui_click.as_deref())?;
 
         debug!("Audio system initialized successfully");
 
-        Ok(Self::with_output(output, AudioCache::new()?))
+        Ok(Self::with_output(output, cache, ui_click))
     }
 }
 
 impl<O: AudioOutput> AudioSystem<O> {
-    pub(crate) fn with_output(output: O, audio_cache: AudioCache) -> Self {
+    pub(crate) fn with_output(
+        output: O,
+        audio_cache: AudioCache,
+        ui_click: Option<PathBuf>,
+    ) -> Self {
         Self {
             output,
             settings: AudioSettings::default(),
             audio_cache,
+            ui_click,
             music_voice: None,
             listener: Listener::default(),
         }
@@ -207,9 +216,14 @@ impl<O: AudioOutput> AudioSystem<O> {
         }
     }
 
-    /// Play the UI click, served from the pre-loaded UI cache for low latency.
+    /// Play the UI click, served from the pre-loaded UI cache for low latency; nothing when
+    /// the game named none.
     fn play_click(&mut self, volume: f32) -> AudioResult<()> {
-        self.play_audio_source(&AudioSource::ui_sound(CLICK_SOUND, volume))
+        let Some(click) = &self.ui_click else {
+            return Ok(());
+        };
+        let source = AudioSource::ui_sound(click, volume);
+        self.play_audio_source(&source)
     }
 
     /// Stop audio based on category
@@ -265,7 +279,7 @@ mod tests {
             &[(CLICK, wav_bytes(10, 500))],
         );
         let output = RecordingOutput::default();
-        let mut system = AudioSystem::with_output(output.clone(), cache);
+        let mut system = AudioSystem::with_output(output.clone(), cache, Some(CLICK.into()));
         system.set_settings(settings);
         (system, output)
     }
@@ -328,6 +342,85 @@ mod tests {
             assert_volume_eq(voices[0].volume, volume);
             assert!(!voices[0].looped, "{event:?}");
             assert!(voices[0].detached && !voices[0].stopped, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn ui_events_play_the_given_click() {
+        let named = "/somewhere/else/click.mp3";
+        let rows = [
+            (AudioEvent::ButtonClick, 0.8),
+            (AudioEvent::MenuNavigate, 0.6),
+            (AudioEvent::Confirm, 0.8),
+            (AudioEvent::Cancel, 0.7),
+            (AudioEvent::Error, 0.9),
+        ];
+
+        for (event, volume) in rows {
+            let cache = AudioCache::seeded(&[], &[(named, wav_bytes(7, 700))]);
+            let output = RecordingOutput::default();
+            let mut system = AudioSystem::with_output(
+                output.clone(),
+                cache,
+                Some(std::path::PathBuf::from(named)),
+            );
+            system.set_settings(full_volume());
+
+            let result = system.handle_event(event.clone());
+
+            result.unwrap_or_else(|e| panic!("{event:?} failed: {e}"));
+            let voices = output.voices();
+            assert_eq!(voices.len(), 1, "{event:?}");
+            assert_eq!(voices[0].path, named, "{event:?}");
+            assert_eq!(voices[0].bytes, wav_bytes(7, 700), "{event:?}");
+            assert_volume_eq(voices[0].volume, volume);
+            assert!(voices[0].detached && !voices[0].looped, "{event:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_missing_from_the_cache_and_disk_is_an_error_and_plays_nothing() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let click = dir.path().join("gone.mp3");
+        let output = RecordingOutput::default();
+        let mut system = AudioSystem::with_output(
+            output.clone(),
+            AudioCache::seeded(&[], &[]),
+            Some(click.clone()),
+        );
+        system.set_settings(full_volume());
+
+        let result = system.handle_event(AudioEvent::ButtonClick);
+
+        match result {
+            Err(AudioError::FileNotFound(message)) => {
+                assert!(message.contains(&click.display().to_string()), "{message}");
+            }
+            other => panic!("expected FileNotFound, got {other:?}"),
+        }
+        assert!(output.voices().is_empty());
+    }
+
+    #[test]
+    fn without_a_click_ui_events_are_silent() {
+        let events = [
+            AudioEvent::ButtonClick,
+            AudioEvent::MenuNavigate,
+            AudioEvent::Confirm,
+            AudioEvent::Cancel,
+            AudioEvent::Error,
+        ];
+
+        for event in events {
+            let cache = AudioCache::seeded(&[], &[(CLICK, wav_bytes(10, 500))]);
+            let output = RecordingOutput::default();
+            let mut system = AudioSystem::with_output(output.clone(), cache, None);
+            system.set_settings(full_volume());
+
+            let result = system.handle_event(event.clone());
+
+            assert!(result.is_ok(), "{event:?}: {result:?}");
+            assert!(output.voices().is_empty(), "{event:?}");
         }
     }
 

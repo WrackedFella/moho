@@ -101,17 +101,18 @@ pub fn emit_audio_event(event_bus: &EventBus, audio_event: UiAudioEvent) {
     event_bus.publish(core_event);
 }
 
-/// Menu background music, relative to the working directory.
-pub const MENU_MUSIC_PATH: &str = "assets/audio/music/menu.ogg";
-
-/// The music event that moves menu music from `playing` to `want`: a looped
-/// [`MENU_MUSIC_PATH`] start, a stop, or `None` when they already agree.
-pub fn menu_music_change(want: bool, playing: bool) -> Option<moho_core::events::AudioEvent> {
+/// The music event that moves menu music from `playing` to `want`: a looped start of the file
+/// at `music`, a stop, or `None` when they already agree.
+pub fn menu_music_change(
+    want: bool,
+    playing: bool,
+    music: &std::path::Path,
+) -> Option<moho_core::events::AudioEvent> {
     use moho_core::events::AudioEvent;
 
     match (want, playing) {
         (true, false) => Some(AudioEvent::MusicStart {
-            path: MENU_MUSIC_PATH.to_string(),
+            path: music.to_string_lossy().into_owned(),
             volume: 1.0,
             looped: true,
         }),
@@ -339,9 +340,11 @@ mod tests {
         use super::*;
         use moho_core::events::AudioEvent;
 
+        const MUSIC: &str = "assets/audio/music/menu.ogg";
+
         #[test]
-        fn starts_from_the_assets_music_path() {
-            let event = menu_music_change(true, false);
+        fn starts_from_the_given_music_path() {
+            let event = menu_music_change(true, false, MUSIC.as_ref());
 
             match event {
                 Some(AudioEvent::MusicStart {
@@ -359,7 +362,7 @@ mod tests {
 
         #[test]
         fn stops_when_playing_but_no_longer_wanted() {
-            let event = menu_music_change(false, true);
+            let event = menu_music_change(false, true, MUSIC.as_ref());
 
             assert!(
                 matches!(event, Some(AudioEvent::MusicStop)),
@@ -370,7 +373,7 @@ mod tests {
         #[test]
         fn no_change_when_want_matches_playing() {
             for state in [true, false] {
-                let event = menu_music_change(state, state);
+                let event = menu_music_change(state, state, MUSIC.as_ref());
 
                 assert!(event.is_none(), "state {state}: unexpected {event:?}");
             }

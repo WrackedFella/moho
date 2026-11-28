@@ -14,6 +14,12 @@ pub enum AssetError {
         /// The folder that was asked for.
         path: PathBuf,
     },
+    /// An asset folder path exists but is not a folder.
+    #[error("asset folder {} is not a folder", path.display())]
+    NotAFolder {
+        /// The path that was asked for.
+        path: PathBuf,
+    },
     /// An asset name is absolute or steps outside its folder.
     #[error("asset name {} must be a relative path without `.` or `..`", name.display())]
     InvalidName {
@@ -45,7 +51,8 @@ impl AssetRoots {
     /// Starts the search order with `path` as the lowest layer.
     ///
     /// # Errors
-    /// [`AssetError::MissingFolder`] when `path` is not a folder.
+    /// [`AssetError::MissingFolder`] when `path` does not exist;
+    /// [`AssetError::NotAFolder`] when it exists but is not a folder.
     pub fn placeholders(path: &Path) -> Result<Self, AssetError> {
         Self { layers: Vec::new() }.with_folder(path)
     }
@@ -53,11 +60,15 @@ impl AssetRoots {
     /// Adds `path` as a layer above every existing one.
     ///
     /// # Errors
-    /// [`AssetError::MissingFolder`] when `path` is not a folder.
+    /// [`AssetError::MissingFolder`] when `path` does not exist;
+    /// [`AssetError::NotAFolder`] when it exists but is not a folder.
     pub fn with_folder(mut self, path: &Path) -> Result<Self, AssetError> {
         if !path.is_dir() {
-            return Err(AssetError::MissingFolder {
-                path: path.to_owned(),
+            let path = path.to_owned();
+            return Err(if path.exists() {
+                AssetError::NotAFolder { path }
+            } else {
+                AssetError::MissingFolder { path }
             });
         }
         self.layers.push(path.to_owned());
@@ -70,7 +81,14 @@ impl AssetRoots {
     /// [`AssetError::InvalidName`] for an absolute name or one with a `..`, `.`, root or prefix
     /// component; [`AssetError::NotFound`] listing every folder searched.
     pub fn resolve(&self, name: &Path) -> Result<PathBuf, AssetError> {
+        // `components()` drops an interior or trailing `.`, so the segments are split by hand.
+        let dot_segment = name
+            .as_os_str()
+            .as_encoded_bytes()
+            .split(|byte| std::path::is_separator(char::from(*byte)))
+            .any(|segment| segment == b".");
         let plain = !name.as_os_str().is_empty()
+            && !dot_segment
             && name
                 .components()
                 .all(|part| matches!(part, Component::Normal(_)));
@@ -167,24 +185,6 @@ mod tests {
             error.to_string().contains(&missing.display().to_string()),
             "{error}"
         );
-    }
-
-    #[test]
-    fn a_file_where_a_folder_is_expected_is_refused() {
-        let placeholders = folder_with(&[]);
-        let holder = folder_with(&["plain.txt"]);
-        let file = holder.path().join("plain.txt");
-        let base = AssetRoots::placeholders(placeholders.path()).unwrap();
-
-        let as_placeholders = AssetRoots::placeholders(&file).unwrap_err();
-        let as_folder = base.with_folder(&file).unwrap_err();
-
-        for error in [as_placeholders, as_folder] {
-            assert!(
-                matches!(&error, AssetError::MissingFolder { path } if path == &file),
-                "{error:?}"
-            );
-        }
     }
 
     /// Collects what `tracing` writes while `run` executes.
@@ -374,6 +374,43 @@ mod tests {
                 error.to_string().contains(&name.display().to_string()),
                 "{error}"
             );
+        }
+    }
+
+    #[test]
+    fn dot_segments_are_refused_anywhere() {
+        let placeholders = folder_with(&["x.glb", "a/x.glb"]);
+        let roots = roots(placeholders.path(), &[]);
+
+        for name in ["./x.glb", "a/./x.glb", "a/."] {
+            let error = roots.resolve(Path::new(name)).unwrap_err();
+
+            assert!(
+                matches!(&error, AssetError::InvalidName { name: refused } if refused == Path::new(name)),
+                "{name}: {error:?}"
+            );
+            assert!(error.to_string().contains(name), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_file_named_as_a_folder_is_reported_as_not_a_folder() {
+        let placeholders = folder_with(&[]);
+        let holder = folder_with(&["plain.txt"]);
+        let file = holder.path().join("plain.txt");
+        let base = AssetRoots::placeholders(placeholders.path()).unwrap();
+
+        let as_placeholders = AssetRoots::placeholders(&file).unwrap_err();
+        let as_folder = base.with_folder(&file).unwrap_err();
+
+        for error in [as_placeholders, as_folder] {
+            assert!(
+                matches!(&error, AssetError::NotAFolder { path } if path == &file),
+                "{error:?}"
+            );
+            let text = error.to_string();
+            assert!(text.contains("not a folder"), "{text}");
+            assert!(text.contains(&file.display().to_string()), "{text}");
         }
     }
 

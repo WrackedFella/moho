@@ -1,14 +1,19 @@
 //! What the tester named on the command line, and the asset folders it makes.
 
+use std::error::Error as StdError;
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use moho_app::launch::{LaunchError, split_assets_option};
 use moho_core::assets::{AssetError, AssetRoots};
-use thiserror::Error;
+use moho_core::content::ContentRoots;
+use moho_core::install::{Install, InstallError};
 
-use crate::assets_root;
-
-const ASSETS_OPTION: &str = "--assets";
+use crate::kit::{ENEMY_KIT_ID, START_KIT_ID};
+use crate::levels::LevelChoice;
+use crate::sim::SimConfig;
+use crate::tuning::shipped_with_enemy;
+use crate::{SHIPPED_FOLDERS, checkout_root, mods_dir};
 
 /// The launch arguments after the program name.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -19,18 +24,6 @@ pub struct Launch {
     pub assets: Option<PathBuf>,
 }
 
-/// A launch argument that cannot be used.
-#[derive(Debug, Error, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum LaunchError {
-    /// `--assets` was the last argument.
-    #[error("`--assets` needs a folder after it")]
-    MissingValue,
-    /// `--assets` was given more than once.
-    #[error("`--assets` was given more than once")]
-    Repeated,
-}
-
 /// Reads `--assets <folder>` and the first other argument as the level; later arguments are
 /// ignored.
 ///
@@ -38,33 +31,60 @@ pub enum LaunchError {
 /// [`LaunchError::MissingValue`] for `--assets` with nothing after it;
 /// [`LaunchError::Repeated`] for a second `--assets`.
 pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, LaunchError> {
-    let mut launch = Launch::default();
-    let mut args = args.into_iter();
-    while let Some(arg) = args.next() {
-        if arg == ASSETS_OPTION {
-            if launch.assets.is_some() {
-                return Err(LaunchError::Repeated);
-            }
-            let folder = args.next().ok_or(LaunchError::MissingValue)?;
-            launch.assets = Some(PathBuf::from(folder));
-        } else if launch.level.is_none() {
-            launch.level = Some(arg);
-        }
-    }
-    Ok(launch)
+    let (assets, rest) = split_assets_option(args)?;
+    Ok(Launch {
+        level: rest.into_iter().next(),
+        assets,
+    })
+}
+
+/// The install holding the shipped folders: beside the executable at `exe_dir`, else the
+/// source checkout.
+///
+/// # Errors
+/// [`InstallError::Incomplete`] when `exe_dir` holds some but not all shipped folders (no
+/// fallback to the checkout); [`InstallError::NotFound`] when it holds none and the checkout
+/// lacks one.
+pub fn locate(exe_dir: &Path) -> Result<Install, InstallError> {
+    Install::locate(exe_dir, &checkout_root(), SHIPPED_FOLDERS)
 }
 
 /// The placeholder folder, then the named folder if any. The only place an override layer is
 /// built.
 ///
 /// # Errors
-/// [`AssetError::MissingFolder`] naming the folder that does not exist.
-pub fn asset_roots(launch: &Launch) -> Result<AssetRoots, AssetError> {
-    let roots = AssetRoots::placeholders(&assets_root())?;
+/// [`AssetError::MissingFolder`] naming a folder that does not exist;
+/// [`AssetError::NotAFolder`] naming a path that is a file.
+pub fn asset_roots(launch: &Launch, placeholders: &Path) -> Result<AssetRoots, AssetError> {
+    let roots = AssetRoots::placeholders(placeholders)?;
     match &launch.assets {
         Some(folder) => roots.with_folder(folder),
         None => Ok(roots),
     }
+}
+
+/// The level file and the rifle shot sound, each from the highest asset folder holding it.
+///
+/// # Errors
+/// [`AssetError`] when either file is in no asset folder.
+pub fn resolve_shipped(
+    choice: &LevelChoice,
+    assets: &AssetRoots,
+) -> Result<(PathBuf, PathBuf), AssetError> {
+    Ok((
+        choice.path(assets)?,
+        assets.resolve(Path::new("rifle_shot.wav"))?,
+    ))
+}
+
+/// The sim tuning built from the starting kit and the enemy kit, both loaded from the
+/// `content` folder and the listed mod roots.
+///
+/// # Errors
+/// The content or kit load failure.
+pub fn load_start_kit(content: &Path, mods: &[String]) -> Result<SimConfig, Box<dyn StdError>> {
+    let roots = ContentRoots::base(content)?.with_mods(&mods_dir(), mods)?;
+    Ok(shipped_with_enemy(&roots, START_KIT_ID, ENEMY_KIT_ID)?)
 }
 
 #[cfg(test)]
@@ -73,9 +93,10 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::assets_root;
     use crate::levels::{self, LevelChoice};
     use crate::test_support::{logged, placeholder_assets};
+    use crate::{arena, assets_root, content_root};
+    use moho_core::install::Origin;
 
     fn os(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -182,16 +203,10 @@ mod tests {
     }
 
     #[test]
-    fn launch_errors_name_the_option() {
-        assert!(LaunchError::MissingValue.to_string().contains("--assets"));
-        assert!(LaunchError::Repeated.to_string().contains("--assets"));
-    }
-
-    #[test]
     fn named_folder_supplies_its_arena_and_placeholders_the_shot() {
         let dir = folder_with(&["arena.glb"]);
         let launch = launch_naming(dir.path());
-        let roots = asset_roots(&launch).unwrap();
+        let roots = asset_roots(&launch, &assets_root()).unwrap();
         let choice = levels::choose(launch.level.as_deref()).unwrap();
 
         let level = choice.path(&roots).unwrap();
@@ -205,7 +220,7 @@ mod tests {
     #[test]
     fn resolving_logs_the_layer_and_folder_of_each_asset() {
         let dir = folder_with(&["arena.glb"]);
-        let roots = asset_roots(&launch_naming(dir.path())).unwrap();
+        let roots = asset_roots(&launch_naming(dir.path()), &assets_root()).unwrap();
 
         let log = logged(|| {
             roots.resolve(Path::new("arena.glb")).unwrap();
@@ -238,7 +253,7 @@ mod tests {
         let missing = parent.path().join("no_such_folder");
         let launch = parse([OsString::from("--assets"), missing.as_os_str().to_owned()]).unwrap();
 
-        let error = asset_roots(&launch).unwrap_err();
+        let error = asset_roots(&launch, &assets_root()).unwrap_err();
 
         assert!(
             matches!(&error, AssetError::MissingFolder { path } if path == &missing),
@@ -252,11 +267,142 @@ mod tests {
 
     #[test]
     fn no_assets_option_searches_placeholders_only() {
-        let roots = asset_roots(&Launch::default()).unwrap();
+        let roots = asset_roots(&Launch::default(), &assets_root()).unwrap();
 
         let arena = roots.resolve(Path::new("arena.glb")).unwrap();
 
         assert_eq!(arena, assets_root().join("arena.glb"));
         assert_eq!(roots, placeholder_assets());
+    }
+
+    /// Copies the files under `from` into `to`, keeping the layout and skipping `tools`
+    /// folders, which a packaged build does not ship.
+    fn copy_shipped(from: &Path, to: &Path) {
+        fs::create_dir_all(to).unwrap();
+        for entry in fs::read_dir(from).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap();
+            if path.is_dir() {
+                if name != "tools" {
+                    copy_shipped(&path, &to.join(name));
+                }
+            } else {
+                fs::copy(&path, to.join(name)).unwrap();
+            }
+        }
+    }
+
+    /// A folder holding copies of the checkout's `assets` and `content` files, as a packaged
+    /// build lays them out.
+    fn copied_install() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        copy_shipped(&assets_root(), &dir.path().join("assets"));
+        copy_shipped(&content_root(), &dir.path().join("content"));
+        dir
+    }
+
+    const THREE_MAGAZINES: &str = "magazines = [
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+]";
+
+    const TWO_MAGAZINES: &str = "magazines = [
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+    { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
+]";
+
+    #[test]
+    fn a_copy_outside_the_checkout_starts_from_its_own_folders() {
+        let copy = copied_install();
+        let kits = copy.path().join("content").join("kits.toml");
+        let original = fs::read_to_string(&kits).unwrap();
+        let edited = original.replacen(THREE_MAGAZINES, TWO_MAGAZINES, 1);
+        assert_ne!(
+            edited, original,
+            "the start kit's three magazines were not found"
+        );
+        fs::write(&kits, edited).unwrap();
+        let no_checkout = copy.path().join("no-checkout");
+
+        let install = Install::locate(copy.path(), &no_checkout, SHIPPED_FOLDERS).unwrap();
+        let assets = asset_roots(&Launch::default(), &install.root().join("assets")).unwrap();
+        let config = load_start_kit(&install.root().join("content"), &[]).unwrap();
+
+        assert_eq!(install.root(), copy.path());
+        assert_eq!(config.loadout.rig().magazines().count(), 2);
+        for name in ["arena", "proving_ground"] {
+            let choice = levels::choose(Some(OsString::from(name).as_os_str())).unwrap();
+
+            let (level, shot) = resolve_shipped(&choice, &assets).unwrap();
+
+            assert!(level.starts_with(copy.path()), "{level:?}");
+            assert!(shot.starts_with(copy.path()), "{shot:?}");
+            arena::load(&level).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_assets_folder_overrides_a_copied_install() {
+        let copy = copied_install();
+        let folder = folder_with(&["arena.glb"]);
+        let launch = launch_naming(folder.path());
+        let install = Install::locate(
+            copy.path(),
+            &copy.path().join("no-checkout"),
+            SHIPPED_FOLDERS,
+        )
+        .unwrap();
+        let assets = asset_roots(&launch, &install.root().join("assets")).unwrap();
+        let choice = levels::choose(launch.level.as_deref()).unwrap();
+
+        let (level, shot) = resolve_shipped(&choice, &assets).unwrap();
+
+        assert_eq!(level, folder.path().join("arena.glb"));
+        assert_eq!(shot, copy.path().join("assets").join("rifle_shot.wav"));
+    }
+
+    #[test]
+    fn a_build_missing_its_content_folder_is_refused_not_borrowed_from_the_checkout() {
+        let copy = copied_install();
+        fs::remove_dir_all(copy.path().join("content")).unwrap();
+
+        let error = locate(copy.path()).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                InstallError::Incomplete { root, missing }
+                    if root == copy.path() && missing == &["content"]
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn an_executable_folder_with_nothing_in_it_starts_from_the_checkout() {
+        let empty = tempfile::tempdir().unwrap();
+
+        let install = locate(empty.path()).unwrap();
+
+        assert_eq!(install.root(), checkout_root());
+        assert_eq!(install.origin(), Origin::SourceCheckout);
+    }
+
+    #[test]
+    fn a_file_named_as_the_assets_folder_is_an_error_saying_so() {
+        let holder = folder_with(&["plain.txt"]);
+        let file = holder.path().join("plain.txt");
+        let launch = parse([OsString::from("--assets"), file.as_os_str().to_owned()]).unwrap();
+
+        let error = asset_roots(&launch, &assets_root()).unwrap_err();
+
+        assert!(
+            matches!(&error, AssetError::NotAFolder { path } if path == &file),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(text.contains("not a folder"), "{text}");
+        assert!(text.contains(&file.display().to_string()), "{text}");
     }
 }

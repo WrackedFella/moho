@@ -1,8 +1,8 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
-use crate::ballistics::RoundStats;
+use crate::ballistics::{MIN_SPEED, RoundStats};
 use crate::inventory::{Item, Remains, RoundStack};
-use crate::item::{ItemDef, ItemId, ItemKind};
+use crate::item::{ItemDef, ItemId, ItemKind, SlotKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
 use crate::rifle::Rifle;
@@ -93,14 +93,16 @@ pub enum KitError {
         /// The kind needed.
         expected: &'static str,
     },
-    /// More magazines than the rig has slots.
-    #[error("{magazines} magazines do not fit the {slots} slots of rig \"{rig}\"")]
+    /// More magazines of one kind than the rig has slots of that kind.
+    #[error("{magazines} {kind} magazines do not fit the {slots} {kind} slots of rig \"{rig}\"")]
     RigOverfilled {
         /// The rig item.
         rig: ItemId,
-        /// Its slots.
+        /// The kind of slot the magazines take.
+        kind: SlotKind,
+        /// The rig's slots of that kind; 0 when it has none.
         slots: u32,
-        /// Magazines listed.
+        /// Magazines of that kind the kit stows.
         magazines: usize,
     },
     /// The loaded magazine is for another well than the weapon's.
@@ -128,6 +130,22 @@ pub enum KitError {
         rounds: u32,
         /// The magazine's capacity.
         capacity: u32,
+    },
+    /// The weapon's barrel leaves the round at or below the minimum speed.
+    #[error("round \"{round}\" leaves weapon \"{weapon}\" at or below the minimum speed")]
+    TooSlowFromWeapon {
+        /// The weapon item.
+        weapon: ItemId,
+        /// The round item.
+        round: ItemId,
+    },
+    /// The weapon's barrel launches the round at a speed too large to be finite.
+    #[error("round \"{round}\" leaves weapon \"{weapon}\" at a speed that is not finite")]
+    NotFiniteFromWeapon {
+        /// The weapon item.
+        weapon: ItemId,
+        /// The round item.
+        round: ItemId,
     },
     /// A carried entry names fields its item does not take, or lacks one it needs.
     #[error("the entry for item \"{id}\" has fields that do not fit its item")]
@@ -166,8 +184,10 @@ impl KitDef {
     /// # Errors
     ///
     /// A [`KitError`] naming the offending item: unknown, of the wrong kind, a round of
-    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, or more
-    /// magazines than the rig has slots. Rig magazines that do not fit the weapon are allowed.
+    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, a round in a
+    /// magazine of the weapon's well that its barrel launches at a speed not finite or not above
+    /// [`crate::MIN_SPEED`], or more magazines of a kind than the rig has slots of it. Rig
+    /// magazines that do not fit the weapon are allowed.
     pub fn resolve<'a>(
         &self,
         lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
@@ -226,6 +246,10 @@ impl KitDef {
                     magazine: magazine.clone(),
                 });
             }
+            let stats = spec_round.stats();
+            if spec.well == weapon.well {
+                check_launch(&self.weapon, weapon, round, &stats)?;
+            }
             let count = held.unwrap_or(spec.capacity);
             let filled = Magazine::filled(magazine.clone(), spec, round, count).map_err(|_| {
                 KitError::OverCapacity {
@@ -234,7 +258,7 @@ impl KitDef {
                     capacity: spec.capacity,
                 }
             })?;
-            rounds.insert(round.clone(), spec_round.stats());
+            rounds.insert(round.clone(), stats);
             Ok(filled)
         };
 
@@ -249,10 +273,25 @@ impl KitDef {
         let mut rig = Rig::new(self.rig.clone(), rig_spec);
         for entry in &self.magazines {
             let spare = build(&mut rounds, &entry.magazine, &entry.round, entry.rounds)?;
-            rig.stow(spare).map_err(|_| KitError::RigOverfilled {
-                rig: self.rig.clone(),
-                slots: rig_spec.magazine_slots,
-                magazines: self.magazines.len(),
+            rig.stow(spare).map_err(|refused| {
+                let kind = refused.slot().clone();
+                let magazines = self
+                    .magazines
+                    .iter()
+                    .filter_map(
+                        |listed| match lookup(&listed.magazine).map(|def| &def.kind) {
+                            Some(ItemKind::Magazine(spec)) => Some(&spec.slot),
+                            _ => None,
+                        },
+                    )
+                    .filter(|listed_kind| **listed_kind == kind)
+                    .count();
+                KitError::RigOverfilled {
+                    rig: self.rig.clone(),
+                    slots: rig_spec.magazine_slots.get(&kind).copied().unwrap_or(0),
+                    kind,
+                    magazines,
+                }
             })?;
         }
 
@@ -298,6 +337,38 @@ impl KitDef {
     }
 }
 
+/// Refuses a round that `weapon`'s barrel launches at a speed that is not finite or is not above
+/// [`MIN_SPEED`], naming the weapon item `weapon_id` and the round item `round_id`.
+///
+/// # Errors
+///
+/// [`KitError::NotFiniteFromWeapon`] when the scaled muzzle velocity overflows, else
+/// [`KitError::TooSlowFromWeapon`] when it is at or below [`MIN_SPEED`].
+pub fn check_launch(
+    weapon_id: &ItemId,
+    weapon: &RifleDef,
+    round_id: &ItemId,
+    stats: &RoundStats,
+) -> Result<(), KitError> {
+    let launch = stats
+        .ballistics
+        .through_barrel(weapon.muzzle_velocity_factor)
+        .muzzle_velocity;
+    if !launch.is_finite() {
+        return Err(KitError::NotFiniteFromWeapon {
+            weapon: weapon_id.clone(),
+            round: round_id.clone(),
+        });
+    }
+    if launch <= MIN_SPEED {
+        return Err(KitError::TooSlowFromWeapon {
+            weapon: weapon_id.clone(),
+            round: round_id.clone(),
+        });
+    }
+    Ok(())
+}
+
 /// What a kit resolves to before it is a player's loadout or an enemy's remains.
 struct Parts {
     weapon: RifleDef,
@@ -314,7 +385,7 @@ mod tests {
     use crate::inventory::{Item, RoundStack};
     use crate::item::{ItemDef, ItemId, MagazineWell};
     use crate::test_support::id;
-    use crate::weapon::{FireBehaviour, RifleDef};
+    use crate::weapon::{FireBehaviour, RifleDef, VelocityFactor};
     use serde_json::{Value, json};
     use std::collections::{BTreeMap, HashMap};
 
@@ -329,11 +400,11 @@ mod tests {
             },
             "mag_rifle": {
                 "class": "gear", "size": [1, 2],
-                "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30}
+                "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "rifle"}
             },
             "mag_pistol": {
                 "class": "gear", "size": [1, 1],
-                "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15}
+                "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15, "slot": "rifle"}
             },
             "round_ball": {
                 "class": "consumable", "size": [1, 1],
@@ -351,7 +422,7 @@ mod tests {
                 "class": "consumable", "size": [1, 1],
                 "round": {"caliber": "9mm", "muzzle_velocity": 400.0, "drag": 3.0, "damage": 20}
             },
-            "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
+            "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": {"rifle": 3}}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
         });
         let Value::Object(defs) = defs else {
@@ -427,8 +498,163 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: VelocityFactor::default(),
             }
         );
+    }
+
+    /// The fixture items with a rifle of barrel `factor` and a round `fast` leaving at
+    /// `velocity` in the rifle's caliber.
+    fn barrel_items(factor: f32, velocity: f32) -> HashMap<ItemId, ItemDef> {
+        let mut items = items();
+        for (name, def) in [
+            (
+                "rifle",
+                json!({
+                    "class": "weapon", "size": [2, 5], "condition": 100, "weight": 1.0,
+                    "weapon": {
+                        "well": "rifle", "fire": "semi_auto", "cooldown_ticks": 6,
+                        "reload_ticks": 120, "charge_ticks": 30,
+                        "muzzle_velocity_factor": factor
+                    }
+                }),
+            ),
+            (
+                "round_fast",
+                json!({
+                    "class": "consumable", "size": [1, 1], "weight": 1.0,
+                    "round": {
+                        "caliber": "5.56x45", "muzzle_velocity": velocity,
+                        "drag": 1.0, "damage": 30
+                    }
+                }),
+            ),
+        ] {
+            let def = serde_json::from_value(def)
+                .unwrap_or_else(|e| panic!("fixture item {name} should load: {e}"));
+            items.insert(ItemId::new(name), def);
+        }
+        items
+    }
+
+    fn barrel_kit(loaded_round: &str, stowed: Value) -> KitDef {
+        kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": loaded_round},
+            "magazines": stowed
+        }))
+    }
+
+    fn resolve_with(items: &HashMap<ItemId, ItemDef>, def: &KitDef) -> Result<Kit, KitError> {
+        def.resolve(|item| items.get(item))
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_slows_to_the_minimum_speed_is_refused_naming_both() {
+        let items = barrel_items(0.5, 200.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let error = resolve_with(&items, &def).expect_err("200 x 0.5 is exactly the minimum speed");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::TooSlowFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains("rifle") && text.contains("round_fast"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_leaves_just_above_the_minimum_speed_is_accepted() {
+        let items = barrel_items(0.5, 202.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let kit = resolve_with(&items, &def).expect("202 x 0.5 is above the minimum speed");
+
+        assert!(kit.rounds.contains_key(&id("round_fast")));
+    }
+
+    #[test]
+    fn a_loaded_round_the_barrel_launches_at_an_infinite_speed_is_refused_naming_both() {
+        let items = barrel_items(1.0e37, 940.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let error = resolve_with(&items, &def).expect_err("940 x 1e37 overflows f32");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::NotFiniteFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains("rifle") && text.contains("round_fast"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_large_but_finite_launch_speed_is_accepted() {
+        let items = barrel_items(10.0, 940.0);
+        let def = barrel_kit("round_fast", json!([]));
+
+        let kit = resolve_with(&items, &def).expect("940 x 10 is a finite speed");
+
+        assert!(kit.rounds.contains_key(&id("round_fast")));
+    }
+
+    #[test]
+    fn a_stowed_round_the_barrel_slows_too_far_is_refused_naming_both() {
+        let items = barrel_items(0.5, 150.0);
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_rifle", "round": "round_fast"}]
+        }));
+
+        let error = resolve_with(&items, &def).expect_err("150 x 0.5 is 75 on the rig");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::TooSlowFromWeapon { weapon, round }
+                    if *weapon == id("rifle") && *round == id("round_fast")
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_slow_round_in_a_magazine_the_weapon_does_not_take_is_not_refused() {
+        let mut items = barrel_items(0.5, 940.0);
+        items.insert(
+            id("round_slow_9mm"),
+            serde_json::from_value(json!({
+                "class": "consumable", "size": [1, 1], "weight": 1.0,
+                "round": {"caliber": "9mm", "muzzle_velocity": 150.0, "drag": 1.0, "damage": 20}
+            }))
+            .expect("the fixture round loads"),
+        );
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_pistol", "round": "round_slow_9mm"}]
+        }));
+
+        let kit =
+            resolve_with(&items, &def).expect("a pistol magazine is not fired by this barrel");
+
+        assert!(kit.rounds.contains_key(&id("round_slow_9mm")));
     }
 
     #[test]
@@ -525,7 +751,8 @@ mod tests {
         assert!(
             matches!(
                 &error,
-                KitError::RigOverfilled { rig, slots: 3, magazines: 4 } if *rig == id("rig_chest")
+                KitError::RigOverfilled { rig, kind, slots: 3, magazines: 4 }
+                    if *rig == id("rig_chest") && kind.as_str() == "rifle"
             ),
             "{error:?}"
         );
@@ -980,5 +1207,150 @@ mod tests {
             "a round only carried loose"
         );
         assert_eq!(rounds.len(), 3);
+    }
+
+    /// The fixture items with a rig of one rifle slot and two pistol slots, and magazines
+    /// that name the kind of slot they take.
+    fn kinded_items() -> HashMap<ItemId, ItemDef> {
+        let mut items = items();
+        for (name, def) in [
+            (
+                "rig_chest",
+                json!({"class": "gear", "size": [3, 2], "weight": 1.0,
+                    "rig": {"magazine_slots": {"rifle": 1, "pistol": 2}}}),
+            ),
+            (
+                "mag_rifle",
+                json!({"class": "gear", "size": [1, 2], "weight": 1.0,
+                    "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30,
+                        "slot": "rifle"}}),
+            ),
+            (
+                "mag_pistol",
+                json!({"class": "gear", "size": [1, 1], "weight": 1.0,
+                    "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15,
+                        "slot": "pistol"}}),
+            ),
+        ] {
+            let def = serde_json::from_value(def)
+                .unwrap_or_else(|e| panic!("fixture item {name} should load: {e}"));
+            items.insert(ItemId::new(name), def);
+        }
+        items
+    }
+
+    fn resolve_kinded(def: &KitDef) -> Result<Kit, KitError> {
+        let items = kinded_items();
+        def.resolve(|item| items.get(item))
+    }
+
+    #[test]
+    fn a_kit_stowing_more_magazines_than_their_kinds_slots_is_refused() {
+        let def = start(json!([
+            {"magazine": "mag_rifle", "round": "round_ball"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ]));
+
+        let error = resolve_kinded(&def).expect_err("one rifle slot cannot hold two magazines");
+
+        assert!(
+            matches!(&error, KitError::RigOverfilled { rig, .. } if *rig == id("rig_chest")),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("rig_chest"), "{error}");
+    }
+
+    #[test]
+    fn an_overfilled_kind_reports_that_kinds_slots_and_magazines() {
+        let def = start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_rifle", "round": "round_ball"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ]));
+
+        let error = resolve_kinded(&def).expect_err("one rifle slot cannot hold two magazines");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::RigOverfilled { rig, kind, slots: 1, magazines: 2 }
+                    if *rig == id("rig_chest") && kind.as_str() == "rifle"
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "2 rifle magazines do not fit the 1 rifle slots of rig \"rig_chest\""
+        );
+    }
+
+    #[test]
+    fn a_magazine_kind_the_rig_lacks_reports_zero_slots() {
+        let mut items = kinded_items();
+        let rifle_only = json!({"class": "gear", "size": [3, 2], "weight": 1.0,
+            "rig": {"magazine_slots": {"rifle": 1}}});
+        items.insert(
+            id("rig_chest"),
+            serde_json::from_value(rifle_only).expect("the fixture rig loads"),
+        );
+        let def = start(json!([{"magazine": "mag_pistol", "round": "round_9mm"}]));
+
+        let error = def
+            .resolve(|item| items.get(item))
+            .expect_err("the rig has no pistol slot");
+
+        assert!(
+            matches!(
+                &error,
+                KitError::RigOverfilled { rig, kind, slots: 0, magazines: 1 }
+                    if *rig == id("rig_chest") && kind.as_str() == "pistol"
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn interleaved_kinds_each_take_the_first_free_slot_of_their_kind() {
+        let def = start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm", "rounds": 5},
+            {"magazine": "mag_rifle", "round": "round_ball", "rounds": 7},
+            {"magazine": "mag_pistol", "round": "round_9mm", "rounds": 6}
+        ]));
+
+        let kit = resolve_kinded(&def).expect("each kind fits its slots");
+
+        let rounds: Vec<Option<u32>> = kit
+            .loadout
+            .rig()
+            .slots()
+            .iter()
+            .map(|slot| slot.as_ref().map(Magazine::rounds))
+            .collect();
+        assert_eq!(rounds, [Some(5), Some(6), Some(7)]);
+    }
+
+    #[test]
+    fn a_kit_stowing_each_kind_within_its_slots_is_accepted_in_slot_order() {
+        let def = start(json!([
+            {"magazine": "mag_rifle", "round": "round_ball"},
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_pistol", "round": "round_9mm", "rounds": 5}
+        ]));
+
+        let kit = resolve_kinded(&def).expect("each kind fits its slots");
+
+        let held: Vec<Option<&str>> = kit
+            .loadout
+            .rig()
+            .slots()
+            .iter()
+            .map(|slot| slot.as_ref().map(|m| m.item().as_str()))
+            .collect();
+        assert_eq!(
+            held,
+            [Some("mag_pistol"), Some("mag_pistol"), Some("mag_rifle")],
+            "pistol slots sort before the rifle slot"
+        );
+        assert_eq!(kit.loadout.rig().free_slots(), 0);
     }
 }

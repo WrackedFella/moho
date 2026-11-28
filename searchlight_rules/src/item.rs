@@ -1,8 +1,10 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
 use crate::ballistics::{Ballistics, MIN_SPEED, RoundStats};
+use crate::stats::{Stat, Verb};
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroU32;
 use thiserror::Error;
@@ -47,6 +49,10 @@ string_id!(
 string_id!(
     /// The kind of magazine well a weapon has; a magazine fits a weapon with the same well.
     MagazineWell
+);
+string_id!(
+    /// The kind of rig slot a magazine takes, such as `rifle` or `pistol`; a mod may name its own.
+    SlotKind
 );
 
 /// What an item is for.
@@ -177,6 +183,9 @@ pub struct MagazineSpec {
     pub well: MagazineWell,
     /// The caliber it takes.
     pub caliber: Caliber,
+    /// The kind of rig slot it takes. A kind no rig defines is allowed: the magazine then
+    /// fits no slot.
+    pub slot: SlotKind,
     /// Rounds it holds.
     pub capacity: u32,
 }
@@ -185,8 +194,10 @@ pub struct MagazineSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RigSpec {
-    /// Magazines the rig carries.
-    pub magazine_slots: u32,
+    /// How many magazine slots of each kind the rig carries; a kind left out has none. The
+    /// rig's slots run in the order of the kind names (sorted, as the data loader keeps no
+    /// file order), each kind's slots together.
+    pub magazine_slots: BTreeMap<SlotKind, u32>,
 }
 
 /// The backpack section of an item definition: marks an item that goes in the backpack slot.
@@ -236,6 +247,50 @@ impl ItemKind {
     }
 }
 
+/// One change a worn item makes to a stat.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemStat {
+    /// The stat it changes.
+    pub stat: Stat,
+    /// How it changes it.
+    pub verb: Verb,
+}
+
+/// Unvalidated wire form of an [`ItemStat`]: the stat and exactly one of `add`, `scale`, `cap`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawItemStat {
+    stat: Stat,
+    add: Option<f32>,
+    scale: Option<f32>,
+    cap: Option<f32>,
+}
+
+impl TryFrom<RawItemStat> for ItemStat {
+    type Error = ItemDefError;
+
+    fn try_from(raw: RawItemStat) -> Result<Self, Self::Error> {
+        let stat = raw.stat;
+        let refused = Err(ItemDefError::StatEntry { stat });
+        let (verb, value, non_negative) = match (raw.add, raw.scale, raw.cap) {
+            (Some(x), None, None) => (Verb::Add(x), x, false),
+            (None, Some(x), None) => (Verb::Scale(x), x, true),
+            (None, None, Some(x)) => (Verb::Cap(x), x, true),
+            _ => return refused,
+        };
+        let valid = if non_negative {
+            finite_non_negative(value)
+        } else {
+            value.is_finite()
+        };
+        if valid {
+            Ok(Self { stat, verb })
+        } else {
+            refused
+        }
+    }
+}
+
 /// An item as defined in data.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(try_from = "RawItemDef")]
@@ -250,6 +305,13 @@ pub struct ItemDef {
     pub weight: f32,
     /// What the item does.
     pub kind: ItemKind,
+    /// What wearing the item does to the player's stats.
+    pub stats: Vec<ItemStat>,
+}
+
+/// Whether `value` is a number that is 0 or more: not negative, `NaN` or infinite.
+pub(crate) fn finite_non_negative(value: f32) -> bool {
+    value.is_finite() && value >= 0.0
 }
 
 /// Why an item definition was refused.
@@ -282,6 +344,12 @@ pub enum ItemDefError {
     /// More than one section was given.
     #[error("an item takes at most one section")]
     TwoSections,
+    /// A stats entry that is not a stat with exactly one finite add, scale or cap.
+    #[error("stats entry for {stat:?} is not exactly one finite add, scale or cap")]
+    StatEntry {
+        /// The entry's stat.
+        stat: Stat,
+    },
 }
 
 /// Unvalidated wire form of an [`ItemDef`].
@@ -298,6 +366,8 @@ struct RawItemDef {
     round: Option<RoundSpec>,
     rig: Option<RigSpec>,
     backpack: Option<BackpackSpec>,
+    #[serde(default)]
+    stats: Vec<RawItemStat>,
 }
 
 impl RawItemDef {
@@ -319,13 +389,18 @@ impl TryFrom<RawItemDef> for ItemDef {
 
     fn try_from(raw: RawItemDef) -> Result<Self, Self::Error> {
         let lifecycle = raw.lifecycle()?;
-        if !(raw.weight.is_finite() && raw.weight >= 0.0) {
+        if !finite_non_negative(raw.weight) {
             return Err(ItemDefError::Weight(raw.weight));
         }
         let [width, height] = raw.size;
         if width == 0 || height == 0 {
             return Err(ItemDefError::ZeroSize);
         }
+        let stats = raw
+            .stats
+            .into_iter()
+            .map(ItemStat::try_from)
+            .collect::<Result<Vec<_>, _>>()?;
         let class = raw.class;
         let mut sections = [
             raw.weapon.map(ItemKind::Weapon),
@@ -351,6 +426,7 @@ impl TryFrom<RawItemDef> for ItemDef {
             lifecycle,
             weight: raw.weight,
             kind,
+            stats,
         })
     }
 }
@@ -375,6 +451,9 @@ mod tests {
         Text(&'static str),
         Size([u8; 2]),
         Float(f32),
+        List(Vec<Field>),
+        /// A stats entry: its stat and one verb key with a float value.
+        Entry(&'static str, &'static str, f32),
     }
 
     impl<'de> serde::Deserializer<'de> for Field {
@@ -391,7 +470,23 @@ mod tests {
                         size.into_iter(),
                     )),
                 Field::Float(float) => visitor.visit_f32(float),
+                Field::List(items) => visitor
+                    .visit_seq(serde::de::value::SeqDeserializer::<_, Self::Error>::new(
+                        items.into_iter(),
+                    )),
+                Field::Entry(stat, key, value) => {
+                    visitor.visit_map(serde::de::value::MapDeserializer::<_, Self::Error>::new(
+                        [("stat", Field::Text(stat)), (key, Field::Float(value))].into_iter(),
+                    ))
+                }
             }
+        }
+
+        fn deserialize_option<V: serde::de::Visitor<'de>>(
+            self,
+            visitor: V,
+        ) -> Result<V::Value, Self::Error> {
+            visitor.visit_some(self)
         }
 
         fn deserialize_enum<V: serde::de::Visitor<'de>>(
@@ -410,7 +505,7 @@ mod tests {
 
         serde::forward_to_deserialize_any! {
             bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
-            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map
+            byte_buf unit unit_struct newtype_struct seq tuple tuple_struct map
             struct identifier ignored_any
         }
     }
@@ -436,6 +531,25 @@ mod tests {
 
         ItemDef::deserialize(definition)
             .expect_err("the weight should be refused")
+            .to_string()
+            .to_lowercase()
+    }
+
+    /// The error text of a gear definition whose one stats entry gives `key` the float `value`
+    /// on `stat`, which JSON cannot always say.
+    fn stat_error_text(stat: &'static str, key: &'static str, value: f32) -> String {
+        let fields = [
+            ("class", Field::Text("gear")),
+            ("size", Field::Size([1, 1])),
+            ("weight", Field::Float(1.0)),
+            ("stats", Field::List(vec![Field::Entry(stat, key, value)])),
+        ];
+        let definition = serde::de::value::MapDeserializer::<_, serde::de::value::Error>::new(
+            fields.into_iter(),
+        );
+
+        ItemDef::deserialize(definition)
+            .expect_err("the non-finite verb should be refused")
             .to_string()
             .to_lowercase()
     }
@@ -570,6 +684,7 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
+                muzzle_velocity_factor: crate::weapon::VelocityFactor::default(),
             }
         );
     }
@@ -578,7 +693,7 @@ mod tests {
     fn a_magazine_section_loads_well_caliber_and_capacity() {
         let item = parse(json!({
             "class": "gear", "size": [1, 2],
-            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30}
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "rifle"}
         }))
         .expect("gear with a magazine section loads");
 
@@ -590,6 +705,7 @@ mod tests {
             MagazineSpec {
                 well: MagazineWell::new("rifle"),
                 caliber: Caliber::new("5.56x45"),
+                slot: SlotKind::new("rifle"),
                 capacity: 30,
             }
         );
@@ -706,14 +822,19 @@ mod tests {
     #[test]
     fn a_rig_section_loads_its_magazine_slots() {
         let item = parse(json!({
-            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}
+            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": {"rifle": 3}}
         }))
         .expect("gear with a rig section loads");
 
         let ItemKind::Rig(spec) = item.kind else {
             panic!("expected a rig kind, got {:?}", item.kind);
         };
-        assert_eq!(spec, RigSpec { magazine_slots: 3 });
+        assert_eq!(
+            spec,
+            RigSpec {
+                magazine_slots: BTreeMap::from([(SlotKind::new("rifle"), 3)])
+            }
+        );
     }
 
     #[test]
@@ -723,11 +844,11 @@ mod tests {
             (
                 "weapon",
                 "magazine",
-                json!({"well": "w", "caliber": "c", "capacity": 1}),
+                json!({"well": "w", "caliber": "c", "capacity": 1, "slot": "s"}),
             ),
             ("gear", "round", round_section(json!(940.0), json!(1.0))),
-            ("consumable", "rig", json!({"magazine_slots": 1})),
-            ("tool", "rig", json!({"magazine_slots": 1})),
+            ("consumable", "rig", json!({"magazine_slots": {"rifle": 1}})),
+            ("tool", "rig", json!({"magazine_slots": {"rifle": 1}})),
         ];
         for (class, section, body) in cases {
             let mut value = json!({"class": class, "size": [1, 1]});
@@ -744,8 +865,8 @@ mod tests {
     fn two_sections_on_one_item_are_refused() {
         let result = parse(json!({
             "class": "gear", "size": [1, 1],
-            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30},
-            "rig": {"magazine_slots": 3}
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "rifle"},
+            "rig": {"magazine_slots": {"rifle": 3}}
         }));
 
         assert!(result.is_err(), "{result:?}");
@@ -754,7 +875,7 @@ mod tests {
     #[test]
     fn an_unknown_section_key_inside_a_section_is_refused() {
         let text = error_text(json!({
-            "class": "gear", "size": [1, 1], "rig": {"magazine_slots": 3, "slotz": 1}
+            "class": "gear", "size": [1, 1], "rig": {"magazine_slots": {"rifle": 3}, "slotz": 1}
         }));
 
         assert!(text.contains("slotz"), "{text}");
@@ -834,5 +955,183 @@ mod tests {
         }));
 
         assert!(text.contains("slots"), "{text}");
+    }
+
+    fn rig_spec_of(slots: Value) -> RigSpec {
+        let item = parse(json!({
+            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": slots}
+        }))
+        .expect("gear with a rig section loads");
+        let ItemKind::Rig(spec) = item.kind else {
+            panic!("expected a rig kind, got {:?}", item.kind);
+        };
+        spec
+    }
+
+    #[test]
+    fn a_rig_lists_slots_by_kind() {
+        let spec = rig_spec_of(json!({"rifle": 3, "pistol": 1}));
+
+        let mut rig = crate::rig::Rig::new(ItemId::new("rig"), &spec);
+
+        assert_eq!(rig.slots().len(), 4);
+        let pistol = crate::test_support::mag_in_slot("p", "pistol", "pistol");
+        let rifle = |name| crate::test_support::mag_in_slot(name, "rifle", "rifle");
+        assert_eq!(rig.stow(pistol.clone()), Ok(0), "pistol sorts before rifle");
+        assert_eq!(
+            rig.stow(pistol),
+            Err(crate::test_support::mag_in_slot("p", "pistol", "pistol"))
+        );
+        assert_eq!(rig.stow(rifle("a")), Ok(1));
+        assert_eq!(rig.stow(rifle("b")), Ok(2));
+        assert_eq!(rig.stow(rifle("c")), Ok(3));
+    }
+
+    #[test]
+    fn a_kind_left_out_of_the_rig_has_no_slots() {
+        let spec = rig_spec_of(json!({"rifle": 2}));
+
+        let mut rig = crate::rig::Rig::new(ItemId::new("rig"), &spec);
+
+        assert_eq!(rig.slots().len(), 2);
+        let pistol = crate::test_support::mag_in_slot("p", "pistol", "pistol");
+        assert_eq!(rig.stow(pistol.clone()), Err(pistol));
+    }
+
+    #[test]
+    fn a_rig_with_an_empty_slot_table_has_no_slots_and_refuses_every_magazine() {
+        let spec = rig_spec_of(json!({}));
+        let mut rig = crate::rig::Rig::new(ItemId::new("rig"), &spec);
+        let rifle = crate::test_support::mag_in_slot("m", "rifle", "rifle");
+
+        assert!(rig.slots().is_empty());
+        assert_eq!(rig.stow(rifle.clone()), Err(rifle));
+    }
+
+    #[test]
+    fn a_rig_with_a_bare_slot_count_is_refused() {
+        let result = parse(json!({
+            "class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}
+        }));
+
+        assert!(result.is_err(), "{result:?}");
+    }
+
+    #[test]
+    fn a_magazine_section_loads_the_kind_of_slot_it_takes() {
+        let item = parse(json!({
+            "class": "gear", "size": [1, 2],
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30, "slot": "belt"}
+        }))
+        .expect("a magazine naming a kind no rig defines still loads");
+        let ItemKind::Magazine(spec) = item.kind else {
+            panic!("expected a magazine kind, got {:?}", item.kind);
+        };
+
+        let magazine = crate::magazine::Magazine::empty(ItemId::new("m"), &spec);
+        let mut rig = crate::rig::Rig::new(
+            ItemId::new("rig"),
+            &rig_spec_of(json!({"rifle": 1, "pistol": 1})),
+        );
+
+        assert_eq!(rig.stow(magazine.clone()), Err(magazine), "it fits no slot");
+    }
+
+    #[test]
+    fn a_magazine_without_a_slot_kind_is_refused() {
+        let text = error_text(json!({
+            "class": "gear", "size": [1, 2],
+            "magazine": {"well": "rifle", "caliber": "5.56x45", "capacity": 30}
+        }));
+
+        assert!(text.contains("slot"), "{text}");
+    }
+
+    fn pack_with_stats(stats: Value) -> Value {
+        json!({"class": "gear", "size": [3, 3], "backpack": {}, "stats": stats})
+    }
+
+    #[test]
+    fn a_stats_entry_loads_its_stat_and_verb() {
+        let item = parse(pack_with_stats(json!([
+            {"stat": "carry_capacity", "add": 10.0},
+            {"stat": "carry_capacity", "scale": 1.2},
+            {"stat": "movement_speed", "cap": 0.5},
+        ])))
+        .expect("each entry names a stat and one verb");
+
+        assert_eq!(
+            item.stats,
+            [
+                ItemStat {
+                    stat: Stat::CarryCapacity,
+                    verb: Verb::Add(10.0)
+                },
+                ItemStat {
+                    stat: Stat::CarryCapacity,
+                    verb: Verb::Scale(1.2)
+                },
+                ItemStat {
+                    stat: Stat::MovementSpeed,
+                    verb: Verb::Cap(0.5)
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_entry_with_no_verb_or_two_verbs_is_refused_naming_the_stat() {
+        let entries = [
+            (json!({"stat": "carry_capacity"}), "carry"),
+            (
+                json!({"stat": "stamina", "add": 1.0, "scale": 2.0}),
+                "stamina",
+            ),
+        ];
+        for (entry, named) in entries {
+            let text = error_text(pack_with_stats(json!([entry])));
+
+            assert!(text.contains(named), "{entry}: {text}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_add_scale_or_cap_is_refused_naming_the_stat() {
+        for key in ["add", "scale", "cap"] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let text = stat_error_text("movement_speed", key, value);
+
+                assert!(text.contains("movement"), "{key} {value}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_negative_scale_or_cap_is_refused_and_a_negative_add_is_kept() {
+        for entry in [
+            json!({"stat": "movement_speed", "scale": -0.5}),
+            json!({"stat": "movement_speed", "cap": -1.0}),
+        ] {
+            let result = parse(pack_with_stats(json!([entry])));
+
+            assert!(result.is_err(), "{entry} was accepted");
+        }
+        let item = parse(pack_with_stats(json!([
+            {"stat": "movement_speed", "add": -0.1}
+        ])))
+        .expect("a penalty is a negative add");
+
+        assert_eq!(item.stats[0].verb, Verb::Add(-0.1));
+    }
+
+    #[test]
+    fn an_unknown_stat_or_key_in_an_entry_is_refused() {
+        let stat = error_text(pack_with_stats(json!([{"stat": "luck", "add": 1.0}])));
+        let key = error_text(pack_with_stats(json!([
+            {"stat": "stamina", "add": 1.0, "mul": 2.0}
+        ])));
+
+        assert!(stat.contains("luck"), "{stat}");
+        assert!(key.contains("mul"), "{key}");
     }
 }

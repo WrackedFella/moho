@@ -13,9 +13,11 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport,
-    ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Place, Remains, Rifle,
-    Rig, RoundStats, Shot, Source, arrival_damage, disc_offset, leaned_parts,
+    Accuracy, AccuracyTuning, Body, BodyPart, BodyProfile, Contribution, Flight, FlightBounds,
+    Grade, HitReport, ItemDef, ItemId, Lean, LeanReach, LeanSide, LeanTuning, LoadState,
+    LoadThresholds, Loadout, MagazineLevel, Place, PlayerDef, Remains, Rifle, Rig, RoundStats,
+    Shot, Source, SourceLabel, Stat, VelocityFactor, Verb, Worn, arrival_damage, disc_offset,
+    equipment_contributions, leaned_parts, load, load_contributions, load_state, resolve,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -153,6 +155,8 @@ pub struct SimConfig {
     pub reload_ticks: u32,
     /// Ticks added to `reload_ticks` when the chamber is empty at the press.
     pub charge_ticks: u32,
+    /// How much the player's barrel scales the speed rounds leave at.
+    pub muzzle_velocity_factor: VelocityFactor,
     /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
     /// The rifle in hand and the rig it reloads from.
@@ -174,6 +178,58 @@ pub struct SimConfig {
     pub body_radius: f32,
     /// What every enemy carried and wore, which it leaves as a body when it dies.
     pub enemy_remains: Remains,
+    /// What an enemy of a grade carried and wore instead of `enemy_remains`, by grade.
+    pub grade_remains: BTreeMap<Grade, Remains>,
+    /// What the player's load is priced and resolved from.
+    pub carry: CarryConfig,
+}
+
+impl SimConfig {
+    /// What an enemy of `grade` leaves when it dies: its grade's remains, else `enemy_remains`.
+    /// A target with no grade, a dummy, leaves `enemy_remains`.
+    #[must_use]
+    pub fn remains_for(&self, grade: Option<Grade>) -> &Remains {
+        grade
+            .and_then(|grade| self.grade_remains.get(&grade))
+            .unwrap_or(&self.enemy_remains)
+    }
+}
+
+/// The data the player's load and stats resolve from.
+#[derive(Clone, Debug)]
+pub struct CarryConfig {
+    /// The attribute sheet, thresholds and baselines.
+    pub player: PlayerDef,
+    /// Every item the player can carry, by id, for its weight and stats.
+    pub items: BTreeMap<ItemId, ItemDef>,
+    /// The item id of the rifle in hand.
+    pub weapon: ItemId,
+}
+
+/// The player's load and stat contributions at one moment, from [`SearchlightSim::carry_sheet`].
+#[derive(Clone, Debug)]
+pub struct CarrySheet {
+    /// Everything carried and worn, in kilograms.
+    pub load_kg: f32,
+    /// What the player can carry, in kilograms.
+    pub capacity: f32,
+    /// How far load has taken the player's capability.
+    pub state: LoadState,
+    /// Every contribution to the player's stats, from equipment, load and stance.
+    pub contributions: Vec<Contribution>,
+    player: PlayerDef,
+}
+
+impl CarrySheet {
+    /// The player's resolved `stat`.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        resolve(stat, self.player.baseline(stat), 0.0, &self.contributions)
+    }
+
+    /// Where load, as a fraction of capacity, changes the player's state.
+    pub fn thresholds(&self) -> &LoadThresholds {
+        &self.player.thresholds
+    }
 }
 
 /// Something the player should see, hear or read, in the order it happened.
@@ -195,7 +251,7 @@ pub enum Feedback {
     /// A reload finished.
     ReloadDone,
     /// The enemy numbered `target` fired a shot.
-    EnemyFired { target: u16 },
+    EnemyFired { target: u16, from: Vec3 },
     /// An enemy shot struck `part` of the player; `from` is where the shot began.
     PlayerHit { part: BodyPart, from: Vec3 },
     /// The enemy numbered `target` died and left the arena.
@@ -467,6 +523,7 @@ pub struct SearchlightSim {
     cooldown_ticks: u32,
     reload_ticks: u32,
     charge_ticks: u32,
+    muzzle_velocity_factor: VelocityFactor,
     loadout: Loadout,
     /// Indexed by target number: the dummies, then the enemies.
     targets: Vec<Target>,
@@ -487,6 +544,9 @@ pub struct SearchlightSim {
     weapon: Weapon,
     lean: Lean,
     lean_tuning: LeanTuning,
+    /// Whether the last tick's command held a lean, which the stance source reads. Simulation
+    /// state; every stat contribution is derived from it and the loadout.
+    leaning_held: bool,
     accuracy: Accuracy,
     /// Whether the player has touched ground since spawning: a fresh spawn reads airborne until
     /// its first move, and that is not a jump.
@@ -628,6 +688,7 @@ impl SearchlightSim {
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
             charge_ticks: config.charge_ticks,
+            muzzle_velocity_factor: config.muzzle_velocity_factor,
             loadout: config.loadout.clone(),
             targets,
             dummy_count: spawns.dummies.len(),
@@ -644,6 +705,7 @@ impl SearchlightSim {
             weapon: Weapon::Ready,
             lean: Lean::default(),
             lean_tuning: config.lean,
+            leaning_held: false,
             accuracy: Accuracy::default(),
             landed: false,
             accuracy_tuning: config.accuracy,
@@ -675,13 +737,9 @@ impl SearchlightSim {
             return;
         }
         let firing = self.move_enemies(dt);
-        let factor = if command.lean.is_some() {
-            self.lean_tuning.speed_factor
-        } else {
-            1.0
-        };
+        self.leaning_held = command.lean.is_some();
         let settings = MoveSettings {
-            max_speed: self.move_settings.max_speed * factor,
+            max_speed: self.move_settings.max_speed * self.carry_sheet().stat(Stat::MovementSpeed),
             ..self.move_settings
         };
         self.world
@@ -725,6 +783,7 @@ impl SearchlightSim {
                 }
             }
             Some(InventoryCommand::Move { from, to }) => self.move_item(from, to),
+            Some(InventoryCommand::Wear { from }) => self.wear(from),
             None => {}
         }
         match self.loot {
@@ -753,6 +812,26 @@ impl SearchlightSim {
                 }
             }
             LootState::Idle | LootState::Open { .. } => {}
+        }
+    }
+
+    /// Wears the rig or backpack at inventory index `from`, on the gear screen only: a search or
+    /// an open body ignores it. A new rig stops a reload under way, which has not yet taken its
+    /// magazine, so the rifle keeps the one it has. A refused wear changes nothing.
+    fn wear(&mut self, from: usize) {
+        if !matches!(self.loot, LootState::Idle) {
+            tracing::debug!(from, "wear ignored while looting");
+            return;
+        }
+        let items = &self.origin.1.carry.items;
+        match self.loadout.wear(|id| items.get(id), from) {
+            Ok(Worn::Rig) => {
+                if matches!(self.weapon, Weapon::Reloading(_)) {
+                    self.weapon = Weapon::Ready;
+                }
+            }
+            Ok(Worn::Backpack) => {}
+            Err(refused) => tracing::debug!(%refused, from, "wear refused"),
         }
     }
 
@@ -1013,6 +1092,7 @@ impl SearchlightSim {
             let direction = self.with_spread(aim - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
+                from: eye,
             });
             let strike = resolve_shot(
                 &self.world,
@@ -1062,7 +1142,11 @@ impl SearchlightSim {
                     number,
                     DeadBody {
                         point: standing_floor(&self.body, centre),
-                        remains: self.origin.1.enemy_remains.clone(),
+                        remains: self
+                            .origin
+                            .1
+                            .remains_for(target.enemy.map(|enemy| enemy.grade))
+                            .clone(),
                         searched: false,
                     },
                 );
@@ -1113,8 +1197,10 @@ impl SearchlightSim {
             tracing::warn!(%round, "the round has no stats, nothing is fired");
             return;
         };
+        let launch = ballistics.through_barrel(self.muzzle_velocity_factor);
         if simple {
-            self.hitscan(origin, direction, state.position, damage);
+            let dealt = arrival_damage(damage, ballistics.muzzle_velocity, launch.muzzle_velocity);
+            self.hitscan(origin, direction, state.position, dealt);
             return;
         }
         let id = self.next_round_id;
@@ -1128,7 +1214,7 @@ impl SearchlightSim {
         });
         self.rounds.push(RoundInFlight {
             id,
-            flight: Flight::fired(origin, direction, &ballistics),
+            flight: Flight::fired(origin, direction, &launch),
             ballistics,
             damage,
             shooter: Some(self.player),
@@ -1375,6 +1461,11 @@ impl SearchlightSim {
         &self.origin.1
     }
 
+    /// The definition of item `id` in the carry config, if it has one.
+    pub fn item_def(&self, id: &ItemId) -> Option<&ItemDef> {
+        self.config().carry.items.get(id)
+    }
+
     /// The control and the body the player looks at, from one ray as long as either's reach.
     fn sight(&self) -> Sight {
         let (reach, radius) = (self.config().search_reach, self.config().body_radius);
@@ -1462,9 +1553,71 @@ impl SearchlightSim {
         &self.loadout
     }
 
-    /// The player's walking speed in m/s, before a lean slows it.
+    /// The player's walking speed in m/s, before a lean or load slows it.
     pub fn max_speed(&self) -> f32 {
         self.move_settings.max_speed
+    }
+
+    /// What the player carries, can carry and is slowed by, worked out from the loadout and the
+    /// held lean in one pass. Derived on every call and never stored (ADR-0041); a caller
+    /// needing several of its values takes one sheet and reads them all from it.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn carry_sheet(&self) -> CarrySheet {
+        let carry = &self.config().carry;
+        let load_kg = load(&self.loadout, &carry.weapon, |id| carry.items.get(id))
+            .expect("every item the player holds is defined in the carry config");
+        let mut contributions = equipment_contributions(&self.loadout, |id| carry.items.get(id))
+            .expect("every worn item is defined in the carry config");
+        let capacity = resolve(
+            Stat::CarryCapacity,
+            carry.player.baseline(Stat::CarryCapacity),
+            0.0,
+            &contributions,
+        );
+        let state = load_state(load_kg, capacity, &carry.player.thresholds);
+        contributions.extend(load_contributions(state, carry.player.slowed_scale));
+        if self.leaning_held {
+            contributions.push(Contribution {
+                source: SourceLabel::Stance,
+                stat: Stat::MovementSpeed,
+                verb: Verb::Scale(self.lean_tuning.speed_factor),
+            });
+        }
+        CarrySheet {
+            load_kg,
+            capacity,
+            state,
+            contributions,
+            player: carry.player.clone(),
+        }
+    }
+
+    /// Everything the player carries and wears, in kilograms, as it stands now.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn load_kg(&self) -> f32 {
+        self.carry_sheet().load_kg
+    }
+
+    /// The player's resolved `stat`, from what they wear, carry and hold now.
+    pub fn stat(&self, stat: Stat) -> f32 {
+        self.carry_sheet().stat(stat)
+    }
+
+    /// How far load has taken the player's capability.
+    pub fn load_state(&self) -> LoadState {
+        self.carry_sheet().state
+    }
+
+    /// Every contribution to the player's stats now, from equipment, load and stance.
+    ///
+    /// # Panics
+    /// If the loadout holds an item the carry config has no definition of.
+    pub fn stat_contributions(&self) -> Vec<Contribution> {
+        self.carry_sheet().contributions
     }
 
     /// The half-angle in radians of the cone the player's next shot leaves in.
@@ -1693,7 +1846,7 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
+    use searchlight_rules::{Ballistics, ItemId, Loadout, Magazine, MagazineLevel, Rig};
 
     use super::*;
     use crate::tag::SurfaceTag;
@@ -1774,9 +1927,7 @@ mod tests {
     fn empty_rig(slots: u32) -> Rig {
         Rig::new(
             ItemId::new("test_rig"),
-            &RigSpec {
-                magazine_slots: slots,
-            },
+            &crate::test_support::rig_spec(slots),
         )
     }
 
@@ -3993,6 +4144,140 @@ mod tests {
         }
     }
 
+    /// `config` with a barrel of `factor`.
+    fn with_barrel(mut config: SimConfig, factor: f32) -> SimConfig {
+        config.muzzle_velocity_factor = VelocityFactor::try_from(factor).expect("a valid factor");
+        config
+    }
+
+    /// A round of `muzzle_velocity` that sheds no speed, with `damage`.
+    fn undragged(muzzle_velocity: f32, damage: u32) -> SimConfig {
+        with_round(
+            Ballistics {
+                muzzle_velocity,
+                drag: 0.0,
+            },
+            damage,
+        )
+    }
+
+    /// The speed of the one round in the air right after a pull.
+    fn launch_speed(config: SimConfig) -> f32 {
+        let mut sim = dummy_ahead(60.0, BodyPart::Torso, config);
+
+        sim.tick(&pull(), DT);
+
+        let rounds = sim.rounds_in_flight();
+        assert_eq!(rounds.len(), 1, "one pull sends one round");
+        rounds[0].flight.velocity.length()
+    }
+
+    #[test]
+    fn a_round_leaves_the_barrel_at_its_muzzle_velocity_times_the_barrel_factor() {
+        let cases = [(None, 900.0), (Some(0.8), 720.0), (Some(1.1), 990.0)];
+        for (factor, expected) in cases {
+            let config = match factor {
+                Some(factor) => with_barrel(undragged(900.0, 30), factor),
+                None => undragged(900.0, 30),
+            };
+
+            let speed = launch_speed(config);
+
+            assert!(
+                (speed - expected).abs() < 0.01,
+                "factor {factor:?} left at {speed} m/s, not {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_0_8_barrel_hits_a_torso_at_point_blank_for_24_not_30_in_flight() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 0.8),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(health, 76, "30 scaled by 720/900 is 24");
+    }
+
+    #[test]
+    fn a_0_8_barrel_hits_a_torso_for_24_under_simple_at_any_range() {
+        for distance in [1.5, 10.0, 90.0] {
+            let health = dummy_health_after_a_shot(
+                distance,
+                BodyPart::Torso,
+                with_barrel(undragged(900.0, 30), 0.8),
+                simple_pull(),
+            );
+
+            assert_eq!(health, 76, "{distance} m");
+        }
+    }
+
+    #[test]
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage_in_flight() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.1),
+            pull_without_gravity(),
+        );
+
+        assert_eq!(health, 70, "the ratio is capped at 1");
+    }
+
+    #[test]
+    fn a_1_1_barrel_never_hits_for_more_than_the_rounds_own_damage_under_simple() {
+        let health = dummy_health_after_a_shot(
+            1.5,
+            BodyPart::Torso,
+            with_barrel(undragged(900.0, 30), 1.1),
+            simple_pull(),
+        );
+
+        assert_eq!(health, 70, "the ratio is capped at 1");
+    }
+
+    /// The damage a level pull does to a torso `distance` metres ahead, and the height the
+    /// round struck it at.
+    fn torso_strike(distance: f32, config: SimConfig) -> (u32, f32) {
+        let mut sim = dummy_ahead(distance, BodyPart::Torso, config);
+
+        let ticks = fire_and_wait(&mut sim, pull(), 60);
+
+        let hits = hits_in(&ticks);
+        let (_, _, point) = *hits
+            .first()
+            .unwrap_or_else(|| panic!("a round at {distance} m never hit: {ticks:?}"));
+        let health = sim.dummy_body(0).expect("dummy 0 exists").health();
+        (100 - health, point.y)
+    }
+
+    #[test]
+    fn at_long_range_a_1_1_barrel_round_drops_less_and_does_at_least_as_much_damage() {
+        let dragged = Ballistics {
+            muzzle_velocity: 900.0,
+            drag: 1.0,
+        };
+
+        let (plain_damage, plain_height) =
+            torso_strike(90.0, with_barrel(with_round(dragged, 30), 1.0));
+        let (long_damage, long_height) =
+            torso_strike(90.0, with_barrel(with_round(dragged, 30), 1.1));
+
+        assert!(
+            long_height > plain_height,
+            "1.1 struck at {long_height}, 1.0 at {plain_height}"
+        );
+        assert!(
+            long_damage >= plain_damage,
+            "1.1 did {long_damage}, 1.0 did {plain_damage}"
+        );
+        assert!(long_damage <= 30, "never above the round's own damage");
+    }
+
     #[test]
     fn under_simple_dummies_at_10_and_90_m_lose_the_same_health() {
         let config = || with_round(BALL, 40);
@@ -4954,6 +5239,260 @@ mod tests {
         sim
     }
 
+    use crate::test_support::{carrying, weighing};
+    use searchlight_rules::{Contribution, LoadState, SourceLabel, Stat, Verb, explain};
+
+    /// A sim on open ground whose player carries `kg` against 30 kg of capacity.
+    fn load_sim(kg: f32) -> SearchlightSim {
+        let config = carrying(test_config(rifle_with(5), vec![]), kg);
+        SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config)
+    }
+
+    /// How far `sim`'s player gets over the next 60 ticks of walking forward.
+    fn walked(sim: &mut SearchlightSim) -> f32 {
+        let start = sim.player().position;
+        hold(sim, &walking(None), 60);
+        let end = sim.player().position;
+        Vec3::new(end.x - start.x, 0.0, end.z - start.z).length()
+    }
+
+    fn movement_speed(sim: &SearchlightSim, source: SourceLabel) -> Vec<Verb> {
+        explain(Stat::MovementSpeed, &sim.stat_contributions())
+            .into_iter()
+            .filter(|c| c.source == source)
+            .map(|c| c.verb)
+            .collect()
+    }
+
+    #[test]
+    fn the_sim_reports_the_load_state_for_each_outline_row() {
+        let expected = [
+            (15.0, LoadState::Fine),
+            (20.0, LoadState::Slowed),
+            (25.0, LoadState::NoSprint),
+            (30.0, LoadState::CannotMove),
+        ];
+
+        for (kg, state) in expected {
+            let mut sim = load_sim(kg);
+            sim.tick(&idle(), DT);
+
+            assert_eq!(sim.load_kg(), kg);
+            assert_eq!(sim.stat(Stat::CarryCapacity), 30.0);
+            assert_eq!(sim.load_state(), state, "{kg} kg of 30");
+        }
+    }
+
+    #[test]
+    fn a_slowed_player_covers_less_ground() {
+        let mut free = load_sim(0.0);
+        let fine = walked(&mut free);
+        for kg in [20.0, 25.0] {
+            let mut sim = load_sim(kg);
+
+            let slowed = walked(&mut sim);
+
+            assert!(fine > 1.0, "the unloaded player barely moved: {fine}");
+            assert!(slowed < fine * 0.8, "{kg} kg: {slowed} m vs {fine} m");
+            assert!(slowed > fine * 0.6, "{kg} kg: {slowed} m vs {fine} m");
+            assert_eq!(
+                sim.max_speed(),
+                4.0,
+                "the walking speed itself is unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn a_player_below_the_slowed_threshold_walks_at_full_speed() {
+        let mut free = load_sim(0.0);
+        let mut light = load_sim(15.0);
+
+        let fine = walked(&mut free);
+        let loaded = walked(&mut light);
+
+        assert!((fine - loaded).abs() < 1e-3, "{loaded} m vs {fine} m");
+    }
+
+    #[test]
+    fn a_red_player_does_not_move() {
+        let mut sim = load_sim(30.0);
+
+        let moved = walked(&mut sim);
+
+        assert!(moved < 0.01, "a player at 30 of 30 kg moved {moved} m");
+    }
+
+    #[test]
+    fn a_slowed_player_lists_load_among_the_movement_speed_contributions() {
+        let mut slowed = load_sim(20.0);
+        let mut fine = load_sim(15.0);
+        slowed.tick(&idle(), DT);
+        fine.tick(&idle(), DT);
+
+        assert_eq!(
+            movement_speed(&slowed, SourceLabel::Load),
+            [Verb::Scale(0.7)]
+        );
+        assert_eq!(movement_speed(&fine, SourceLabel::Load), []);
+        assert!((slowed.stat(Stat::MovementSpeed) - 0.7).abs() < 1e-5);
+        assert_eq!(fine.stat(Stat::MovementSpeed), 1.0);
+    }
+
+    #[test]
+    fn a_held_lean_is_a_stance_scale_on_movement_speed() {
+        let mut leaning_sim = load_sim(0.0);
+        let mut upright = load_sim(0.0);
+        leaning_sim.tick(&walking(Some(LeanSide::Left)), DT);
+        upright.tick(&walking(None), DT);
+
+        assert_eq!(
+            movement_speed(&leaning_sim, SourceLabel::Stance),
+            [Verb::Scale(0.5)]
+        );
+        assert_eq!(movement_speed(&upright, SourceLabel::Stance), []);
+    }
+
+    #[test]
+    fn a_slowed_leaning_player_moves_at_both_scales_multiplied() {
+        let mut sim = load_sim(20.0);
+
+        sim.tick(&walking(Some(LeanSide::Left)), DT);
+
+        assert!((sim.stat(Stat::MovementSpeed) - 0.35).abs() < 1e-5);
+    }
+
+    #[test]
+    fn a_red_player_has_zero_movement_speed_and_no_stamina() {
+        let mut sim = load_sim(30.0);
+        sim.tick(&idle(), DT);
+
+        assert_eq!(sim.stat(Stat::MovementSpeed), 0.0);
+        assert_eq!(sim.stat(Stat::Stamina), 0.0);
+        let speed = movement_speed(&sim, SourceLabel::Load);
+        assert_eq!(speed, [Verb::Cap(0.0)]);
+        let stamina: Vec<Contribution> = explain(Stat::Stamina, &sim.stat_contributions());
+        assert_eq!(stamina.len(), 1, "{stamina:?}");
+    }
+
+    #[test]
+    fn moving_items_off_the_player_below_slowed_restores_full_speed() {
+        let heavy = |kg_a: f32, kg_b: f32| {
+            let mut config = carrying(loot_config(Remains::default()), 0.0);
+            config
+                .carry
+                .items
+                .insert(ItemId::new("crate_a"), weighing(kg_a));
+            config
+                .carry
+                .items
+                .insert(ItemId::new("crate_b"), weighing(kg_b));
+            config.loadout = config.loadout.with_inventory(vec![
+                Item::Other(ItemId::new("crate_a")),
+                Item::Other(ItemId::new("crate_b")),
+            ]);
+            looting_sim(config)
+        };
+        let walked_back = |sim: &mut SearchlightSim| {
+            let start = sim.player().position;
+            hold(sim, &backing_away(), 60);
+            let end = sim.player().position;
+            Vec3::new(end.x - start.x, 0.0, end.z - start.z).length()
+        };
+        let into_the_body = asking(InventoryCommand::Move {
+            from: Source::Inventory(0),
+            to: Place::Body,
+        });
+        let mut lightened = heavy(15.0, 10.0);
+        let mut still_loaded = heavy(15.0, 10.0);
+        let mut unloaded = heavy(0.0, 0.0);
+
+        lightened.tick(&into_the_body, DT);
+        lightened.tick(&idle(), DT);
+        still_loaded.tick(&idle(), DT);
+        unloaded.tick(&idle(), DT);
+        let state_before = still_loaded.load_state();
+        let state_after = lightened.load_state();
+        let after = walked_back(&mut lightened);
+        let before = walked_back(&mut still_loaded);
+        let free = walked_back(&mut unloaded);
+
+        assert_eq!(state_before, LoadState::NoSprint);
+        assert_eq!(state_after, LoadState::Fine);
+        assert!(before < free * 0.8, "{before} m vs {free} m");
+        assert!((after - free).abs() < 1e-3, "{after} m vs {free} m");
+    }
+
+    #[test]
+    fn taking_a_heavy_item_from_a_body_slows_the_player() {
+        let mut config = loot_config(Remains {
+            carried: vec![Item::Other(ItemId::new("loot"))],
+            ..Remains::default()
+        });
+        config
+            .carry
+            .items
+            .insert(ItemId::new("loot"), weighing(20.0));
+        let mut sim = looting_sim(config);
+        sim.tick(&idle(), DT);
+        let before = sim.load_state();
+
+        sim.tick(&taking_the_first_item(), DT);
+        sim.tick(&idle(), DT);
+
+        assert_eq!(before, LoadState::Fine);
+        assert_eq!(sim.load_kg(), 20.0);
+        assert_eq!(sim.load_state(), LoadState::Slowed);
+    }
+
+    #[test]
+    fn a_red_player_holding_a_lean_covers_no_ground_and_lists_both_scales() {
+        let mut sim = load_sim(30.0);
+        let start = sim.player().position;
+
+        hold(&mut sim, &walking(Some(LeanSide::Left)), 60);
+
+        let end = sim.player().position;
+        let moved = Vec3::new(end.x - start.x, 0.0, end.z - start.z).length();
+        assert!(moved < 0.01, "a red, leaning player moved {moved} m");
+        assert_eq!(
+            movement_speed(&sim, SourceLabel::Load),
+            [Verb::Cap(0.0)],
+            "the load cap is listed"
+        );
+        assert_eq!(
+            movement_speed(&sim, SourceLabel::Stance),
+            [Verb::Scale(0.5)],
+            "the stance scale is listed"
+        );
+        assert_eq!(sim.stat(Stat::MovementSpeed), 0.0);
+    }
+
+    #[test]
+    fn a_player_who_looted_a_heavy_item_restarts_at_the_start_kit_load() {
+        let mut config = loot_config(Remains {
+            carried: vec![Item::Other(ItemId::new("loot"))],
+            ..Remains::default()
+        });
+        config
+            .carry
+            .items
+            .insert(ItemId::new("loot"), weighing(20.0));
+        let mut sim = looting_sim(config);
+        sim.tick(&taking_the_first_item(), DT);
+        sim.tick(&idle(), DT);
+        let slowed = sim.load_state();
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+        sim.tick(&restart_now(), DT);
+
+        assert_eq!(slowed, LoadState::Slowed);
+        assert_eq!(sim.load_kg(), 0.0);
+        assert_eq!(sim.load_state(), LoadState::Fine);
+        assert_eq!(movement_speed(&sim, SourceLabel::Load), []);
+    }
+
     #[test]
     fn a_dead_enemy_leaves_a_body_at_its_floor_point() {
         let markers = [BODY_AT, Vec3::new(4.0, 0.0, 6.0)];
@@ -5705,6 +6244,358 @@ mod tests {
             assert_eq!(sim.kills(), 1);
         }
     }
+
+    fn gear_def(
+        kind: searchlight_rules::ItemKind,
+        stats: Vec<searchlight_rules::ItemStat>,
+    ) -> searchlight_rules::ItemDef {
+        searchlight_rules::ItemDef {
+            class: searchlight_rules::ItemClass::Gear,
+            kind,
+            stats,
+            ..crate::test_support::weighing(0.0)
+        }
+    }
+
+    fn capacity_stat(verb: Verb) -> Vec<searchlight_rules::ItemStat> {
+        vec![searchlight_rules::ItemStat {
+            stat: Stat::CarryCapacity,
+            verb,
+        }]
+    }
+
+    fn rig_def(slots: u32, capacity: Option<Verb>) -> searchlight_rules::ItemDef {
+        gear_def(
+            searchlight_rules::ItemKind::Rig(crate::test_support::rig_spec(slots)),
+            capacity.map(capacity_stat).unwrap_or_default(),
+        )
+    }
+
+    fn pack_def(capacity: Option<Verb>) -> searchlight_rules::ItemDef {
+        gear_def(
+            searchlight_rules::ItemKind::Backpack(searchlight_rules::BackpackSpec {}),
+            capacity.map(capacity_stat).unwrap_or_default(),
+        )
+    }
+
+    fn wearing(from: usize) -> SearchlightCommand {
+        asking(InventoryCommand::Wear { from })
+    }
+
+    fn slotting_inventory_item(index: usize) -> SearchlightCommand {
+        asking(InventoryCommand::Move {
+            from: Source::Inventory(index),
+            to: Place::MagazineSlots,
+        })
+    }
+
+    /// `config` with `inventory` carried, and definitions for the gear the wear tests name: the
+    /// 5-slot `rig_five`, and the backpacks `pack_big` and `pack_frame`.
+    fn with_gear_to_wear(mut config: SimConfig, inventory: Vec<Item>) -> SimConfig {
+        let items = &mut config.carry.items;
+        items.insert(ItemId::new("rig_five"), rig_def(5, None));
+        items.insert(ItemId::new("pack_big"), pack_def(None));
+        items.insert(ItemId::new("pack_frame"), pack_def(Some(Verb::Scale(1.2))));
+        items.insert(ItemId::new("test_rig"), rig_def(1, None));
+        config.loadout = config.loadout.with_inventory(inventory);
+        config
+    }
+
+    fn sim_wearing(spares: Vec<Magazine>, inventory: Vec<Item>) -> SearchlightSim {
+        let config = with_gear_to_wear(test_config(rifle_with(10), spares), inventory);
+        SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config)
+    }
+
+    fn rig_item(id: &str) -> Item {
+        Item::Rig(ItemId::new(id))
+    }
+
+    #[test]
+    fn a_dead_enemys_remains_follow_its_grade() {
+        let veteran_remains = Remains {
+            rig: Some(Rig::new(
+                ItemId::new("rig_five"),
+                &crate::test_support::rig_spec(5),
+            )),
+            ..Remains::default()
+        };
+        let default_remains = Remains {
+            rig: Some(Rig::new(
+                ItemId::new("test_rig"),
+                &crate::test_support::rig_spec(3),
+            )),
+            ..Remains::default()
+        };
+        let mut config = test_config(rifle_with(10), vec![]);
+        config.enemy_remains = default_remains.clone();
+        config
+            .grade_remains
+            .insert(Grade::Veteran, veteran_remains.clone());
+        let markers = [Vec3::new(5.0, 0.0, 5.0), Vec3::new(-5.0, 0.0, 5.0)];
+        let mut sim = SearchlightSim::with_start(
+            arena_with(&[], Vec3::ZERO, &markers, &[Vec3::new(0.0, 0.0, 40.0)]),
+            config,
+            Start::Empty,
+        );
+        sim.spawn_enemy(0, Grade::Veteran).expect("a free marker");
+        sim.spawn_enemy(1, Grade::Rookie).expect("a free marker");
+
+        sim.kill_enemy(0);
+        sim.kill_enemy(1);
+        sim.tick(&idle(), DT);
+
+        let remains_of = |number: u16| sim.bodies().get(&number).map(|body| body.remains.clone());
+        assert_eq!(remains_of(0), Some(veteran_remains), "the veteran's body");
+        assert_eq!(remains_of(1), Some(default_remains), "the rookie's body");
+    }
+
+    #[test]
+    fn reload_right_after_a_rig_swap_does_not_start() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let mut script = vec![wearing(0), reload(), pull()];
+        script.extend([idle(); 12]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(ticks[1], [], "no reload begins on an empty rig");
+        assert_eq!(ticks[2], [Feedback::Fired], "the pull is not blocked");
+        assert!(ticks[3..].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+        assert_eq!(sim.rig().slots(), [None, None, None, None, None]);
+        assert_eq!(
+            sim.loadout().inventory(),
+            [rig_item("test_rig"), Item::Magazine(mag(30, 30))],
+            "the full magazine is still in the inventory"
+        );
+    }
+
+    #[test]
+    fn reload_after_slotting_a_magazine_in_the_new_rig_takes_it() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let mut script = vec![wearing(0), slotting_inventory_item(1), reload()];
+        script.extend([idle(); 10]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert!(ticks[..12].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(ticks[12], [Feedback::ReloadDone]);
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+        assert_eq!(
+            sim.rig().slots(),
+            [Some(mag(30, 9)), None, None, None, None],
+            "the spent magazine takes the slot the new one left"
+        );
+        assert_eq!(sim.loadout().inventory(), [rig_item("test_rig")]);
+    }
+
+    #[test]
+    fn wearing_a_rig_mid_reload_ends_it_and_the_rifle_keeps_its_magazine() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let mut script = vec![reload(), idle(), wearing(0), pull()];
+        script.extend([idle(); 12]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(
+            ticks[3],
+            [Feedback::Fired],
+            "the reload stopped, so the pull fires"
+        );
+        assert!(
+            ticks.iter().flatten().all(|fb| *fb != Feedback::ReloadDone),
+            "{ticks:?}"
+        );
+        assert_eq!(
+            sim.rifle().magazine(),
+            &mag(30, 8),
+            "the rifle's own magazine, one round chambered and one spent"
+        );
+        assert_eq!(sim.rig().slots(), [None, None, None, None, None]);
+        assert_eq!(
+            sim.loadout().inventory(),
+            [rig_item("test_rig"), Item::Magazine(mag(30, 30))]
+        );
+    }
+
+    #[test]
+    fn wearing_a_backpack_mid_reload_lets_it_finish() {
+        let mut sim = sim_wearing(
+            vec![mag(30, 30)],
+            vec![Item::Other(ItemId::new("pack_big"))],
+        );
+        let mut script = vec![reload(), idle(), wearing(0)];
+        script.extend([idle(); 8]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert!(ticks[..10].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(ticks[10], [Feedback::ReloadDone]);
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+        assert_eq!(sim.rig().slots(), [Some(mag(30, 9))]);
+        assert_eq!(sim.loadout().backpack(), Some(&ItemId::new("pack_big")));
+    }
+
+    #[test]
+    fn a_reload_pressed_on_the_tick_of_a_rig_wear_does_not_happen() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let rifle_before = sim.rifle().clone();
+        let reload_and_wear = SearchlightCommand {
+            reload: true,
+            inventory: Some(InventoryCommand::Wear { from: 0 }),
+            ..SearchlightCommand::default()
+        };
+        let mut script = vec![reload_and_wear];
+        script.extend([idle(); 14]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert!(ticks.iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(sim.rifle(), &rifle_before);
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+        assert_eq!(
+            sim.loadout().inventory(),
+            [rig_item("test_rig"), Item::Magazine(mag(30, 30))]
+        );
+    }
+
+    #[test]
+    fn a_wear_on_the_tick_the_player_dies_is_not_applied() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+        let loadout = sim.loadout().clone();
+
+        sim.kill_player();
+        sim.tick(&wearing(0), DT);
+        sim.tick(&wearing(0), DT);
+
+        assert!(sim.player_body().is_dead());
+        assert_eq!(sim.loadout(), &loadout);
+        assert_eq!(sim.rig().item(), &ItemId::new("test_rig"));
+    }
+
+    #[test]
+    fn a_rig_wear_does_not_cut_a_shot_cooldown() {
+        let mut sim = sim_wearing(vec![mag(30, 30)], vec![rig_item("rig_five")]);
+
+        let ticks = run(&mut sim, &[pull(), wearing(0), pull(), pull()]);
+
+        assert_eq!(ticks[0], [Feedback::Fired]);
+        assert_eq!(ticks[2], [], "the 3-tick cooldown is still running");
+        assert_eq!(ticks[3], [Feedback::Fired], "and ends on its own tick");
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+    }
+
+    #[test]
+    fn a_refused_wear_mid_reload_changes_nothing_and_the_reload_finishes() {
+        let inventory = || vec![Item::Other(ItemId::new("bandage")), rig_item("rig_five")];
+        for from in [0, 5] {
+            let mut control = sim_wearing(vec![mag(30, 30)], inventory());
+            let mut sim = sim_wearing(vec![mag(30, 30)], inventory());
+            let mut wear_script = vec![reload(), idle(), wearing(from)];
+            wear_script.extend([idle(); 8]);
+            let mut control_script = vec![reload(), idle(), idle()];
+            control_script.extend([idle(); 8]);
+
+            let ticks = run(&mut sim, &wear_script);
+            run(&mut control, &control_script);
+
+            assert!(ticks[..10].iter().all(Vec::is_empty), "{from}: {ticks:?}");
+            assert_eq!(ticks[10], [Feedback::ReloadDone], "{from}");
+            assert_eq!(sim.rifle().magazine(), &mag(30, 30), "{from}");
+            assert_eq!(sim.loadout(), control.loadout(), "{from}");
+            assert_eq!(sim.loadout().inventory(), inventory(), "{from}");
+        }
+    }
+
+    #[test]
+    fn a_wear_while_looting_is_ignored() {
+        let config = with_gear_to_wear(
+            loot_config(two_magazines()),
+            vec![rig_item("rig_five"), Item::Other(ItemId::new("pack_big"))],
+        );
+        let mut sim = looting_sim(config);
+        let before = sim.loadout().clone();
+
+        sim.tick(&wearing(0), DT);
+        sim.tick(&wearing(1), DT);
+
+        assert_eq!(sim.looting(), Some(0), "the loot screen stays open");
+        assert_eq!(sim.loadout(), &before);
+
+        sim.tick(&asking(InventoryCommand::Close), DT);
+        sim.tick(&wearing(0), DT);
+
+        assert_eq!(sim.looting(), None);
+        assert_eq!(sim.rig().item(), &ItemId::new("rig_five"));
+        assert_eq!(sim.loadout().inventory()[0], rig_item("test_rig"));
+    }
+
+    #[test]
+    fn a_wear_while_searching_is_ignored() {
+        let config = with_gear_to_wear(loot_config(two_magazines()), vec![rig_item("rig_five")]);
+        let mut sim = sim_with_a_body(config, &[]);
+        look_down_at_the_body(&mut sim);
+        sim.tick(&using(), DT);
+        assert_eq!(sim.searching(), Some(0), "the search has begun");
+        let before = sim.loadout().clone();
+
+        sim.tick(&wearing(0), DT);
+
+        assert_eq!(sim.searching(), Some(0), "the search goes on");
+        assert_eq!(sim.loadout(), &before);
+    }
+
+    #[test]
+    fn a_backpack_swap_changes_resolved_capacity_on_the_next_tick() {
+        let mut config = with_gear_to_wear(
+            test_config(rifle_with(10), vec![]),
+            vec![Item::Other(ItemId::new("pack_big"))],
+        );
+        config.carry.items.insert(
+            ItemId::new("backpack_small"),
+            pack_def(Some(Verb::Add(10.0))),
+        );
+        config
+            .carry
+            .items
+            .insert(ItemId::new("pack_big"), pack_def(Some(Verb::Add(15.0))));
+        config.loadout = config.loadout.with_backpack(ItemId::new("backpack_small"));
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        assert_eq!(sim.carry_sheet().capacity, 40.0);
+
+        sim.tick(&wearing(0), DT);
+        let on_the_wear_tick = sim.carry_sheet().capacity;
+        sim.tick(&idle(), DT);
+
+        assert_eq!(on_the_wear_tick, 45.0);
+        assert_eq!(sim.carry_sheet().capacity, 45.0);
+        assert_eq!(sim.stat(Stat::CarryCapacity), 45.0);
+        assert_eq!(
+            sim.loadout().inventory(),
+            [Item::Other(ItemId::new("backpack_small"))]
+        );
+    }
+
+    #[test]
+    fn a_rig_swap_changes_resolved_capacity_through_the_rigs_stats() {
+        let mut config = with_gear_to_wear(
+            test_config(rifle_with(10), vec![]),
+            vec![rig_item("rig_five")],
+        );
+        config
+            .carry
+            .items
+            .insert(ItemId::new("test_rig"), rig_def(0, Some(Verb::Add(2.0))));
+        config
+            .carry
+            .items
+            .insert(ItemId::new("rig_five"), rig_def(5, Some(Verb::Add(5.0))));
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        assert_eq!(sim.carry_sheet().capacity, 32.0);
+
+        sim.tick(&wearing(0), DT);
+
+        assert_eq!(sim.carry_sheet().capacity, 35.0);
+    }
 }
 
 #[cfg(test)]
@@ -6454,6 +7345,28 @@ mod enemy_tests {
     }
 
     #[test]
+    fn an_enemy_shot_reports_the_eye_it_fired_from() {
+        let mut sim = SearchlightSim::start(duel(&[]), config());
+        let mut reported = None;
+
+        for _ in 0..12 {
+            sim.tick(&idle(), DT);
+            let eye = sim.enemy_state(0).expect("the enemy lives").eye_position();
+            let from = sim.drain_feedback().into_iter().find_map(|fb| match fb {
+                Feedback::EnemyFired { from, .. } => Some(from),
+                _ => None,
+            });
+            if let Some(from) = from {
+                reported = Some((from, eye));
+                break;
+            }
+        }
+
+        let (from, eye) = reported.expect("the enemy fires within 12 ticks");
+        assert!(from.distance(eye) < 1e-3, "from {from:?}, eye {eye:?}");
+    }
+
+    #[test]
     fn an_enemy_beyond_its_sight_range_does_not_fire() {
         let fired_with_range = |sight_range: f32| {
             let mut config = config();
@@ -7098,7 +8011,7 @@ mod enemy_tests {
     }
 
     fn fired_by(target: u16) -> impl Fn(&Feedback) -> bool {
-        move |feedback| *feedback == Feedback::EnemyFired { target }
+        move |feedback| matches!(feedback, Feedback::EnemyFired { target: fired, .. } if *fired == target)
     }
 
     #[test]
@@ -8066,6 +8979,64 @@ mod grade_tests {
 
     fn player_hit(feedback: &Feedback) -> bool {
         matches!(feedback, Feedback::PlayerHit { .. })
+    }
+
+    #[test]
+    fn two_enemies_firing_in_one_tick_each_report_their_own_eye() {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN, Vec3::new(4.0, 0.0, 10.0)],
+            &[TOWARD_PLAYER],
+        );
+        let mut sim = SearchlightSim::with_start(arena, config(), Start::Empty);
+        sim.spawn_enemy(0, Grade::Rookie)
+            .expect("the marker is free");
+        sim.spawn_enemy(1, Grade::Rookie)
+            .expect("the marker is free");
+        let mut shots = Vec::new();
+
+        for _ in 0..150 {
+            sim.tick(&command(true), DT);
+            let eyes: Vec<Vec3> = (0..2)
+                .map(|index| {
+                    sim.enemy_state(index)
+                        .expect("the enemy lives")
+                        .eye_position()
+                })
+                .collect();
+            let fired: Vec<(u16, Vec3)> = sim
+                .drain_feedback()
+                .into_iter()
+                .filter_map(|fb| match fb {
+                    Feedback::EnemyFired { target, from } => Some((target, from)),
+                    _ => None,
+                })
+                .collect();
+            if fired.len() == 2 {
+                shots = fired
+                    .into_iter()
+                    .map(|(t, from)| (t, from, eyes.clone()))
+                    .collect();
+                break;
+            }
+        }
+
+        assert_eq!(shots.len(), 2, "both enemies fire in the same tick");
+        let mut targets: Vec<u16> = shots.iter().map(|(target, ..)| *target).collect();
+        targets.sort_unstable();
+        assert_eq!(targets, [0, 1]);
+        for (target, from, eyes) in &shots {
+            let eye = eyes[usize::from(*target)];
+            assert!(
+                from.distance(eye) < 1e-3,
+                "enemy {target}: {from:?} vs {eye:?}"
+            );
+        }
+        assert!(
+            shots[0].1.distance(shots[1].1) > 3.0,
+            "the two shots began at different points: {shots:?}"
+        );
     }
 
     fn first_shot_tick(grade: Grade) -> Option<usize> {

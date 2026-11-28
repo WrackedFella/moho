@@ -6,8 +6,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use moho_app::{AppConfig, LoopConfig, split_fullscreen_binding};
-use moho_core::assets::{AssetError, AssetRoots};
-use moho_core::content::ContentRoots;
 use moho_core::prefs::Prefs;
 use moho_input::bindings::ActionBindings;
 use moho_ui_shell::UiShell;
@@ -16,33 +14,21 @@ use searchlight::console_commands;
 use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE, start_window_mode};
 use searchlight::input::build_action_map;
-use searchlight::kit::{self, ENEMY_KIT_ID, START_KIT_ID};
 use searchlight::launch;
 use searchlight::levels;
 use searchlight::mode::ArenaMode;
-use searchlight::sim::SimConfig;
-use searchlight::tuning::{tuning, with_enemy_kit};
 use searchlight::wave::WaveTuning;
-use searchlight::{TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
+use searchlight::{TICK_HZ, prefs_path, split_console_binding};
 
-/// The sim tuning built from the starting kit and the enemy kit, both loaded from the base
-/// content folder and the listed mod roots.
-fn load_tuning(mods: &[String]) -> Result<SimConfig, Box<dyn Error>> {
-    let roots = ContentRoots::base(&content_root())?.with_mods(&mods_dir(), mods)?;
-    let start = kit::load(&roots, START_KIT_ID)?;
-    let (remains, rounds) = kit::load_enemy(&roots, ENEMY_KIT_ID)?;
-    Ok(with_enemy_kit(tuning(start), remains, rounds))
-}
-
-/// The level file and the rifle shot sound, each from the highest asset folder holding it.
-fn resolve_shipped(
-    choice: &levels::LevelChoice,
-    assets: &AssetRoots,
-) -> Result<(PathBuf, PathBuf), AssetError> {
-    Ok((
-        choice.path(assets)?,
-        assets.resolve(Path::new("rifle_shot.wav"))?,
-    ))
+/// The folder holding the running executable.
+fn executable_folder() -> std::io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    exe.parent().map(Path::to_owned).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "the executable path has no parent folder",
+        )
+    })
 }
 
 fn main() -> Result<ExitCode, Box<dyn Error>> {
@@ -50,6 +36,20 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
+    let exe_dir = match executable_folder() {
+        Ok(dir) => dir,
+        Err(error) => {
+            tracing::error!(%error, "Executable folder unknown");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+    let install = match launch::locate(&exe_dir) {
+        Ok(install) => install,
+        Err(error) => {
+            tracing::error!(%error, "Shipped folders not found");
+            return Ok(ExitCode::FAILURE);
+        }
+    };
     let launch = match launch::parse(std::env::args_os().skip(1)) {
         Ok(launch) => launch,
         Err(error) => {
@@ -57,7 +57,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    let assets = match launch::asset_roots(&launch) {
+    let assets = match launch::asset_roots(&launch, &install.root().join("assets")) {
         Ok(assets) => assets,
         Err(error) => {
             tracing::error!(%error, "Asset folder refused");
@@ -69,7 +69,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     for warning in prefs_warnings {
         tracing::warn!(%warning, "Preferences load fallback");
     }
-    let config = match load_tuning(prefs.content_mods()) {
+    let config = match launch::load_start_kit(&install.root().join("content"), prefs.content_mods())
+    {
         Ok(config) => config,
         Err(error) => {
             tracing::error!(%error, "Content failed to load");
@@ -84,7 +85,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    let (level_file, shot_sound) = match resolve_shipped(&choice, &assets) {
+    let (level_file, shot_sound) = match launch::resolve_shipped(&choice, &assets) {
         Ok(files) => files,
         Err(error) => {
             tracing::error!(%error, "Asset not found");
@@ -132,6 +133,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             window_title: WINDOW_TITLE.to_owned(),
             loop_config: LoopConfig::new(TICK_HZ),
             init_audio: true,
+            ui_click: None,
             toggle_keys,
             window_mode,
         },
