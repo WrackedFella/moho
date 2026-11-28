@@ -261,9 +261,12 @@ impl PhysicsWorld {
         let body = self.rigid_body_set.get(id.0)?;
         Some(body.position().translation)
     }
+}
 
+/// Engine-typed setup and readback for tests outside this crate (ADR-0038).
+#[cfg(any(test, feature = "test-support"))]
+impl PhysicsWorld {
     /// Set a body's linear velocity, waking it; an unknown body is ignored.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn set_body_velocity(&mut self, id: BodyId, velocity: Vec3) {
         if let Some(body) = self.rigid_body_set.get_mut(id.0) {
             body.set_linvel(velocity, true);
@@ -271,14 +274,12 @@ impl PhysicsWorld {
     }
 
     /// A body's rotation; `None` for an unknown body.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn body_rotation(&self, id: BodyId) -> Option<glam::Quat> {
         Some(self.rigid_body_set.get(id.0)?.position().rotation)
     }
 
     /// The triangle count of a trimesh collider; `None` for an unknown collider or one that
     /// is not a trimesh.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn collider_triangle_count(&self, id: ColliderId) -> Option<usize> {
         Some(
             self.collider_set
@@ -429,16 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn body_position_of_an_id_from_another_world_is_none() {
-        let mut other = PhysicsWorld::new();
-        let foreign = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
-        let world = PhysicsWorld::new();
-
-        assert_eq!(world.body_position(foreign), None);
-    }
-
-    #[test]
-    fn test_helpers_on_unknown_ids_read_none_and_do_not_panic() {
+    fn ids_a_world_never_issued_read_none_and_do_not_panic() {
         let mut other = PhysicsWorld::new();
         let foreign_body = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
         other.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
@@ -447,6 +439,7 @@ mod tests {
 
         world.set_body_velocity(foreign_body, Vec3::X);
 
+        assert_eq!(world.body_position(foreign_body), None);
         assert_eq!(world.body_rotation(foreign_body), None);
         assert_eq!(world.collider_triangle_count(foreign_collider), None);
         assert_eq!(world.body_count(), 0);
@@ -455,13 +448,8 @@ mod tests {
     #[test]
     fn collider_triangle_count_of_a_non_trimesh_collider_is_none() {
         let mut world = PhysicsWorld::new();
-        world.add_character(Vec3::new(0.0, 5.0, 0.0));
-        let capsule = world
-            .collider_set
-            .iter()
-            .map(|(handle, _)| ColliderId(handle))
-            .next()
-            .expect("the character has a capsule");
+        let character = world.add_character(Vec3::new(0.0, 5.0, 0.0));
+        let capsule = ColliderId(world.rigid_body_set[character.0].colliders()[0]);
 
         assert_eq!(world.collider_triangle_count(capsule), None);
     }
