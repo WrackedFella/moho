@@ -247,7 +247,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_input::action_map::ActionMap;
-    use moho_input::bindings::{ActionBindings, Input, Modifiers};
+    use moho_input::bindings::{ActionBindings, ActionMode, Input, Modifiers};
 
     use super::*;
     use crate::test_support::press;
@@ -778,6 +778,63 @@ mod tests {
         let held = lean_after(&mut map, None);
 
         assert_eq!(held, Some(LeanSide::Right));
+    }
+
+    fn map_with_lean_left(mode: ActionMode) -> ActionMap<SearchlightAction> {
+        let (mut bindings, warnings) = ActionBindings::<SearchlightAction>::load(&BTreeMap::new());
+        assert!(warnings.is_empty());
+        bindings.set_mode(SearchlightAction::LeanLeft, mode);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    /// The lean after a press, after its release, after a second press and after its release.
+    fn lean_over_two_taps(mode: ActionMode) -> [Option<LeanSide>; 4] {
+        let mut map = map_with_lean_left(mode);
+        press(&mut map, SearchlightAction::LeanLeft);
+        let down = lean_after(&mut map, None);
+        release(&mut map, SearchlightAction::LeanLeft);
+        let up = lean_after(&mut map, down);
+        press(&mut map, SearchlightAction::LeanLeft);
+        let down_again = lean_after(&mut map, up);
+        release(&mut map, SearchlightAction::LeanLeft);
+        let up_again = lean_after(&mut map, down_again);
+        [down, up, down_again, up_again]
+    }
+
+    #[test]
+    fn lean_is_held_unless_set_to_toggle() {
+        let (fresh, warnings) = ActionBindings::<SearchlightAction>::load(&BTreeMap::new());
+
+        let held = lean_over_two_taps(ActionMode::Hold);
+        let toggled = lean_over_two_taps(ActionMode::Toggle);
+
+        assert!(warnings.is_empty());
+        assert_eq!(fresh.mode(SearchlightAction::LeanLeft), ActionMode::Hold);
+        assert_eq!(fresh.mode(SearchlightAction::LeanRight), ActionMode::Hold);
+        assert_eq!(
+            held,
+            [Some(LeanSide::Left), None, Some(LeanSide::Left), None],
+            "held, the lean ends on every release"
+        );
+        assert_eq!(
+            toggled,
+            [Some(LeanSide::Left), Some(LeanSide::Left), None, None],
+            "toggled, one press holds the lean and the next ends it"
+        );
+    }
+
+    #[test]
+    fn only_the_leans_are_toggleable() {
+        let toggleable: Vec<SearchlightAction> = SearchlightAction::ALL
+            .iter()
+            .copied()
+            .filter(|action| action.toggleable())
+            .collect();
+
+        assert_eq!(
+            toggleable,
+            [SearchlightAction::LeanLeft, SearchlightAction::LeanRight]
+        );
     }
 }
 

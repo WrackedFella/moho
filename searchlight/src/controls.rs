@@ -1,7 +1,7 @@
 //! The bindings being edited on the Controls page, before Apply makes them live.
 
 use moho_input::Action;
-use moho_input::bindings::{ActionBindings, Binding, Input};
+use moho_input::bindings::{ActionBindings, ActionMode, Binding, Input};
 use moho_ui_shell::Slot;
 
 use crate::input::SearchlightAction;
@@ -119,6 +119,17 @@ impl ControlsDraft {
         if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
             row.slots[index(slot)] = None;
         }
+    }
+
+    /// `action`'s hold/toggle choice as drafted.
+    pub fn mode(&self, action: SearchlightAction) -> ActionMode {
+        let _ = action;
+        ActionMode::Hold
+    }
+
+    /// Stages `mode` for `action`; an action that is not toggleable stays on hold.
+    pub fn set_mode(&mut self, action: SearchlightAction, mode: ActionMode) {
+        let _ = (action, mode);
     }
 
     /// Puts every action back on its default bindings.
@@ -848,6 +859,31 @@ mod tests {
         );
         assert_eq!(draft.bindings(), defaults());
         assert!(!draft.is_unbound(SearchlightAction::Jump));
+    }
+
+    #[test]
+    fn reset_all_sets_every_mode_to_hold() {
+        let mut draft = draft();
+        draft.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+        draft.set_mode(SearchlightAction::LeanRight, ActionMode::Toggle);
+        let staged = draft.bindings();
+
+        draft.reset_all();
+
+        assert_eq!(staged.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(
+            staged.mode(SearchlightAction::LeanRight),
+            ActionMode::Toggle
+        );
+        for &action in SearchlightAction::ALL {
+            assert_eq!(draft.mode(action), ActionMode::Hold, "{action:?}");
+            assert_eq!(
+                draft.bindings().mode(action),
+                ActionMode::Hold,
+                "{action:?} in the bindings"
+            );
+        }
+        assert_eq!(draft.bindings(), defaults());
     }
 
     #[test]

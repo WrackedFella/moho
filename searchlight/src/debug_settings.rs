@@ -226,7 +226,7 @@ mod tests {
     use std::path::Path;
 
     use moho_app::split_fullscreen_binding;
-    use moho_input::bindings::{Binding, Input, Modifiers};
+    use moho_input::bindings::{ActionMode, Binding, Input, Modifiers};
     use moho_input::key::{Key, MouseButton};
 
     use super::*;
@@ -686,6 +686,29 @@ mod tests {
         assert_eq!(warnings, vec![]);
         assert_eq!(game_warnings, vec![]);
         assert_eq!(loaded, bindings);
+    }
+
+    #[test]
+    fn applied_modes_load_back_as_main_loads_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        let mut bindings = rebound();
+        bindings.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+
+        settings.set_bindings(&bindings).unwrap();
+        let (prefs, warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) = split_fullscreen_binding(prefs.bindings());
+        let (_console, game_section) = split_console_binding(&without_fullscreen);
+        let (mut loaded, game_warnings) = ActionBindings::<SearchlightAction>::load(&game_section);
+        let mode_warnings = loaded.load_modes(prefs.action_modes());
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(game_warnings, vec![]);
+        assert_eq!(mode_warnings, vec![]);
+        assert_eq!(loaded, bindings);
+        assert_eq!(loaded.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(loaded.mode(SearchlightAction::LeanRight), ActionMode::Hold);
     }
 
     #[test]
