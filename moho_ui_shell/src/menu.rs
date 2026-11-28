@@ -1015,6 +1015,28 @@ impl<A> MenuStack<A> {
         let rows = open.rects(size);
         rows[open.visible(size)].to_vec()
     }
+
+    /// What each row fully in view of the top menu screen is to a reader, in row order.
+    pub(crate) fn row_nodes(&self, _size: [f32; 2]) -> Vec<RowNode> {
+        Vec::new()
+    }
+}
+
+/// What a visible menu row is to a reader of the screen: where it is, its name and its kind.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RowNode {
+    pub(crate) rect: Rect,
+    pub(crate) label: String,
+    pub(crate) role: RowRole,
+}
+
+/// The kind of control a row reads as, with the state a reader needs.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RowRole {
+    Button,
+    Checkbox { checked: bool },
+    Slider { value: f64 },
+    Choice { shown: String },
 }
 
 impl<A: PartialEq> MenuStack<A> {
@@ -4805,5 +4827,125 @@ mod tests {
             "only the action list is added: {extra:?}"
         );
         assert_eq!(closed_again, closed);
+    }
+
+    fn staged_for_nodes() -> EngineSettings {
+        EngineSettings {
+            invert_mouse_y: true,
+            master_volume: 7.5,
+            shadow_quality: 3,
+            ..scrolled_base()
+        }
+    }
+
+    fn mixed_screen() -> MenuScreen<Bind> {
+        let field_of_view = GameSlider {
+            key: "fov".to_owned(),
+            label: "Field of view".to_owned(),
+            min: 60,
+            max: 120,
+            step: 5,
+            unit: "deg".to_owned(),
+            value: 90,
+        };
+        MenuScreen {
+            settings: Some(staged_for_nodes()),
+            ..controls_screen(vec![
+                bind_button("Play", Bind::Row(0)),
+                MenuItem::Setting(EngineSetting::InvertMouseY),
+                MenuItem::Setting(EngineSetting::MasterVolume),
+                MenuItem::Setting(EngineSetting::ShadowQuality),
+                MenuItem::GameSlider(field_of_view),
+                MenuItem::Apply,
+                control(1, [R, None]),
+                details(1, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ])
+        }
+    }
+
+    fn node(rect: Rect, label: &str, role: RowRole) -> RowNode {
+        RowNode {
+            rect,
+            label: label.to_owned(),
+            role,
+        }
+    }
+
+    #[test]
+    fn row_nodes_give_each_visible_row_its_role_label_and_state() {
+        let screen = mixed_screen();
+        let rects = layout(&screen, SIZE);
+        let mut stack = MenuStack::new();
+        stack.push(screen);
+        let mut flipped = MenuStack::new();
+        flipped.push(mixed_screen());
+        flipped.click(rect_centre(&rects[1]), SIZE);
+
+        let nodes = stack.row_nodes(SIZE);
+        let after_click = flipped.row_nodes(SIZE);
+
+        let expected = vec![
+            node(rects[0], "Play", RowRole::Button),
+            node(
+                rects[1],
+                "Invert mouse Y",
+                RowRole::Checkbox { checked: true },
+            ),
+            node(rects[2], "Master volume", RowRole::Slider { value: 7.5 }),
+            node(
+                rects[3],
+                "Shadow quality",
+                RowRole::Choice {
+                    shown: "High".to_owned(),
+                },
+            ),
+            node(rects[4], "Field of view", RowRole::Slider { value: 90.0 }),
+            node(rects[5], "Apply", RowRole::Button),
+        ];
+        assert_eq!(nodes, expected, "Control and Details rows give none");
+        assert_eq!(
+            after_click[1].role,
+            RowRole::Checkbox { checked: false },
+            "the checkbox follows the staged value"
+        );
+    }
+
+    #[test]
+    fn row_nodes_cover_only_the_rows_in_view_and_none_without_a_menu_screen() {
+        let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        items.push(MenuItem::Apply);
+        items.push(button("Back", Act::Back));
+        let mut stack = stack_of(MenuScreen {
+            title: None,
+            items,
+            back: Some(Act::Back),
+            settings: Some(scrolled_base()),
+        });
+        let labels = |stack: &MenuStack<Act>| -> Vec<String> {
+            stack
+                .row_nodes(SIZE)
+                .into_iter()
+                .map(|node| node.label)
+                .collect()
+        };
+
+        let top = labels(&stack);
+        press(&mut stack, Key::ArrowUp);
+        let end = labels(&stack);
+        let closed = MenuStack::<Act>::new().row_nodes(SIZE);
+
+        let all: Vec<String> = EngineSetting::ALL
+            .iter()
+            .map(|setting| setting.label().to_owned())
+            .collect();
+        let expected_top: Vec<String> = all[..10].to_vec();
+        let mut expected_end: Vec<String> = all[4..].to_vec();
+        expected_end.extend(["Apply".to_owned(), "Back".to_owned()]);
+        assert_eq!(top, expected_top, "ten of the fourteen rows fit");
+        assert_eq!(end, expected_end, "scrolled to the end");
+        assert_eq!(closed, []);
     }
 }

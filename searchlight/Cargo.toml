@@ -26,6 +26,8 @@ moho_renderer = { path = "../moho_renderer" }
 moho_ui_shell = { path = "../moho_ui_shell" }
 
 [dev-dependencies]
+egui = { workspace = true }
+egui_kittest = { workspace = true }
 proptest = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
