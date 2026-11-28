@@ -2,6 +2,7 @@
 
 use moho_input::Action;
 use moho_input::bindings::{ActionBindings, ActionMode, Binding, Input, Modifiers, Trigger};
+use moho_input::key::Key;
 use moho_ui_shell::Slot;
 
 use crate::input::SearchlightAction;
@@ -13,6 +14,9 @@ struct Row {
     slots: [Option<Binding>; 2],
     rest: Vec<Binding>,
     mode: ActionMode,
+    /// The kind and modifiers each slot was last given by a picker: what the next capture into
+    /// it builds, and what an empty slot shows.
+    kinds: [(Trigger, Modifiers); 2],
 }
 
 impl Row {
@@ -22,6 +26,7 @@ impl Row {
             slots: [held.first().copied(), held.get(1).copied()],
             rest: held.iter().skip(2).copied().collect(),
             mode,
+            kinds: [(Trigger::Press, Modifiers::NONE); 2],
         }
     }
 
@@ -165,7 +170,13 @@ impl ControlsDraft {
         {
             row.remove(pending.binding);
             row.slots[index(pending.slot)] = Some(pending.binding);
+            row.kinds[index(pending.slot)] = (pending.binding.trigger, pending.binding.modifiers);
         }
+    }
+
+    /// The binding a pending conflict would put in place, for naming it in the dialog.
+    pub fn pending_binding(&self) -> Option<Binding> {
+        self.pending.map(|pending| pending.binding)
     }
 
     /// Answers a pending conflict by dropping it.
@@ -173,13 +184,21 @@ impl ControlsDraft {
         self.pending = None;
     }
 
-    /// The kind and modifiers `action`'s `slot` holds, or will give the next capture into it.
+    /// The kind and modifiers `action`'s `slot` holds, or the ones a picker gave it while empty.
     pub fn details(&self, action: SearchlightAction, slot: Slot) -> (Trigger, Modifiers) {
-        let _ = (self, action, slot);
-        (Trigger::Press, Modifiers::NONE)
+        self.rows.iter().find(|row| row.action == action).map_or(
+            (Trigger::Press, Modifiers::NONE),
+            |row| {
+                row.slots[index(slot)].map_or(row.kinds[index(slot)], |bound| {
+                    (bound.trigger, bound.modifiers)
+                })
+            },
+        )
     }
 
-    /// Sets `action`'s `slot` to `trigger` and `modifiers`.
+    /// Sets `action`'s `slot` to `trigger` and `modifiers`. An empty slot only remembers them for
+    /// its next capture and the answer is `Unchanged`. A bound slot keeps its input and is
+    /// checked like a capture: reserved, held by another action (pending), or already held.
     pub fn pick(
         &mut self,
         action: SearchlightAction,
@@ -187,22 +206,59 @@ impl ControlsDraft {
         trigger: Trigger,
         modifiers: Modifiers,
     ) -> Capture {
-        let _ = (self, action, slot, trigger, modifiers);
-        Capture::Unchanged
+        self.pending = None;
+        let Some(row) = self.rows.iter_mut().find(|row| row.action == action) else {
+            return Capture::Unchanged;
+        };
+        let Some(bound) = row.slots[index(slot)] else {
+            row.kinds[index(slot)] = (trigger, modifiers);
+            return Capture::Unchanged;
+        };
+        let binding = Binding {
+            input: bound.input,
+            trigger,
+            modifiers,
+        };
+        if binding == bound {
+            row.kinds[index(slot)] = (trigger, modifiers);
+            return Capture::Unchanged;
+        }
+        self.place(action, slot, binding)
     }
 
     /// Restores `action`'s default bindings and mode.
     pub fn reset(&mut self, action: SearchlightAction) {
-        let _ = (self, action);
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            *row = Row::from_bindings(action, action.default_bindings(), ActionMode::Hold);
+        }
     }
 
-    /// Puts the plain press of `input` in `action`'s `slot` unless it is reserved, another action
-    /// holds it, or `action` already holds it in any position. A conflict stays pending until
-    /// `replace` or `cancel`; any later capture drops it.
+    /// Puts `input` in `action`'s `slot` with the kind and modifiers the slot was last given by a
+    /// picker (a plain press if never) unless that is reserved, another action holds it, or
+    /// `action` already holds it in any position. A conflict stays pending until `replace` or
+    /// `cancel`; any later capture drops it.
     pub fn capture(&mut self, action: SearchlightAction, requested: Slot, input: Input) -> Capture {
         self.pending = None;
-        let binding = Binding::from(input);
-        if binding.is_protected() {
+        let (trigger, modifiers) = self
+            .rows
+            .iter()
+            .find(|row| row.action == action)
+            .map_or((Trigger::Press, Modifiers::NONE), |row| {
+                row.kinds[index(requested)]
+            });
+        self.place(
+            action,
+            requested,
+            Binding {
+                input,
+                trigger,
+                modifiers,
+            },
+        )
+    }
+
+    fn place(&mut self, action: SearchlightAction, requested: Slot, binding: Binding) -> Capture {
+        if binding.is_protected() || chords_with_itself(binding) {
             return Capture::Reserved;
         }
         if let Some(other) = self
@@ -230,11 +286,24 @@ impl ControlsDraft {
             Some(row) if row.holds(binding) => Capture::Unchanged,
             Some(row) => {
                 row.slots[index(requested)] = Some(binding);
+                row.kinds[index(requested)] = (binding.trigger, binding.modifiers);
                 Capture::Set
             }
             None => Capture::Unchanged,
         }
     }
+}
+
+/// A modifier key under its own modifier (`Ctrl` with `Ctrl`): the prefs loader rejects that
+/// chord, so it would be dropped on load.
+fn chords_with_itself(binding: Binding) -> bool {
+    let own = match binding.input {
+        Input::Key(Key::Ctrl) => Modifiers::CTRL,
+        Input::Key(Key::Shift) => Modifiers::SHIFT,
+        Input::Key(Key::Alt) => Modifiers::ALT,
+        _ => return false,
+    };
+    binding.modifiers.contains(own)
 }
 
 fn index(slot: Slot) -> usize {
@@ -1016,6 +1085,12 @@ mod tests {
     fn capture_takes_kind_and_modifier_from_the_slot() {
         let mut draft = draft();
 
+        draft.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Hold,
+            Modifiers::NONE,
+        );
         let into_hold = draft.capture(
             SearchlightAction::CheckMagazine,
             Slot::Primary,

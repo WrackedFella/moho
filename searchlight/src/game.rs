@@ -10,7 +10,7 @@ use glam::{Affine3A, Mat3, Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
-use moho_input::bindings::{Binding, Input};
+use moho_input::bindings::{Input, Modifiers, Trigger};
 use moho_input::key::Key;
 use moho_physics::{CharacterBody, CharacterState, HitVolume, first_person_view};
 use moho_render_api::{
@@ -26,8 +26,8 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    Anchor, EngineSettings, ItemLists, ListId, MenuEvent, Routing, ScreenText, Slot, UiLayers,
-    UiShell, apply_engine_command, apply_engine_settings,
+    Anchor, EngineSettings, ItemLists, ListId, MenuEvent, MenuItem, Routing, ScreenText, Slot,
+    UiLayers, UiShell, apply_engine_command, apply_engine_settings,
 };
 
 use crate::aim::{Magnification, aimed_fov_y, look_scale};
@@ -58,6 +58,8 @@ use crate::tag::SurfaceTag;
 use crate::tuning::{SHIPPED_BODY, STRIP_FADE_TICKS};
 use crate::{TICK_HZ, hud};
 
+/// The note on a Controls row whose edit was refused as reserved.
+const REFUSED_NOTE: &str = "That input can't be bound";
 /// Ticks a struck dummy segment stays lit.
 const FLASH_TICKS: u32 = TICK_HZ / 6;
 /// Dummy segment mesh ids start here, clear of the arena's (which count up from 0).
@@ -1084,6 +1086,8 @@ pub struct SearchlightGame {
     controls: Option<ControlsDraft>,
     /// The action whose details the Controls page shows; at most one.
     open_action: Option<SearchlightAction>,
+    /// The action whose last edit was refused as reserved; its row notes it on the next refresh.
+    refused: Option<SearchlightAction>,
     /// Ticks the rig strip stays up after the last trigger.
     strip_ticks_left: u32,
     /// Outlines of every character's hit volumes are drawn; session state, off at every launch.
@@ -1121,6 +1125,7 @@ impl SearchlightGame {
             queued_inventory: None,
             controls: None,
             open_action: None,
+            refused: None,
             strip_ticks_left: 0,
             hit_volumes: false,
         }
@@ -1321,6 +1326,7 @@ impl SearchlightGame {
                 }
                 MenuEvent::Chosen(MenuAction::Controls) => {
                     let draft = ControlsDraft::new(self.input.bindings());
+                    self.open_action = None;
                     self.stage.shell().menu_mut().push(controls_screen(&draft));
                     self.controls = Some(draft);
                 }
@@ -1331,7 +1337,13 @@ impl SearchlightGame {
                     }
                     self.show_controls();
                 }
-                MenuEvent::Chosen(MenuAction::Rebind(_) | MenuAction::ResetAction(_)) => {}
+                MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
+                MenuEvent::Chosen(MenuAction::ResetAction(action)) => {
+                    if let Some(draft) = &mut self.controls {
+                        draft.reset(action);
+                    }
+                    self.show_controls();
+                }
                 MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Inventory => {
                     self.close_inventory();
                 }
@@ -1340,6 +1352,7 @@ impl SearchlightGame {
                 }
                 MenuEvent::Chosen(MenuAction::Back) => {
                     self.controls = None;
+                    self.open_action = None;
                     self.stage.shell().menu_mut().pop();
                 }
                 MenuEvent::Chosen(MenuAction::Replace) => self.answer_conflict(true),
@@ -1374,7 +1387,21 @@ impl SearchlightGame {
                     }
                     self.show_controls();
                 }
-                MenuEvent::DetailsToggled { .. } | MenuEvent::Picked { .. } => {}
+                MenuEvent::DetailsToggled {
+                    action: MenuAction::Rebind(action),
+                } => {
+                    self.open_action = (self.open_action != Some(action)).then_some(action);
+                    self.show_controls();
+                }
+                MenuEvent::Picked {
+                    action: MenuAction::Rebind(action),
+                    slot,
+                    trigger,
+                    modifiers,
+                } => self.picked(action, slot, trigger, modifiers),
+                MenuEvent::DetailsToggled { .. } | MenuEvent::Picked { .. } => {
+                    self.show_controls();
+                }
                 MenuEvent::ActionPicked {
                     action: MenuAction::ItemAction(inventory::ItemAction::Wear),
                     item: MenuAction::Item(row),
@@ -1391,7 +1418,20 @@ impl SearchlightGame {
     /// Shows the Controls page's rows from the draft.
     fn show_controls(&mut self) {
         if let Some(draft) = &self.controls {
-            let rows = controls_rows_with(draft, self.open_action);
+            let mut rows = controls_rows_with(draft, self.open_action);
+            if let Some(refused) = self.refused.take() {
+                for row in &mut rows {
+                    if let MenuItem::Control {
+                        action: MenuAction::Rebind(action),
+                        note,
+                        ..
+                    } = row
+                        && *action == refused
+                    {
+                        *note = Some(REFUSED_NOTE.to_owned());
+                    }
+                }
+            }
             self.stage.shell().menu_mut().set_items(rows);
         }
     }
@@ -1402,12 +1442,44 @@ impl SearchlightGame {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        if let Capture::Conflict { by, .. } = draft.capture(action, slot, input) {
-            let dialog = conflict_screen(&Binding::from(input).label(), label(by));
-            self.stage.shell().menu_mut().push(dialog);
+        let outcome = draft.capture(action, slot, input);
+        self.answer_edit(action, outcome);
+    }
+
+    /// Stages the kind and modifiers a picker chose for `action`'s `slot`.
+    fn picked(
+        &mut self,
+        action: SearchlightAction,
+        slot: Slot,
+        trigger: Trigger,
+        modifiers: Modifiers,
+    ) {
+        let Some(draft) = &mut self.controls else {
             return;
+        };
+        let outcome = draft.pick(action, slot, trigger, modifiers);
+        self.answer_edit(action, outcome);
+    }
+
+    /// Answers an edit of `action`'s row: a conflict opens the dialog, a refusal is noted on the
+    /// row, anything else refreshes the page.
+    fn answer_edit(&mut self, action: SearchlightAction, outcome: Capture) {
+        match outcome {
+            Capture::Conflict { by, .. } => {
+                let held = self
+                    .controls
+                    .as_ref()
+                    .and_then(ControlsDraft::pending_binding)
+                    .map_or_else(String::new, moho_input::bindings::Binding::label);
+                let dialog = conflict_screen(&held, label(by));
+                self.stage.shell().menu_mut().push(dialog);
+            }
+            Capture::Reserved => {
+                self.refused = Some(action);
+                self.show_controls();
+            }
+            Capture::Set | Capture::Unchanged => self.show_controls(),
         }
-        self.show_controls();
     }
 
     /// Closes the conflict dialog, answers it through the draft and refreshes the Controls rows.

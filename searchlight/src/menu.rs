@@ -2,7 +2,9 @@
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
 use moho_input::Action;
-use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, ListRow, MenuItem, MenuScreen};
+use moho_ui_shell::{
+    Chevron, EngineSetting, EngineSettings, GameSlider, ListRow, MenuItem, MenuScreen, Slot,
+};
 
 use crate::controls::{ControlsDraft, label};
 use crate::debug_settings::GameRows;
@@ -283,18 +285,34 @@ pub fn controls_rows_with(
     draft: &ControlsDraft,
     open: Option<SearchlightAction>,
 ) -> Vec<MenuItem<MenuAction>> {
-    let _ = open;
-    let mut items: Vec<MenuItem<MenuAction>> = SearchlightAction::ALL
-        .iter()
-        .map(|&action| MenuItem::Control {
+    let mut items = Vec::new();
+    for &action in SearchlightAction::ALL {
+        let is_open = open == Some(action);
+        items.push(MenuItem::Control {
             label: label(action).to_owned(),
             action: MenuAction::Rebind(action),
             slots: draft.slots(action),
             note: None,
-            chevron: None,
+            chevron: Some(if is_open {
+                Chevron::Open
+            } else {
+                Chevron::Closed
+            }),
             mode: action.toggleable().then(|| draft.mode(action)),
-        })
-        .collect();
+        });
+        if is_open {
+            for slot in [Slot::Primary, Slot::Secondary] {
+                let (trigger, modifiers) = draft.details(action, slot);
+                items.push(MenuItem::Details {
+                    action: MenuAction::Rebind(action),
+                    slot,
+                    trigger,
+                    modifiers,
+                });
+            }
+            items.push(MenuAction::ResetAction(action).button());
+        }
+    }
     items.push(MenuAction::ApplyControls.button());
     items.push(MenuAction::ResetControls.button());
     items.push(MenuAction::Back.button());
