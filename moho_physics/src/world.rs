@@ -266,11 +266,16 @@ impl PhysicsWorld {
 /// Engine-typed setup and readback for tests outside this crate (ADR-0038).
 #[cfg(any(test, feature = "test-support"))]
 impl PhysicsWorld {
-    /// Set a body's linear velocity, waking it; an unknown body is ignored.
+    /// Set a body's linear velocity, waking it.
+    ///
+    /// # Panics
+    /// When `id` is not a live body of this world: launching a body that does not exist is a
+    /// bug in the caller's setup.
     pub fn set_body_velocity(&mut self, id: BodyId, velocity: Vec3) {
-        if let Some(body) = self.rigid_body_set.get_mut(id.0) {
-            body.set_linvel(velocity, true);
-        }
+        self.rigid_body_set
+            .get_mut(id.0)
+            .expect("set_body_velocity needs a live body issued by this world")
+            .set_linvel(velocity, true);
     }
 
     /// A body's rotation; `None` for an unknown body.
@@ -430,14 +435,22 @@ mod tests {
     }
 
     #[test]
-    fn ids_a_world_never_issued_read_none_and_do_not_panic() {
+    #[should_panic(expected = "set_body_velocity needs a live body")]
+    fn set_body_velocity_panics_on_a_body_the_world_never_issued() {
+        let mut other = PhysicsWorld::new();
+        let foreign_body = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
+        let mut world = PhysicsWorld::new();
+
+        world.set_body_velocity(foreign_body, Vec3::X);
+    }
+
+    #[test]
+    fn readbacks_for_ids_a_world_never_issued_are_none() {
         let mut other = PhysicsWorld::new();
         let foreign_body = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
         other.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
         let foreign_collider = other.world_mesh_collider(WorldMeshId(1)).expect("mesh");
-        let mut world = PhysicsWorld::new();
-
-        world.set_body_velocity(foreign_body, Vec3::X);
+        let world = PhysicsWorld::new();
 
         assert_eq!(world.body_position(foreign_body), None);
         assert_eq!(world.body_rotation(foreign_body), None);
