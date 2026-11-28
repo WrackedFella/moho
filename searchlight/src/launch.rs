@@ -312,12 +312,26 @@ mod tests {
     { magazine = \"mag_rifle\", round = \"round_rifle_ball\" },
 ]";
 
+    /// `text` with the line endings `file` uses, since a Windows checkout of `kits.toml` can
+    /// end its lines in `\r\n` while this source's literals end them in `\n`.
+    fn in_line_endings_of(file: &str, text: &str) -> String {
+        if file.contains("\r\n") {
+            text.replace('\n', "\r\n")
+        } else {
+            text.to_owned()
+        }
+    }
+
     #[test]
     fn a_copy_outside_the_checkout_starts_from_its_own_folders() {
         let copy = copied_install();
         let kits = copy.path().join("content").join("kits.toml");
         let original = fs::read_to_string(&kits).unwrap();
-        let edited = original.replacen(THREE_MAGAZINES, TWO_MAGAZINES, 1);
+        let edited = original.replacen(
+            &in_line_endings_of(&original, THREE_MAGAZINES),
+            &in_line_endings_of(&original, TWO_MAGAZINES),
+            1,
+        );
         assert_ne!(
             edited, original,
             "the start kit's three magazines were not found"
