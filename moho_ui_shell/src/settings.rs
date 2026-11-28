@@ -301,6 +301,15 @@ impl EngineSettings {
         }
     }
 
+    /// A toggle row's value; `false` for any other row.
+    pub(crate) fn toggle_value(&self, setting: EngineSetting) -> bool {
+        match setting {
+            EngineSetting::MouseSmoothing => self.mouse_smoothing,
+            EngineSetting::InvertMouseY => self.invert_mouse_y,
+            _ => false,
+        }
+    }
+
     /// Flips a toggle row; other rows are left alone.
     pub(crate) fn flip(&mut self, setting: EngineSetting) {
         match setting {
@@ -404,6 +413,36 @@ mod tests {
             window_mode: WindowMode::Windowed,
             resolution: (1280, 720),
         }
+    }
+
+    #[test]
+    fn toggle_value_reads_each_toggle_and_is_false_for_any_other_row() {
+        let both_on = EngineSettings {
+            mouse_smoothing: true,
+            invert_mouse_y: true,
+            ..settings()
+        };
+        let one_on = EngineSettings {
+            invert_mouse_y: true,
+            ..settings()
+        };
+
+        let smoothing = (
+            both_on.toggle_value(EngineSetting::MouseSmoothing),
+            one_on.toggle_value(EngineSetting::MouseSmoothing),
+        );
+        let invert = (
+            both_on.toggle_value(EngineSetting::InvertMouseY),
+            settings().toggle_value(EngineSetting::InvertMouseY),
+        );
+        let others = EngineSetting::ALL
+            .into_iter()
+            .filter(|setting| setting.control() != Control::Toggle)
+            .any(|setting| both_on.toggle_value(setting));
+
+        assert_eq!(smoothing, (true, false));
+        assert_eq!(invert, (true, false));
+        assert!(!others, "only a toggle row reads as on");
     }
 
     #[test]

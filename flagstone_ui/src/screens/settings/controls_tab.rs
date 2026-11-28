@@ -221,6 +221,11 @@ pub(super) fn toggle_row(
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let checkbox = ui.checkbox(value_mut(menu.state.staged_mut()), "Enable");
+            let name = label.trim_end_matches(':');
+            let checked = value(menu.state.staged());
+            checkbox.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, checked, name)
+            });
             SettingsMenu::paint_dirty_decor(ui, &checkbox, is_dirty);
         });
     });

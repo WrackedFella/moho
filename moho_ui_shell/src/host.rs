@@ -12,7 +12,7 @@ use winit::window::Window;
 use crate::backdrop;
 use crate::console::{Console, Routing};
 use crate::image::{ScreenImage, ScreenImageError, ScreenImageId, ScreenImages};
-use crate::menu::MenuStack;
+use crate::menu::{MenuStack, RowNode, RowRole};
 use crate::paint_map::to_ui_frame;
 use crate::text::{self, ScreenText, ScreenTextError};
 
@@ -171,6 +171,7 @@ impl<G, A> UiShell<G, A> {
             let screen = ctx.content_rect().size();
             let size = [screen.x, screen.y];
             backdrop::paint_menu(ctx, &self.menu.texts(size), &self.menu.visible_rows(size));
+            expose_rows(ctx, &self.menu.row_nodes(size));
         }
         if self.console.is_open() {
             self.console.show(ctx);
@@ -266,6 +267,38 @@ impl<G, A: Clone> UiShell<G, A> {
         }
         self.feed_egui(event);
         Routing::Game
+    }
+}
+
+/// Gives each menu row an accessible node in a background layer that paints nothing. The nodes
+/// only hover: clicks stay on `UiShell::route`, so no click is acted on twice.
+fn expose_rows(ctx: &egui::Context, nodes: &[RowNode]) {
+    egui::Area::new(egui::Id::new("moho_menu_rows"))
+        .order(egui::Order::Background)
+        .fixed_pos(egui::Pos2::ZERO)
+        .show(ctx, |ui| {
+            for (index, node) in nodes.iter().enumerate() {
+                let rect = egui::Rect::from_min_max(node.rect.min.into(), node.rect.max.into());
+                let response =
+                    ui.interact(rect, egui::Id::new(("row", index)), egui::Sense::hover());
+                response.widget_info(|| info_of(node));
+            }
+        });
+}
+
+fn info_of(node: &RowNode) -> egui::WidgetInfo {
+    let label = node.label.as_str();
+    match &node.role {
+        RowRole::Button => egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label),
+        RowRole::Checkbox { checked } => {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, label)
+        }
+        RowRole::Slider { value } => egui::WidgetInfo::slider(true, *value, label),
+        RowRole::Choice { shown } => egui::WidgetInfo {
+            label: Some(label.to_owned()),
+            current_text_value: Some(shown.clone()),
+            ..egui::WidgetInfo::new(egui::WidgetType::ComboBox)
+        },
     }
 }
 

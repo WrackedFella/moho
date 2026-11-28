@@ -9447,6 +9447,9 @@ mod menu_tests {
     }
 }
 
+#[cfg(test)]
+mod read_checks;
+
 /// The Settings screen as the player drives it: through keys and the game's frames, with the
 /// prefs file and the renderer as the places a change shows.
 #[cfg(test)]
