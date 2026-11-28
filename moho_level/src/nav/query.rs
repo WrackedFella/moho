@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::ops::Range;
 
 use glam::{Vec2, Vec3};
 
@@ -23,7 +24,7 @@ fn cross(a: Vec3, b: Vec3, c: Vec3) -> f32 {
 }
 
 impl Polygon {
-    fn corners(&self) -> impl Iterator<Item = (Vec3, Vec3)> + '_ {
+    pub(super) fn corners(&self) -> impl Iterator<Item = (Vec3, Vec3)> + '_ {
         let n = self.vertices.len();
         (0..n).map(move |i| (self.vertices[i], self.vertices[(i + 1) % n]))
     }
@@ -89,12 +90,16 @@ impl Polygon {
     }
 }
 
-fn snap(mesh: &NavMesh, p: Vec3) -> Option<Snapped> {
+/// The nearest surface point of the polygons `keep` accepts.
+fn snap(mesh: &NavMesh, p: Vec3, keep: impl Fn(usize) -> bool) -> Option<Snapped> {
     let limits = mesh.limits;
     mesh.polygons
         .iter()
         .enumerate()
         .filter_map(|(index, polygon)| {
+            if !keep(index) {
+                return None;
+            }
             let q = polygon.closest_ground_point(ground(p));
             let distance = q.distance(ground(p));
             if distance > limits.radius {
@@ -155,8 +160,18 @@ fn priority(cost: f32, at: Vec3, goal: Vec3) -> f32 {
 
 /// The portals, as (left, right), crossed from `start` to `goal` along the route found by A*
 /// over portal midpoints.
-fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<(Vec3, Vec3)>> {
-    let count = mesh.polygons.len();
+///
+/// `multiplier` gives the factor on the distance walked inside a polygon (at least 1, so the
+/// straight-line heuristic stays admissible), or `None` for a polygon never to be entered. It
+/// is called for a neighbour when the search first reaches it, and again for each polygon the
+/// search opens, so a caller that must answer once per polygon caches.
+fn route(
+    polygons: &[Polygon],
+    start: &Snapped,
+    goal: &Snapped,
+    mut multiplier: impl FnMut(usize) -> Option<f32>,
+) -> Option<Vec<(Vec3, Vec3)>> {
+    let count = polygons.len();
     let mut cost = vec![f32::INFINITY; count];
     let mut position = vec![Vec3::ZERO; count];
     // Per polygon: the polygon it was reached from and the portal crossed.
@@ -184,15 +199,18 @@ fn route(mesh: &NavMesh, start: &Snapped, goal: &Snapped) -> Option<Vec<(Vec3, V
             portals.reverse();
             return Some(portals);
         }
-        let current = &mesh.polygons[polygon];
+        let Some(factor) = multiplier(polygon) else {
+            continue;
+        };
+        let current = &polygons[polygon];
         for (edge, neighbour) in current.neighbours.iter().enumerate() {
             let Some(next) = *neighbour else { continue };
-            if closed[next] {
+            if closed[next] || multiplier(next).is_none() {
                 continue;
             }
             let portal = current.portal(edge);
             let midpoint = (portal.0 + portal.1) * 0.5;
-            let through = cost[polygon] + position[polygon].distance(midpoint);
+            let through = cost[polygon] + position[polygon].distance(midpoint) * factor;
             if through < cost[next] {
                 cost[next] = through;
                 position[next] = midpoint;
@@ -270,8 +288,49 @@ fn push_corner(path: &mut Vec<Vec3>, corner: Vec3) {
 }
 
 pub(super) fn path(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
-    let start = snap(mesh, from)?;
-    let goal = snap(mesh, to)?;
-    let portals = route(mesh, &start, &goal)?;
+    let start = snap(mesh, from, |_| true)?;
+    let goal = snap(mesh, to, |_| true)?;
+    let portals = route(&mesh.polygons, &start, &goal, |_| Some(1.0))?;
+    Some(funnel(start.point, goal.point, &portals))
+}
+
+/// The cell of `range` nearest `point` on the ground plane; the lowest index on a tie.
+fn nearest_cell(cells: &[Polygon], range: &Range<usize>, point: Vec3) -> Option<usize> {
+    let p = ground(point);
+    let gap = |cell: usize| cells[cell].closest_ground_point(p).distance(p);
+    range.clone().min_by(|a, b| gap(*a).total_cmp(&gap(*b)))
+}
+
+/// A route over `cells`, the cut pieces of `coarse`'s polygons (`of_polygon[i]` is the range of
+/// cells cut from polygon `i`). `judge` gives a cell's cost multiplier or `None` for a cell not
+/// to be entered; it must answer the same for the same cell. The ends snap on `coarse`, so they
+/// equal [`path`]'s; the start's verdict is asked first, then the goal's, and either being
+/// `None` ends the query with nothing else asked.
+pub(super) fn path_by_cost(
+    coarse: &NavMesh,
+    cells: &[Polygon],
+    of_polygon: &[Range<usize>],
+    from: Vec3,
+    to: Vec3,
+    mut judge: impl FnMut(usize) -> Option<f32>,
+) -> Option<Vec<Vec3>> {
+    let has_cells = |polygon: usize| !of_polygon[polygon].is_empty();
+    let snapped_start = snap(coarse, from, has_cells)?;
+    let snapped_goal = snap(coarse, to, has_cells)?;
+    let start = Snapped {
+        polygon: nearest_cell(
+            cells,
+            &of_polygon[snapped_start.polygon],
+            snapped_start.point,
+        )?,
+        point: snapped_start.point,
+    };
+    let goal = Snapped {
+        polygon: nearest_cell(cells, &of_polygon[snapped_goal.polygon], snapped_goal.point)?,
+        point: snapped_goal.point,
+    };
+    judge(start.polygon)?;
+    judge(goal.polygon)?;
+    let portals = route(cells, &start, &goal, judge)?;
     Some(funnel(start.point, goal.point, &portals))
 }

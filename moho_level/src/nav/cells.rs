@@ -1,11 +1,12 @@
 //! A navmesh cut along the world grid lines into cells a game's rule can judge, and the
 //! cost-shaped route query over them.
 
+use std::collections::HashMap;
 use std::ops::Range;
 
 use glam::Vec3;
 
-use super::{NavMesh, Polygon};
+use super::{NavMesh, Polygon, query};
 
 /// The smallest cell size, in metres; keeps the grid far above the on-line tolerance.
 const MIN_CELL_SIZE: f32 = 0.05;
@@ -13,9 +14,185 @@ const MIN_CELL_SIZE: f32 = 0.05;
 /// The most cells one build may cut (2^20), checked against an estimate before cutting.
 const MAX_CELLS: u64 = 1 << 20;
 
+/// How far from a grid line a vertex may sit and still count as on it, so no sliver is cut.
+const ON_LINE: f32 = 1e-4;
+
+/// Index of the x and z coordinates in a `Vec3`.
+const X: usize = 0;
+const Z: usize = 2;
+
 /// Whether `estimate` cells are within the limit.
-fn fits(_estimate: u64) -> bool {
-    todo!("compare the estimate with MAX_CELLS")
+fn fits(estimate: u64) -> bool {
+    estimate <= MAX_CELLS
+}
+
+/// An upper bound on the cells cut from `polygon`: one per grid square its ground bounds touch.
+fn estimate(polygon: &Polygon, size: f32) -> u64 {
+    let span = |axis: usize| {
+        let values = polygon.vertices.iter().map(|v| v[axis]);
+        let low = values.clone().fold(f32::INFINITY, f32::min);
+        let high = values.fold(f32::NEG_INFINITY, f32::max);
+        if high >= low {
+            ((high - low) / size).ceil() as u64 + 1
+        } else {
+            0
+        }
+    };
+    span(X).saturating_mul(span(Z))
+}
+
+/// The point where the edge `a`-`b` crosses `line` on `axis`. The ends are ordered by the
+/// axis first, so both polygons sharing the edge compute the same bits.
+fn cut_point(a: Vec3, b: Vec3, axis: usize, line: f32) -> Vec3 {
+    let (low, high) = if a[axis] < b[axis] { (a, b) } else { (b, a) };
+    let t = (line - low[axis]) / (high[axis] - low[axis]);
+    let mut point = low + (high - low) * t;
+    point[axis] = line;
+    point
+}
+
+/// Splits a convex `polygon` at `line` on `axis` into the part below and the part above it.
+/// `None` when it has no corner clearly on each side (corners within `ON_LINE` count as on it).
+fn split(polygon: &[Vec3], axis: usize, line: f32) -> Option<(Vec<Vec3>, Vec<Vec3>)> {
+    let sides: Vec<i8> = polygon
+        .iter()
+        .map(|p| {
+            let gap = p[axis] - line;
+            if gap < -ON_LINE {
+                -1
+            } else {
+                i8::from(gap > ON_LINE)
+            }
+        })
+        .collect();
+    if !sides.contains(&-1) || !sides.contains(&1) {
+        return None;
+    }
+    let n = polygon.len();
+    let (mut below, mut above) = (Vec::new(), Vec::new());
+    for i in 0..n {
+        let (a, b) = (polygon[i], polygon[(i + 1) % n]);
+        let (side_a, side_b) = (sides[i], sides[(i + 1) % n]);
+        if side_a <= 0 {
+            below.push(a);
+        }
+        if side_a >= 0 {
+            above.push(a);
+        }
+        if side_a * side_b < 0 {
+            let crossing = cut_point(a, b, axis, line);
+            below.push(crossing);
+            above.push(crossing);
+        }
+    }
+    Some((below, above))
+}
+
+/// Cuts `piece` at every grid line on `axis` strictly inside its bounds, lowest line first.
+fn sweep(piece: Vec<Vec3>, axis: usize, size: f32) -> Vec<Vec<Vec3>> {
+    let values = piece.iter().map(|v| v[axis]);
+    let low = values.clone().fold(f32::INFINITY, f32::min);
+    let high = values.fold(f32::NEG_INFINITY, f32::max);
+    let mut pieces = Vec::new();
+    let mut rest = piece;
+    let mut k = (low / size).floor() as i64;
+    loop {
+        let line = k as f32 * size;
+        if line >= high {
+            break;
+        }
+        if line > low
+            && let Some((below, above)) = split(&rest, axis, line)
+        {
+            pieces.push(below);
+            rest = above;
+        }
+        k += 1;
+    }
+    pieces.push(rest);
+    pieces
+}
+
+/// Twice the signed ground area of `corners`.
+fn doubled_area(corners: &[Vec3]) -> f64 {
+    let n = corners.len();
+    (0..n)
+        .map(|i| {
+            let (a, b) = (corners[i], corners[(i + 1) % n]);
+            f64::from(a.x) * f64::from(b.z) - f64::from(b.x) * f64::from(a.z)
+        })
+        .sum()
+}
+
+/// `corners` without consecutive repeats, or `None` when under three corners or no positive
+/// ground area are left.
+fn tidy(mut corners: Vec<Vec3>) -> Option<Vec<Vec3>> {
+    corners.dedup_by(|a, b| a.x == b.x && a.z == b.z);
+    while corners.len() > 1
+        && corners
+            .first()
+            .zip(corners.last())
+            .is_some_and(|(a, b)| a.x == b.x && a.z == b.z)
+    {
+        corners.pop();
+    }
+    (corners.len() >= 3 && doubled_area(&corners) > 0.0).then_some(corners)
+}
+
+/// The cells of one navmesh polygon: cut at every x line, then every z line.
+fn tessellate(polygon: &Polygon, size: f32) -> Vec<Vec<Vec3>> {
+    let columns = sweep(polygon.vertices.clone(), X, size);
+    columns
+        .into_iter()
+        .flat_map(|column| sweep(column, Z, size))
+        .filter_map(tidy)
+        .collect()
+}
+
+type EdgeKey = [u32; 6];
+
+fn edge_key(a: Vec3, b: Vec3) -> EdgeKey {
+    [
+        a.x.to_bits(),
+        a.y.to_bits(),
+        a.z.to_bits(),
+        b.x.to_bits(),
+        b.y.to_bits(),
+        b.z.to_bits(),
+    ]
+}
+
+/// Links cell edges that match bit for bit when their coarse polygons are the same or linked.
+fn link(cells: &mut [Polygon], of_polygon: &[Range<usize>], coarse: &[Polygon]) {
+    let mut owner = vec![0; cells.len()];
+    for (polygon, range) in of_polygon.iter().enumerate() {
+        owner[range.clone()].fill(polygon);
+    }
+    // Only looked up, never iterated: the order of its entries must not reach the output.
+    let mut edges: HashMap<EdgeKey, usize> = HashMap::new();
+    for (index, cell) in cells.iter().enumerate() {
+        for (a, b) in cell.corners() {
+            edges.entry(edge_key(a, b)).or_insert(index);
+        }
+    }
+    let joined = |a: usize, b: usize| a == b || coarse[a].neighbours.contains(&Some(b));
+    let links: Vec<Vec<Option<usize>>> = cells
+        .iter()
+        .enumerate()
+        .map(|(index, cell)| {
+            cell.corners()
+                .map(|(a, b)| {
+                    edges
+                        .get(&edge_key(b, a))
+                        .copied()
+                        .filter(|other| *other != index && joined(owner[index], owner[*other]))
+                })
+                .collect()
+        })
+        .collect();
+    for (cell, neighbours) in cells.iter_mut().zip(links) {
+        cell.neighbours = neighbours;
+    }
 }
 
 /// A `NavMesh` cut into cells no wider than one grid square. Plain data, deterministic.
@@ -32,20 +209,97 @@ impl CellMesh {
     /// # Errors
     /// [`CellMeshError`] when `cell_size` is not finite or is below the minimum cell size
     /// (0.05 m), or would cut more than 2^20 cells.
-    pub fn build(_navmesh: &NavMesh, _cell_size: f32) -> Result<Self, CellMeshError> {
-        todo!("tessellate the navmesh into cells")
+    pub fn build(navmesh: &NavMesh, cell_size: f32) -> Result<Self, CellMeshError> {
+        if !cell_size.is_finite() || cell_size < MIN_CELL_SIZE {
+            return Err(CellMeshError::CellSize { size: cell_size });
+        }
+        let estimate = navmesh
+            .polygons
+            .iter()
+            .map(|polygon| estimate(polygon, cell_size))
+            .fold(0, u64::saturating_add);
+        if !fits(estimate) {
+            return Err(CellMeshError::TooManyCells {
+                size: cell_size,
+                estimate,
+            });
+        }
+        let mut cells = Vec::new();
+        let mut of_polygon = Vec::with_capacity(navmesh.polygons.len());
+        for polygon in &navmesh.polygons {
+            let first = cells.len();
+            for corners in tessellate(polygon, cell_size) {
+                cells.push(Polygon {
+                    neighbours: vec![None; corners.len()],
+                    vertices: corners,
+                });
+            }
+            of_polygon.push(first..cells.len());
+        }
+        link(&mut cells, &of_polygon, &navmesh.polygons);
+        tracing::debug!(cells = cells.len(), cell_size, "cut navmesh into cells");
+        Ok(Self {
+            coarse: navmesh.clone(),
+            cells,
+            of_polygon,
+        })
     }
 
     /// Corners from `from` to `to` through cells `rule` passed, start and goal included;
     /// `None` when an end is off the mesh or in a not-walkable cell, or no walkable corridor
-    /// joins them.
+    /// joins them. The route is never partial.
+    ///
+    /// Both ends snap onto the navmesh as [`NavMesh::path`] does, so the route starts and ends
+    /// where that route would. The route is the shortest way through the passed cells where a
+    /// [`CellCost::Walkable`] multiplier scales the distance walked in that cell. Over equal
+    /// cost it can be a few percent longer than [`NavMesh::path`] (about 3 to 5 percent on
+    /// 1 m and 0.5 m cells), because the search runs over cell portal midpoints.
+    ///
+    /// `rule` is asked about the start's cell, then the goal's, and `NotWalkable` for either
+    /// ends the query with nothing else asked. After that it is asked once, the first time the
+    /// search reaches each further cell, so it is never asked twice about one cell and never
+    /// asked about a cell the search does not reach (at most every cell of the start's
+    /// connected area). The same question gives the same routes and the same questions in the
+    /// same order.
+    ///
+    /// What the game owns:
+    /// - **Partial visibility.** The cell is the unit. The route lies in cells the rule
+    ///   passed; the rule decides whether a cell is clear, from its corners and centre or from
+    ///   more samples of its own (a cell is convex and no wider than the grid). A seen strip
+    ///   narrower than the rule's sample spacing can pass.
+    /// - **Padding.** The route is the agent's centre and can run along the edge of a
+    ///   ruled-out cell with zero margin: ruled-out area can be touched, never entered. A game
+    ///   whose body must stay clear pads its rule, for example judging a point seen when any
+    ///   point within its radius is.
+    /// - **Snapshot.** The route reflects the rule when asked; threats that move are handled
+    ///   by asking again.
+    /// - **Budget.** Rule calls are bounded by the cells reached, and the rule's own cost (for
+    ///   example ray casts) dominates the query, so ask once per decision, not every tick.
     pub fn path_by_cost(
         &self,
-        _from: Vec3,
-        _to: Vec3,
-        _rule: impl FnMut(NavCell<'_>) -> CellCost,
+        from: Vec3,
+        to: Vec3,
+        mut rule: impl FnMut(NavCell<'_>) -> CellCost,
     ) -> Option<Vec<Vec3>> {
-        todo!("A* over cell portals shaped by the rule, then funnel")
+        let mut verdicts: Vec<Option<CellCost>> = vec![None; self.cells.len()];
+        query::path_by_cost(
+            &self.coarse,
+            &self.cells,
+            &self.of_polygon,
+            from,
+            to,
+            |cell| {
+                let verdict = *verdicts[cell].get_or_insert_with(|| {
+                    rule(NavCell {
+                        corners: &self.cells[cell].vertices,
+                    })
+                });
+                match verdict {
+                    CellCost::Walkable(multiplier) => Some(multiplier.0),
+                    CellCost::NotWalkable => None,
+                }
+            },
+        )
     }
 }
 
@@ -63,7 +317,7 @@ impl NavCell<'_> {
 
     /// The mean of the corners; inside the cell, which is convex.
     pub fn centre(&self) -> Vec3 {
-        todo!("mean of the corners")
+        self.corners.iter().sum::<Vec3>() / self.corners.len() as f32
     }
 }
 
@@ -84,8 +338,12 @@ impl CostMultiplier {
 
     /// # Errors
     /// [`CostMultiplierError`] when `multiplier` is below 1, NaN or infinite.
-    pub fn new(_multiplier: f32) -> Result<Self, CostMultiplierError> {
-        todo!("refuse a multiplier below 1 or not finite")
+    pub fn new(multiplier: f32) -> Result<Self, CostMultiplierError> {
+        if multiplier.is_finite() && multiplier >= 1.0 {
+            Ok(Self(multiplier))
+        } else {
+            Err(CostMultiplierError { multiplier })
+        }
     }
 }
 
