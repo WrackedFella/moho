@@ -218,7 +218,44 @@ mod tests {
         }
 
         assert_eq!(CostMultiplier::new(1.0), Ok(CostMultiplier::ONE));
-        assert!(CostMultiplier::new(7.5).is_ok());
+        assert_eq!(CostMultiplier::new(7.5), Ok(CostMultiplier(7.5)));
+        assert_eq!(
+            CostMultiplier::new(0.99),
+            Err(CostMultiplierError { multiplier: 0.99 })
+        );
+    }
+
+    #[test]
+    fn a_cells_centre_is_the_mean_of_its_corners() {
+        let cells = cut(&row_of_three(), 1.0);
+        let unit_square = cells
+            .cells
+            .iter()
+            .find(|cell| {
+                let ((x0, x1), (z0, z1)) = (extent(&cell.vertices, X), extent(&cell.vertices, Z));
+                (x0, x1, z0, z1) == (0.0, 1.0, 0.0, 1.0)
+            })
+            .expect("the first square is cut into a cell [0, 1] x [0, 1]");
+        let corners = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(3.0, 3.0, 0.0),
+            Vec3::new(0.0, 3.0, 3.0),
+        ];
+
+        let square = NavCell {
+            corners: &unit_square.vertices,
+        }
+        .centre();
+        let triangle = NavCell { corners: &corners }.centre();
+
+        assert!(
+            square.distance(Vec3::new(0.5, 0.0, 0.5)) <= 1e-5,
+            "{square:?}"
+        );
+        assert!(
+            triangle.distance(Vec3::new(1.0, 2.0, 1.0)) <= 1e-5,
+            "{triangle:?}"
+        );
     }
 
     #[test]
@@ -350,6 +387,30 @@ mod tests {
                 let (low, high) = extent(&cell.vertices, axis);
                 assert!(high - low >= 0.01, "sliver cell {cell:?}");
             }
+        }
+    }
+
+    #[test]
+    fn a_polygon_bound_just_past_a_grid_line_cuts_no_strip_and_no_repeated_corner() {
+        let strip = |x: f32| mesh(vec![lone(&[[0.0, 0.0], [x, 0.0], [x, 3.0], [0.0, 3.0]])]);
+
+        let exact = cut(&strip(2.0), 1.0);
+        let off = cut(&strip(2.0 + 5e-5), 1.0);
+
+        assert_eq!(off.cells.len(), 6);
+        assert_eq!(off.cells.len(), exact.cells.len());
+        for cell in &off.cells {
+            let n = cell.vertices.len();
+            for i in 0..n {
+                let gap = cell.vertices[i].distance(cell.vertices[(i + 1) % n]);
+                assert!(
+                    gap >= 1e-3,
+                    "corners {i} and {} repeat: {cell:?}",
+                    (i + 1) % n
+                );
+            }
+            let (low, high) = extent(&cell.vertices, X);
+            assert!(high - low >= 0.01, "strip cell {cell:?}");
         }
     }
 

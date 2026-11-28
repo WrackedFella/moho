@@ -1148,58 +1148,71 @@ mod cells {
     }
 
     #[test]
-    fn a_goal_in_ruled_out_area_gives_no_path_asking_only_the_ends() {
-        let mut asked = Vec::new();
+    fn an_end_in_ruled_out_area_gives_no_path_asking_only_the_ends() {
+        for (name, ruled_out) in [("start", START), ("goal", GOAL)] {
+            let mut asked = Vec::new();
 
-        let route = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
-            asked.push(cell.centre());
-            if near(cell, GOAL, 1.0) {
-                CellCost::NotWalkable
-            } else {
-                PLAIN
-            }
-        });
+            let route = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
+                asked.push(cell.centre());
+                if near(cell, ruled_out, 1.0) {
+                    CellCost::NotWalkable
+                } else {
+                    PLAIN
+                }
+            });
 
-        assert_eq!(route, None);
-        assert!(asked.len() <= 2, "asked {} cells: {asked:?}", asked.len());
-        assert!(
-            asked.iter().any(|c| flat_gap(*c, GOAL) <= 1.5),
-            "the goal's cell was never judged: {asked:?}"
-        );
-        for centre in &asked {
+            assert_eq!(route, None, "{name} ruled out");
             assert!(
-                flat_gap(*centre, START) <= 1.5 || flat_gap(*centre, GOAL) <= 1.5,
-                "asked about {centre:?}, away from both ends"
+                asked.len() <= 2,
+                "{name} ruled out: asked {} cells: {asked:?}",
+                asked.len()
+            );
+            assert!(
+                asked.iter().any(|c| flat_gap(*c, ruled_out) <= 1.5),
+                "the {name}'s cell was never judged: {asked:?}"
+            );
+            for centre in &asked {
+                assert!(
+                    flat_gap(*centre, START) <= 1.5 || flat_gap(*centre, GOAL) <= 1.5,
+                    "{name} ruled out: asked about {centre:?}, away from both ends"
+                );
+            }
+            assert!(
+                LANE_CELLS.path_by_cost(START, GOAL, |_| PLAIN).is_some(),
+                "the way is open without the rule"
             );
         }
-        assert!(LANE_CELLS.path_by_cost(START, GOAL, |_| PLAIN).is_some());
     }
 
     #[test]
-    fn a_start_in_ruled_out_area_gives_no_path_asking_only_the_ends() {
-        let mut asked = Vec::new();
+    fn a_costly_area_is_crossed_when_it_is_the_only_way_and_a_mild_cost_keeps_the_short_way() {
+        let only_way = LANE_CELLS
+            .path_by_cost(START, GOAL, |cell| {
+                if in_lane(cell, 10.0) {
+                    multiplier(20.0)
+                } else {
+                    PLAIN
+                }
+            })
+            .expect("a costly lane can still be crossed");
+        let mild = LANE_CELLS
+            .path_by_cost(START, GOAL, |cell| {
+                if in_lane(cell, 5.0) {
+                    multiplier(1.05)
+                } else {
+                    PLAIN
+                }
+            })
+            .expect("a mild cost leaves the short way open");
 
-        let route = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
-            asked.push(cell.centre());
-            if near(cell, START, 1.0) {
-                CellCost::NotWalkable
-            } else {
-                PLAIN
-            }
-        });
-
-        assert_eq!(route, None);
-        assert!(asked.len() <= 2, "asked {} cells: {asked:?}", asked.len());
+        assert!(crossing_z(&only_way) > 2.0, "{only_way:?}");
         assert!(
-            asked.iter().any(|c| flat_gap(*c, START) <= 1.5),
-            "the start's cell was never judged: {asked:?}"
+            samples(&only_way)
+                .iter()
+                .any(|p| p.x.abs() < 1.0 && p.z < 10.0),
+            "{only_way:?}"
         );
-        for centre in &asked {
-            assert!(
-                flat_gap(*centre, START) <= 1.5 || flat_gap(*centre, GOAL) <= 1.5,
-                "asked about {centre:?}, away from both ends"
-            );
-        }
+        assert!(northmost(&mild) < 5.0, "{mild:?}");
     }
 
     #[test]
@@ -1305,6 +1318,17 @@ mod cells {
             asked.len()
         );
         assert_eq!(asked.len(), unique.len(), "a cell was asked about twice");
+        let inside_room = asked
+            .iter()
+            .filter(|(x, _, z)| {
+                let (x, z) = (f32::from_bits(*x), f32::from_bits(*z));
+                (4.0..8.0).contains(&x) && (-2.0..2.0).contains(&z)
+            })
+            .count();
+        assert!(
+            inside_room <= 1,
+            "{inside_room} cells inside the closed room were asked about; only the goal's may be"
+        );
     }
 
     #[test]
