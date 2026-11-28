@@ -446,6 +446,26 @@ mod tests {
     }
 
     #[test]
+    fn body_rotation_reports_the_spun_bodys_rotation() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let id = world.add_dynamic_cuboid(Vec3::new(0.0, 3.0, 0.0), 0.5, 0.5, 0.5);
+        world.rigid_body_set[id.0].set_angvel(Vec3::new(0.0, 2.0, 0.0), true);
+
+        for _ in 0..30 {
+            world.step(1.0 / 60.0);
+        }
+
+        let rotation = world.body_rotation(id).expect("body is live");
+        let stored = world.rigid_body_set[id.0].position().rotation;
+        assert!(
+            rotation.angle_between(glam::Quat::IDENTITY) > 0.5,
+            "a body spinning at 2 rad/s for 0.5 s has turned about 1 rad, got {rotation}"
+        );
+        assert!(rotation.abs_diff_eq(stored, 1e-6), "{rotation} vs {stored}");
+    }
+
+    #[test]
     fn collider_triangle_count_of_a_non_trimesh_collider_is_none() {
         let mut world = PhysicsWorld::new();
         let character = world.add_character(Vec3::new(0.0, 5.0, 0.0));
