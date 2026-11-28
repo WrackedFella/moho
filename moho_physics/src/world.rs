@@ -368,11 +368,11 @@ mod tests {
         let high_pos = world.body_position(high).expect("high body is live");
         assert!(
             (7.0..9.0).contains(&low_pos.y) && low_pos.x == 0.0,
-            "the low body falls about 2.25 m from 10, got {low_pos}"
+            "the low body falls about 1.2 m from 10, got {low_pos}"
         );
         assert!(
             (17.0..19.0).contains(&high_pos.y) && high_pos.x == 5.0,
-            "the high body falls about 2.25 m from 20, got {high_pos}"
+            "the high body falls about 1.2 m from 20, got {high_pos}"
         );
     }
 
@@ -392,6 +392,11 @@ mod tests {
 
         assert_eq!(world.body_count(), 1);
         assert_eq!(world.collider_count(), N as usize);
+
+        world.add_dynamic_sphere(Vec3::new(0.0, 9.0, 0.0), 0.5);
+
+        assert_eq!(world.body_count(), 2);
+        assert_eq!(world.collider_count(), N as usize + 1);
     }
 
     fn empty_mesh() -> WorldMesh {
