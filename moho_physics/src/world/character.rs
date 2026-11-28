@@ -475,6 +475,7 @@ mod tests {
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
     use crate::movement::{Hull, HullShape, Stature};
+    use crate::ColliderId;
     use moho_render_api::{WorldMesh, WorldMeshId};
 
     const DT: f32 = 1.0 / 60.0;
@@ -1614,7 +1615,7 @@ mod tests {
 
     /// A standing character, a floor and a 60 degree inside corner with its apex at `apex_z`.
     /// Returns the colliders of the +X wall and the -X wall.
-    fn world_with_corner(apex_z: f32) -> (PhysicsWorld, CharacterHandle, [ColliderHandle; 2]) {
+    fn world_with_corner(apex_z: f32) -> (PhysicsWorld, CharacterHandle, [ColliderId; 2]) {
         let (mut world, h) = standing_on_floor();
         let [plus_x, minus_x] = corner_mesh(Vec3::new(0.0, 0.0, apex_z), CORNER_HALF_ANGLE);
         world.set_world_mesh(WorldMeshId(1), &plus_x, TEST_TAG);

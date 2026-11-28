@@ -1,4 +1,5 @@
 use super::{CharacterHandle, LooseId, PhysicsWorld};
+use crate::ColliderId;
 use glam::Vec3;
 use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, Ray};
 
@@ -122,13 +123,13 @@ impl PhysicsWorld {
             point: hit.point,
             normal: hit.normal,
             distance: hit.distance,
-            tag: self.collider_tag(hit.collider)?,
+            tag: self.collider_tag(ColliderId(hit.collider))?,
         })
     }
 
     /// The tag of `collider`; `None` for an untagged or removed collider.
-    pub fn collider_tag(&self, collider: ColliderHandle) -> Option<HitTag> {
-        decode_tag(self.collider_set.get(collider)?.user_data)
+    pub fn collider_tag(&self, collider: ColliderId) -> Option<HitTag> {
+        decode_tag(self.collider_set.get(collider.0)?.user_data)
     }
 }
 
@@ -369,7 +370,7 @@ mod tests {
         let capsule = world
             .collider_set
             .iter()
-            .map(|(handle, _)| handle)
+            .map(|(handle, _)| ColliderId(handle))
             .find(|&handle| handle != wall)
             .expect("the character has a capsule");
         world.set_world_mesh(WorldMeshId(2), &x_wall_mesh(8.0), HitTag(9));

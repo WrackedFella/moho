@@ -108,7 +108,7 @@ impl Stores {
 
     fn counts(&self) -> Counts {
         Counts {
-            colliders: self.physics.collider_set.len(),
+            colliders: self.physics.collider_count(),
             live_meshes: self.meshes.live_len(),
             backend_meshes: self.backend.live_handles().len(),
         }

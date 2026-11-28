@@ -16,7 +16,7 @@ fn new_world() -> moho_physics::PhysicsWorld {
 
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
-    pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
+    pub test_bodies: Vec<(moho_physics::BodyId, ActorId)>,
     pub jump_pressed: bool,
     pub player: Option<moho_physics::CharacterHandle>,
     /// Every pawn's body, the possessed one included (its handle is also `player`).
@@ -216,7 +216,7 @@ impl PhysicsController {
     ///
     /// The rigid body stays in the physics world until [`PhysicsController::reset`],
     /// because `moho_physics` has no body-removal API.
-    pub fn forget_body(&mut self, actor: ActorId) -> Option<moho_physics::RigidBodyHandle> {
+    pub fn forget_body(&mut self, actor: ActorId) -> Option<moho_physics::BodyId> {
         let index = self.test_bodies.iter().position(|(_, id)| *id == actor)?;
         Some(self.test_bodies.remove(index).0)
     }
@@ -270,14 +270,8 @@ mod tests {
 
     fn controller_with_two_tracked_spheres() -> (
         PhysicsController,
-        (
-            moho_physics::RigidBodyHandle,
-            flagstone_game::actors::ActorId,
-        ),
-        (
-            moho_physics::RigidBodyHandle,
-            flagstone_game::actors::ActorId,
-        ),
+        (moho_physics::BodyId, flagstone_game::actors::ActorId),
+        (moho_physics::BodyId, flagstone_game::actors::ActorId),
     ) {
         let mut controller = PhysicsController::new();
         let mut actors = ActorStore::new();
@@ -617,8 +611,8 @@ mod tests {
         assert_ne!(first, second);
         assert!(pw.character(first).is_none(), "first character is gone");
         assert!(pw.character(second).is_some());
-        assert_eq!(pw.rigid_body_set.len(), 1, "one character body");
-        assert_eq!(pw.collider_set.len(), 1, "one character collider");
+        assert_eq!(pw.body_count(), 1, "one character body");
+        assert_eq!(pw.collider_count(), 1, "one character collider");
     }
 
     #[test]
@@ -652,7 +646,7 @@ mod tests {
         for handle in stale {
             assert!(pw.character(handle).is_none(), "an old body is still alive");
         }
-        assert_eq!(pw.rigid_body_set.len(), 0, "no body outlives the reset");
+        assert_eq!(pw.body_count(), 0, "no body outlives the reset");
     }
 
     #[test]
@@ -1082,7 +1076,7 @@ mod tests {
         assert!(pw.character(player).is_some(), "the player handle resolves");
         assert!(pw.world_mesh_collider(unowned).is_none(), "stale mesh gone");
         assert_eq!(terrain_collider_count(&app), with_geometry);
-        assert_eq!(pw.collider_set.len(), with_geometry + 1);
-        assert_eq!(pw.rigid_body_set.len(), 1, "only the character body");
+        assert_eq!(pw.collider_count(), with_geometry + 1);
+        assert_eq!(pw.body_count(), 1, "only the character body");
     }
 }

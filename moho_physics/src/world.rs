@@ -1,3 +1,4 @@
+use crate::ids::{BodyId, ColliderId};
 use glam::Vec3;
 use moho_render_api::{WorldMesh, WorldMeshId, WorldMeshRange};
 use rapier3d::prelude::*;
@@ -30,8 +31,8 @@ pub struct PhysicsWorld {
     island_manager: IslandManager,
     broad_phase: BroadPhaseBvh,
     narrow_phase: NarrowPhase,
-    pub rigid_body_set: RigidBodySet,
-    pub collider_set: ColliderSet,
+    rigid_body_set: RigidBodySet,
+    collider_set: ColliderSet,
     impulse_joint_set: ImpulseJointSet,
     multibody_joint_set: MultibodyJointSet,
     soft_body_set: SoftBodySet,
@@ -181,12 +182,22 @@ impl PhysicsWorld {
     }
 
     /// The collider registered for `id`; `None` for an unknown, empty or rejected mesh.
-    pub fn world_mesh_collider(&self, id: WorldMeshId) -> Option<ColliderHandle> {
-        self.world_mesh_colliders.get(&id).copied()
+    pub fn world_mesh_collider(&self, id: WorldMeshId) -> Option<ColliderId> {
+        self.world_mesh_colliders.get(&id).copied().map(ColliderId)
+    }
+
+    /// The number of rigid bodies in the world: characters, loose objects and dynamic bodies.
+    pub fn body_count(&self) -> usize {
+        self.rigid_body_set.len()
+    }
+
+    /// The number of colliders in the world: world meshes plus every body's shapes.
+    pub fn collider_count(&self) -> usize {
+        self.collider_set.len()
     }
 
     /// Remove a collider from the simulation.
-    pub fn remove_collider(&mut self, handle: ColliderHandle) {
+    fn remove_collider(&mut self, handle: ColliderHandle) {
         self.collider_set.remove(
             handle,
             &mut self.island_manager,
@@ -209,8 +220,8 @@ impl PhysicsWorld {
         );
     }
 
-    /// Spawn a dynamic sphere rigid body. Returns the body handle.
-    pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> RigidBodyHandle {
+    /// Spawn a dynamic sphere rigid body. Returns the body id.
+    pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> BodyId {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);
 
@@ -221,7 +232,7 @@ impl PhysicsWorld {
         self.collider_set
             .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
 
-        body_handle
+        BodyId(body_handle)
     }
 
     /// Add a dynamic box rigid body at `position` with given half-extents.
@@ -231,7 +242,7 @@ impl PhysicsWorld {
         half_x: f32,
         half_y: f32,
         half_z: f32,
-    ) -> RigidBodyHandle {
+    ) -> BodyId {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);
 
@@ -242,13 +253,38 @@ impl PhysicsWorld {
         self.collider_set
             .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
 
-        body_handle
+        BodyId(body_handle)
     }
 
     /// Get a dynamic rigid body's current translation.
-    pub fn body_position(&self, handle: RigidBodyHandle) -> Option<Vec3> {
-        let body = self.rigid_body_set.get(handle)?;
+    pub fn body_position(&self, id: BodyId) -> Option<Vec3> {
+        let body = self.rigid_body_set.get(id.0)?;
         Some(body.position().translation)
+    }
+
+    /// Set a body's linear velocity, waking it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_body_velocity(&mut self, id: BodyId, velocity: Vec3) {
+        self.rigid_body_set[id.0].set_linvel(velocity, true);
+    }
+
+    /// A body's rotation; `None` for an unknown body.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn body_rotation(&self, id: BodyId) -> Option<glam::Quat> {
+        Some(self.rigid_body_set.get(id.0)?.position().rotation)
+    }
+
+    /// The triangle count of a trimesh collider; `None` for an unknown collider or one that
+    /// is not a trimesh.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn collider_triangle_count(&self, id: ColliderId) -> Option<usize> {
+        Some(
+            self.collider_set
+                .get(id.0)?
+                .shape()
+                .as_trimesh()?
+                .num_triangles(),
+        )
     }
 }
 
@@ -331,7 +367,7 @@ mod tests {
             world.step(1.0 / 60.0);
         }
 
-        assert!(world.collider_set.get(floor).is_none());
+        assert!(world.collider_set.get(floor.0).is_none());
         let pos = world.body_position(sphere).unwrap();
         assert!(pos.y < -1.0, "Sphere should fall through, y={}", pos.y);
     }
@@ -545,7 +581,7 @@ mod tests {
                 .expect("character is live");
             world.step(DT);
             let character_state = world.character(character).expect("character is live");
-            let body_speed = world.rigid_body_set[body].linvel().y;
+            let body_speed = world.rigid_body_set[body.0].linvel().y;
             if character_state.grounded {
                 character_landed.get_or_insert(tick);
             }

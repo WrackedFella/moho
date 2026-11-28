@@ -787,7 +787,7 @@ pub(crate) mod tests {
         assert_ground_capped_at(&mut app, &backend, 18.0);
     }
 
-    fn collider_of(app: &App, pos: IVec3) -> Option<moho_physics::ColliderHandle> {
+    fn collider_of(app: &App, pos: IVec3) -> Option<moho_physics::ColliderId> {
         app.physics
             .world
             .as_ref()
@@ -797,7 +797,7 @@ pub(crate) mod tests {
 
     pub(crate) fn terrain_collider_count(app: &App) -> usize {
         let pw = app.physics.world.as_ref().expect("physics world");
-        pw.collider_set.len() - app.physics.pawns.len()
+        pw.collider_count() - app.physics.pawns.len()
     }
 
     /// Places `block`, then drains stale events and meshes `chunk` from the dirty event.
@@ -859,11 +859,8 @@ pub(crate) mod tests {
             .world
             .as_ref()
             .expect("physics world")
-            .collider_set[second]
-            .shape()
-            .as_trimesh()
-            .expect("terrain collider is a trimesh")
-            .num_triangles();
+            .collider_triangle_count(second)
+            .expect("terrain collider is a trimesh");
         assert_ne!(first, second, "the collider was replaced");
         assert_ne!(
             first_triangles, second_triangles,

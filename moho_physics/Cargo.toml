@@ -13,7 +13,13 @@ thiserror = { workspace = true }
 moho_core = { path = "../moho_core" }
 moho_render_api = { path = "../moho_render_api" }
 
+[features]
+# Engine-typed setup and readback helpers for tests outside this crate (ADR-0038); enable
+# from `[dev-dependencies]` only.
+test-support = []
+
 [dev-dependencies]
+moho_physics = { path = ".", features = ["test-support"] }
 postcard = { workspace = true }
 proptest = { workspace = true }
 
