@@ -1364,16 +1364,13 @@ impl SearchlightGame {
                     self.show_controls();
                 }
                 MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(),
-                MenuEvent::ModeChosen {
-                    action: MenuAction::Rebind(action),
-                    mode,
-                } => {
-                    if let Some(draft) = &mut self.controls {
+                MenuEvent::ModeChosen { action, mode } => {
+                    if let (MenuAction::Rebind(action), Some(draft)) = (action, &mut self.controls)
+                    {
                         draft.set_mode(action, mode);
                     }
                     self.show_controls();
                 }
-                MenuEvent::ModeChosen { .. } => self.show_controls(),
                 MenuEvent::DetailsToggled { .. } | MenuEvent::Picked { .. } => {}
                 MenuEvent::ActionPicked {
                     action: MenuAction::ItemAction(inventory::ItemAction::Wear),

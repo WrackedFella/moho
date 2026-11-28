@@ -191,8 +191,8 @@ impl DebugSettings {
     }
 
     /// Stores the game's action bindings under `[bindings]` and their hold/toggle modes under
-    /// `[action_modes]`, and saves the prefs file; the
-    /// `console` and `fullscreen` entries the file holds are kept.
+    /// `[action_modes]`, and saves the prefs file; the `console` and `fullscreen` entries the
+    /// file holds are kept.
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
