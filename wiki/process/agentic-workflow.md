@@ -145,4 +145,6 @@ How cloud threads and Actions runs differ from a local session is in the devflow
   default token; the `agent-ready` routing is described in
   [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md#run-options).
 - **Chains.** Order between cards is `blocked by` on the issues; `agent-queued` opts a
-  card into running unattended once those close (`.github/workflows/chain.yml`).
+  card into running unattended once those close (`.github/workflows/chain.yml`), which
+  then swaps it for `agent-ready`, the run trigger. Apply `agent-queued`, not `agent-ready`,
+  by hand; `agent-ready` skips the blocker wait, the `eligible=no` stop and the run cap.
