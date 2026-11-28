@@ -214,6 +214,8 @@ impl ControlsDraft {
             row.kinds[index(slot)] = (trigger, modifiers);
             return Capture::Unchanged;
         };
+        // Whatever the answer, the slot's shown kind is what the next capture keeps.
+        row.kinds[index(slot)] = (bound.trigger, bound.modifiers);
         let binding = Binding {
             input: bound.input,
             trigger,
@@ -1469,6 +1471,36 @@ mod tests {
             draft.bindings().get(SearchlightAction::CheckMagazine),
             [Binding::key(Key::R).held()],
             "another action is untouched"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_pick_leaves_the_slot_and_its_kind_as_they_were() {
+        let mut draft = draft();
+        let outcome = draft.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Press,
+            Modifiers::NONE,
+        );
+        draft.cancel();
+
+        let shown = draft.slots(SearchlightAction::CheckMagazine);
+        let details = draft.details(SearchlightAction::CheckMagazine, Slot::Primary);
+        let captured = draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Input::Key(Key::Y),
+        );
+
+        assert!(matches!(outcome, Capture::Conflict { .. }));
+        assert_eq!(shown, [Some(Binding::key(Key::R).held()), None]);
+        assert_eq!(details, (Trigger::Hold, Modifiers::NONE));
+        assert_eq!(captured, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::CheckMagazine),
+            [Some(Binding::key(Key::Y).held()), None],
+            "the cancelled Press pick left no preset behind"
         );
     }
 

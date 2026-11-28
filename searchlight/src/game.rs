@@ -7436,6 +7436,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_modifier_key_captured_into_its_own_chord_is_noted_once() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Jump,
+            Slot::Secondary,
+        );
+
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::Jump, KEY_CTRL);
+        let refused = control_row(&game, SearchlightAction::Jump);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        let later = control_row(&game, SearchlightAction::Jump);
+
+        assert_eq!(
+            refused,
+            (
+                [Some(Binding::key(Key::Space)), None],
+                Some("That input can't be bound".to_owned())
+            )
+        );
+        assert_eq!(later.1, None, "the note is gone after the next refresh");
+    }
+
+    #[test]
+    fn backing_out_of_controls_discards_the_open_action_and_a_staged_pick() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let live = game.input.bindings().clone();
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        step_kind(&mut game, &mut ctx, SearchlightAction::Jump, Slot::Primary);
+        let staged = detail_rows(&game);
+
+        reopen_controls(&mut game, &mut ctx);
+
+        assert_eq!(
+            staged,
+            [
+                (
+                    SearchlightAction::Jump,
+                    Slot::Primary,
+                    Trigger::Hold,
+                    Modifiers::NONE
+                ),
+                (
+                    SearchlightAction::Jump,
+                    Slot::Secondary,
+                    Trigger::Press,
+                    Modifiers::NONE
+                ),
+            ]
+        );
+        assert_eq!(open_chevrons(&game), []);
+        assert_eq!(detail_rows(&game), []);
+        assert_eq!(
+            control_row(&game, SearchlightAction::Jump).0,
+            default_slots(SearchlightAction::Jump)
+        );
+        assert_eq!(game.input.bindings(), &live);
+    }
+
     /// The hold/toggle choice the top screen shows on `action`'s row.
     fn shown_mode(
         game: &SearchlightGame,
