@@ -1,6 +1,4 @@
-use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
-use legion::World;
-use legion::storage::Component;
+use crate::{Effects, InstanceCollector, Markers, MaterialTable, RendererBackend, WorldMeshes};
 use moho_render_api::{InstanceGpu, Renderable};
 
 mod preparation;
@@ -9,63 +7,103 @@ pub use preparation::PreparedScene;
 pub use preparation::ScenePreparation;
 
 /// Scene manager that owns the `MaterialTable` and provides a simple
-/// `render` API to submit an ECS world for drawing. This centralizes
+/// `render` API to submit actors and world meshes for drawing. This centralizes
 /// material deduplication, instance collection, and transparent sorting.
 ///
-/// Scene *persistence* (save/load) lives in `moho_game::scene_persistence` —
+/// Scene *persistence* (save/load) lives in `flagstone_game::scene_persistence` —
 /// it constructs/reads game-domain types this crate must not name.
 #[derive(Debug)]
 pub struct Scene {
     pub material_table: MaterialTable,
-    buffer_manager: BufferManager,
     instance_collector: InstanceCollector,
+    world_meshes: WorldMeshes,
+    markers: Markers,
+    effects: Effects,
 }
 
 impl Scene {
     pub fn new() -> Self {
         Scene {
             material_table: MaterialTable::new(),
-            buffer_manager: BufferManager::new(),
             instance_collector: InstanceCollector::new(),
+            world_meshes: WorldMeshes::new(),
+            markers: Markers::new(),
+            effects: Effects::default(),
         }
     }
 
-    /// Render the provided `world` using `renderer`. `mesh_handle` is the
-    /// spherical mesh handle, `cube_mesh_handle` is the cube mesh handle, and
-    /// `terrain_material_idx` is the material table index for terrain chunks
-    /// — all previously registered with the renderer/material table at
-    /// startup. `S`/`C` are the concrete sphere-like/cube-like component
-    /// types to query for (supplied by the caller so this crate doesn't need
-    /// to name game-domain types).
+    /// Add, move and remove box markers; they draw on the next `render`.
+    pub fn markers_mut(&mut self) -> &mut Markers {
+        &mut self.markers
+    }
+
+    /// Begin, place and end engine-drawn effects; they draw on the next `render`.
+    pub fn effects_mut(&mut self) -> &mut Effects {
+        &mut self.effects
+    }
+
+    /// Queue world-geometry changes; they reach the backend on the next `render`.
+    pub fn world_meshes_mut(&mut self) -> &mut WorldMeshes {
+        &mut self.world_meshes
+    }
+
+    /// Render the provided actors and the world meshes using `renderer`.
+    /// `mesh_handle` is the spherical mesh handle and `cube_mesh_handle` is the
+    /// cube mesh handle, both previously registered with the renderer at
+    /// startup. Queued world-mesh changes are flushed first. `S`/`C` are the
+    /// concrete sphere-like/cube-like actor types (supplied by the caller so
+    /// this crate doesn't need to name game-domain types).
     ///
     /// Returns `Err` if the frame's surface texture couldn't be acquired
     /// (e.g. surface lost/outdated); the surface has already been
     /// reconfigured in that case, so callers should just skip the frame.
-    #[allow(clippy::too_many_arguments)]
     pub fn render<S, C>(
         &mut self,
         renderer: &mut dyn RendererBackend,
-        world: &mut World,
+        spheres: &[S],
+        cubes: &[C],
         mesh_handle: u32,
         cube_mesh_handle: u32,
-        terrain_material_idx: u32,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) -> Result<(), crate::FrameError>
     where
-        S: Renderable + Component,
-        C: Renderable + Component,
+        S: Renderable,
+        C: Renderable,
     {
+        self.effects.draw(&mut self.world_meshes, camera.2);
+        self.world_meshes.flush(renderer);
+
         // Prepare scene: collect instances, process materials, separate by transparency
-        let prepared = ScenePreparation::prepare::<S, C>(
-            world,
+        let prepared = ScenePreparation::prepare(
+            spheres,
+            cubes,
             &mut self.material_table,
-            &mut self.buffer_manager,
             &mut self.instance_collector,
             renderer,
             mesh_handle,
             cube_mesh_handle,
-            terrain_material_idx,
         );
+
+        let mut world_draws: Vec<((u32, u32), Vec<InstanceGpu>)> = Vec::new();
+        for (mesh, texture, instance) in self.world_meshes.textured_draws() {
+            let key = (mesh, texture);
+            match world_draws.last_mut() {
+                Some((last, instances)) if *last == key => instances.push(instance),
+                _ => world_draws.push((key, vec![instance])),
+            }
+        }
+        let skinned_draws: Vec<_> = self
+            .world_meshes
+            .skinned_draws()
+            .map(|(mesh, texture, instance, palette)| {
+                let rows: Vec<[[f32; 4]; 3]> = palette.iter().map(joint_rows).collect();
+                (mesh, texture, instance, rows)
+            })
+            .collect();
+        let unshadowed_draws = group_by_mesh(self.world_meshes.unshadowed_draws());
+        let shadow_only_draws = group_by_mesh(self.world_meshes.shadow_only_draws());
+        // Cleared before begin_frame so a skipped frame consumes its placements too.
+        self.world_meshes.clear_placements();
 
         renderer.begin_frame(camera)?;
 
@@ -73,13 +111,27 @@ impl Scene {
         renderer.enqueue_draw(cube_mesh_handle, &prepared.cube_opaque);
         renderer.enqueue_draw(mesh_handle, &prepared.sphere_opaque);
 
-        // Render VoxelChunks (opaque, each chunk as separate draw)
-        for (chunk_handle, chunk_inst) in self.instance_collector.chunk_renders() {
-            renderer.enqueue_draw(*chunk_handle, &[*chunk_inst]);
+        for ((mesh, texture), instances) in &world_draws {
+            renderer.enqueue_textured_draw(*mesh, *texture, instances);
+        }
+
+        for (mesh, texture, instance, palette) in skinned_draws {
+            renderer.enqueue_skinned_draw(mesh, texture, &palette, instance);
+        }
+
+        for (mesh, instances) in &unshadowed_draws {
+            renderer.enqueue_unshadowed_draw(*mesh, instances);
+        }
+
+        for (mesh, instances) in &shadow_only_draws {
+            renderer.enqueue_shadow_only_draw(*mesh, instances);
         }
 
         // Render transparent instances (back-to-front sorted)
         Self::enqueue_transparent(renderer, prepared.transparent_entries, camera.2);
+
+        let markers = self.markers.draws(camera.2);
+        renderer.enqueue_markers(&markers.fills, &markers.outlines);
 
         renderer.submit_frame();
         Ok(())
@@ -122,6 +174,33 @@ impl Scene {
             renderer.enqueue_draw(*mesh_h, insts);
         }
     }
+}
+
+/// Batch consecutive draws of the same mesh into one instance list each.
+fn group_by_mesh(draws: impl Iterator<Item = (u32, InstanceGpu)>) -> Vec<(u32, Vec<InstanceGpu>)> {
+    let mut grouped: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
+    for (mesh, instance) in draws {
+        match grouped.last_mut() {
+            Some((last, instances)) if *last == mesh => instances.push(instance),
+            _ => grouped.push((mesh, vec![instance])),
+        }
+    }
+    grouped
+}
+
+/// A joint matrix as the GPU palette holds it: three rows of `[m_r0, m_r1, m_r2, t_r]`.
+fn joint_rows(joint: &glam::Affine3A) -> [[f32; 4]; 3] {
+    let (x, y, z, t) = (
+        joint.matrix3.x_axis,
+        joint.matrix3.y_axis,
+        joint.matrix3.z_axis,
+        joint.translation,
+    );
+    [
+        [x.x, y.x, z.x, t.x],
+        [x.y, y.y, z.y, t.y],
+        [x.z, y.z, z.z, t.z],
+    ]
 }
 
 impl Default for Scene {

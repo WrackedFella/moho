@@ -68,10 +68,6 @@ impl HandlerList {
     pub fn handlers(&self) -> &[Handler] {
         &self.handlers
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.handlers.is_empty()
-    }
 }
 
 impl Default for HandlerList {

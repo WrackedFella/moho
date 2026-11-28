@@ -1,0 +1,142 @@
+# Input and state
+
+**Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
+`moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
+`flagstone_game/src/jobs.rs`, `flagstone_game/src/crew.rs`, `flagstone_game/src/routing.rs`, `flagstone/src/app/event_loop/world_edit.rs`, `flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
+
+## 1 Input routing
+
+Every `WindowEvent` the runner forwards reaches `Game::event` (`App::handle_window_event`) and goes through this order. The first stage that
+consumes the event ends the path.
+
+```mermaid
+flowchart TD
+    ev["WindowEvent"] --> tab{"Tab pressed<br/>and Playing?"}
+    tab -- yes --> cam["record in the action map<br/>stop"]
+    tab -- no --> d200["priority 200: keybind capture<br/>only when the active screen is capturing"]
+    d200 -- consumed --> stop1(["stop"])
+    d200 -- no --> d100["priority 100: egui<br/>only when a menu or console is visible"]
+    d100 -- consumed --> stop2(["stop"])
+    d100 -- no --> d0["priority 0: forwarders<br/>wheel, left click"]
+    d0 -- "sent to channel,<br/>unless UI is capturing" --> chan[("unconsumed InputEvent channel")]
+    d0 -- no --> weh["close → auto-save and exit<br/>keyboard → handle_keyboard_input"]
+    chan --> drain["drained by process_input_events<br/>(zoom, mine)"]
+    weh --> hot["handle_keyboard_input<br/>global hotkeys, then game keys"]
+```
+
+`InputDispatcher` is a sorted `Vec<(priority, handler)>`. **Higher number runs first.**
+This is the opposite of `EventBus::subscribe_with_priority` (lower first); the two are
+independent.
+
+Two properties that bite:
+
+- Each input kind gets its own `register` call (wheel and mine-click are separate
+  handlers), so a new input type is a new registration, not a new branch.
+- A forwarder drops the event rather than blocking if it can't take the UI adapter lock.
+- During gameplay, with a free cursor, egui sees pointer motion and mouse buttons (`EguiAdapter::handle_gameplay_event`, `feeds_egui`), so it knows what lies under the pointer and widgets such as the view-height slider can be dragged. While the cursor is free (strategy view), a mouse press over a panel is consumed and never reaches the game; in first person egui gets only mouse releases, so a press on a widget before the cursor is grabbed does not leave it held. The mine-click forwarder leaves the press unconsumed, so the action map sees it too.
+
+Global hotkeys in `handle_keyboard_input`, checked before game keys:
+
+| Key | Effect |
+|---|---|
+| `` ` `` (the `console` binding) | Playing → console; ConsoleOpen → Playing. Routed by `App::route_console_input` through `Console::on_key` ahead of the dispatcher, see [console](console.md#input-routing) |
+| `Esc` | ConsoleOpen → Playing (taken by `Console::on_key` before this handler, as the console key is); Playing → Paused; Paused → Playing while the pause window is the active screen (inert on Settings). Taken before the dispatcher when it pauses or resumes, so a focused egui button cannot swallow it; key repeats are ignored |
+| `F3` | Toggle debug HUD |
+| `F4` | Toggle chunk-boundary minimap |
+| `Tab` (the `possess` binding) | Toggle camera mode. Recorded in the action map before the dispatcher; applied by the next tick, see [§2](#2-pointer-picking) |
+
+Gameplay input is action-keyed. `moho_input` holds the platform-free `Key` and
+`MouseButton` (`Key::from_winit` maps `PhysicalKey`), the `Action` trait (stable id plus
+default bindings), `ActionBindings<A>`, and `ActionMap<A>`
+(`moho_input/src/action_map.rs`). Each game declares its own action enum
+(`StrategyAction` in `flagstone_ui/src/actions.rs`); the binary owns one `ActionMap` in
+`InputState` (`flagstone/src/app/input_state.rs`).
+
+`handle_window_event` and `handle_device_event` feed key, mouse-button and raw
+mouse-motion events into the map. Gamepads feed it too: `Gamepads::poll`
+(`moho_input/src/gamepad.rs`, the only module that names `gilrs`) drains backend events
+into `pad_button` / `pad_axis` once per frame from `App::poll_gamepads`
+(`InputState::gamepads`, `None` when the backend fails to start). Outside `Playing`, or
+while the window lacks focus (`InputState::focused`), the events are discarded unapplied
+and `pad_disconnected` releases pad bindings. Every menu and console transition (`App::apply_transition`,
+`flagstone/src/main.rs`) also calls `ActionMap::release_all`, so nothing stays held across a menu or the
+console and no press made there lands on resume; a key still down on resume acts only after it
+is pressed again. Once per tick `App::command` (`flagstone/src/app/game.rs`) calls `end_tick`,
+which returns an `ActionFrame` and resets the per-tick state:
+
+- `held`: down at the end of the tick; `pressed` / `released`: edges at any point in the
+  tick, so a tap shorter than a tick is not lost.
+- `look`: the pending look that rendered frames sampled with `ActionMap::sample_frame(frame_dt)` since the last tick (read with `pending_look`); a tick consumes exactly what the last frame showed. The right stick adds `PAD_LOOK_PER_SECOND` times its deflection per second of frame time (after a
+  small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, its vertical part negated first when `LookSettings::invert_y` is on (the stick share is never inverted), smoothed when `LookSettings::smoothing`
+  is on (a two-sample mean of raw counts, `MouseSmoothing` in `moho_input/src/filter.rs`, which loses no motion),
+  then scaled by `LookSettings::look_per_count` (radians per count, from the Source-scale sensitivity pref via `source_look_per_count`) plus `LookSettings::acceleration` times the mouse speed (the smoothed counts' length per millisecond of frame time; 0 when acceleration is off or the frame time is zero). `PAD_LOOK_PER_SECOND` is a half turn per second at the default sensitivity. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
+  yaw and pitch.
+
+A `Binding` is an `Input` (key, mouse button or pad input) plus a `Trigger`: `Press`, `Hold` or `Double`. A `Hold` binding fires once its input has been down `Action::HOLD_TICKS` ticks (default `DEFAULT_HOLD_TICKS`, 18; one value per game, at least 1) and the action then stays held until release. An input that any action binds with `Hold` is split: its `Press` bindings no longer fire on press but as a tap (pressed and released in the same tick) when the input is released before the threshold; a release at or after maturing is not a tap. An input with no `Hold` binding fires `Press` bindings on press as usual. Searchlight uses this on `R`: tap reloads, hold checks the magazine. A `Double` binding fires, as a tap, on a second press that follows the first within `Action::DOUBLE_TICKS` ticks (default `DEFAULT_DOUBLE_TICKS`, 15; one value per game, at least 1); pad inputs have none. An input that any action binds with `Double` is split the same way: a quick release (before the window and, when the input also has a `Hold` binding, before the hold threshold) starts a wait, and the `Press` bindings fire as a tap only when the window closes with no second press. The second press fires only the `Double` bindings, and neither its press nor its hold fires anything else. A `Double` input with no `Hold` binding that is still down once the window closes holds its `Press` actions until release. Splitting applies per (input, modifier set), as for `Hold`.
+
+A `Binding` also carries `Modifiers`, a set of Ctrl, Shift and Alt that must be down with its input (a chord such as `Ctrl+R` or `Shift+Mouse Left`; pad inputs take none). When a key or mouse button goes down, the map resolves which modifier set it acts under: of the sets bound on that input and currently held, the one with the most modifiers wins, ties going Ctrl, then Shift, then Alt; no match means no modifiers, so an unbound chord falls through to the plain action. The set is fixed at the press and not re-read until release, so releasing a modifier first does not refire the plain binding and pressing one late does not turn the press into a chord. A binding is active only while the input's resolved set equals the binding's. A modifier key keeps its own bindings while it carries a chord. Hold splitting applies per (input, modifier set), so `Hold Ctrl+R` leaves plain `R` presses unsplit.
+
+A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
+An action is held when any of its bindings is active under the rules above. A frame holds at most 64 actions.
+
+An action opts into a player-chosen mode with `Action::toggleable` (default false; `StrategyAction::Sprint` is the only one). `ActionBindings` stores an `ActionMode` per toggleable action (`Hold`, the default, or `Toggle`; `moho_input/src/bindings.rs`). In `Toggle` mode the map keeps a latch per action: a rising edge or a tap of the resolved mask flips it, and the reported held bit and the `pressed` / `released` edges follow the latch. `release_all` clears the latches. Non-toggleable actions always read as `Hold`. The Settings controls tab shows a hold/toggle checkbox beside a toggleable action's binding.
+
+The map also tracks the pointer in physical pixels: `ActionFrame::pointer` is its position at the end of the tick (`None` outside the window), and `press_pointer` is its position at the last mouse press in the tick. `StrategyAction::Select` (left mouse by default) is the strategy view's primary pointer action.
+
+Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md), and modes in `[action_modes]`.
+
+## 2 Pointer picking
+
+In the isometric view, a tick with `Select` pressed turns `press_pointer` into a world `Ray` with `moho_core::pointer::screen_ray` (view and projection of the frame the player saw, window size as viewport) and carries it in the command as `select`. The ray, not the pixel, is the command, so it replays without a window. The apply step casts it (`pick_surface` in `flagstone/src/app/game.rs`) and stores the result in `App::pointer_hit`; a miss clears it. First-person never selects.
+
+With the view-height cut active (`StrategyCommand::ceiling`, the clamped layer from `ViewLevel::ceiling`, see [rendering](rendering.md#3-cut-face-caps)), `pick_surface` calls `flagstone_game::raycast::raycast_surface_below`, which ignores blocks at or above the ceiling, so the click lands on the visible ground. The range grows by the descent from the ray origin to the ceiling plane (capped at `POINTER_RAY_RANGE`, see `pointer_range`). Sampling records the ceiling in the command only for a select or mark click, and it is `None` in first person or with no cut, so a replayed command does not depend on the live slider.
+
+The same ray also picks a pawn: `flagstone_game::selection::pick_pawn` tests it against the box (`pawn_aabb`, `PAWN_HALF_EXTENTS`) of every pawn in the crew (`App::pawn_centres`, in id order; a pawn without a body is neither drawn nor picked) and returns the nearest one, only when it is nearer than the terrain hit. `App::selection` records the picked `PawnId`; a click that picks nothing clears it, and a click on a pawn publishes `AudioEvent::ButtonClick`. While a pawn is selected in the strategy view, each frame `App::sync_selection_mark` upserts an `Outline` [marker](rendering.md#6-markers) with the reserved id `SELECTION_MARKER_ID` around that pawn's box, and `update_hud_data` fills `HudData::selection` (`SelectionHud`: title, equipped tool, carried resources of the selected pawn), which `rts_hud` draws as a panel. The strategy view draws every pawn as a placeholder cube body; the first-person HUD (hotbar, pickups) shows the possessed pawn.
+
+`StrategyAction::MineDesignation` (`M` by default, or the HUD toggle) flips `Designation` in `flagstone/src/app/input_state.rs` between `None` and `Mine`. While `Mine` is active, the click's ray goes into `StrategyCommand::mark` instead of `select`. The apply step casts it as above and toggles the hit block in `flagstone_game::colony::Colony::marks` (`MineMarks`), then plays the `mark` or `unmark` cue through `AudioEvent::PlaySound`; a miss changes nothing. `process_world_events` drops a block's mark on every `WorldEvent::BlockRemoved`, the one path every removal takes. Each frame `DesignationMarkers::sync` (`flagstone/src/app/designation_markers.rs`) mirrors the marks below the live view ceiling into scene markers (marks at or above it are hidden and return when the cut rises) ([rendering](rendering.md#6-markers)).
+
+The colony's pawns are the `Crew` (`flagstone_game::crew`, `App::crew`): a store addressed by `PawnId`, ids issued in ascending order and never reused, iterated in id order. `App::possessed` is `Some(PawnId)` only in first person and names the pawn the player possesses; in the strategy view nobody is possessed and `PhysicsController::player` keeps naming the body last possessed. Every pawn has a body in `PhysicsController::pawns`. Each unpossessed pawn works the marks by itself, in either view. Each tick, `FrameProcessor::run_pawn_job` (`flagstone/src/app/event_loop/frame_processor.rs`) reads every pawn's pose from its physics character and calls the pure `flagstone_game::jobs::step_crew` (given `App::possessed`), which steps the pawns' `Job`s one after another in id order and answers with a `JobAction` per pawn. A pawn takes its mark before the next pawn looks, so one mark is never worked by two pawns. A pawn with no pose is skipped for the tick and keeps its claim. Each action is applied for its pawn:
+
+| Action | Applied as |
+|---|---|
+| `Wait` | nothing; an idle pawn is not moved |
+| `Walk { to }` | `jobs::steer` gives a `WalkStep`; the character moves through `PhysicsController::move_pawn` at `JOB_WALK_SPEED`; the possessed pawn is never walked here |
+| `Dig { aim, .. }` | `Pawn::dig` from that pawn's eye along the aim within `MINE_REACH` (shared with hand-mining), then `apply_pawn_dig` |
+
+A `Job` is `Idle` or `Mine`. An idle pawn claims the unclaimed mark nearest itself (`MineMarks::claim`, `unclaimed`) that `flagstone_game::routing::route` can reach within `ROUTE_NODE_BUDGET` cells, trying at most `ROUTE_ATTEMPTS_PER_TICK` routes per tick. `routing` searches over standable cells (ground below, three cells of air; steps of one block up, level or one down). A pawn mines from a stand cell within reach, not from the mark's cell. A candidate with no route is memoised in `Job::Idle`'s `Unreachable` (keyed by the grid revision and the pawn's start cell) and skipped until either changes. `VoxelGrid::revision` counts every change to which cells are solid (place, clear, chunk load and removal; not light) and is not serialised. A `Mine` job records the revision it last checked; when it moved, `route_broken` tests the rest of the route with `routing::walkable` and `is_step`, and a broken route is replanned from the pawn's standing cell (`routing::standing_cell`) with the claim kept. With no route left the job releases the claim, keeps the mark and goes idle with that mark memoised as unreachable. The job also releases its claim, keeping the mark, when the block is gone or no longer exposed, the mark is cancelled, or `STALL_TICKS` pass without progress toward a waypoint. `apply_pawn_dig` (`flagstone/src/app/event_loop/world_edit.rs`) adds the yield to `Colony::stock`, not to the pawn's inventory, then publishes the removal and `AudioEvent::PlaySoundAt` for the resolved `dig.wav` ([frame loop](frame-loop.md)) at the block's centre. Hand-mining shares `publish_removal` but deposits into the pawn and reports the player as the reason; a pawn dig reports `BlockChangeReason::Mechanic`. The possessed pawn gets no action and takes no mark: `step_crew` calls `jobs::suspend` on it, which releases a held claim (the mark stays) and idles the job, so another pawn can take the mark in the same or the next tick. The other pawns keep working while the player is in first person. `update_hud_data` passes the stock as `HudData::colony_stock`, which `rts_hud` draws.
+
+`StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view` and `StrategyCommand::possess`, the pawn selected when the command was sampled; the apply step then calls `App::toggle_camera_mode(target)` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). From the strategy view the switch possesses `target` (`App::possess`: the pawn's job is suspended, `PhysicsController::possess` makes its body the player's and queues a view snap so the view does not blend from the previous body, and the view takes the body's position and yaw with the pitch level); with no such pawn in the crew the view stays and the rejection cue plays. From first person the switch sets `App::possessed` to `None` and returns to the strategy view; the pawn keeps its pose and, as an unpossessed pawn, picks up marks again. In the strategy view an idle pawn is not moved; a working pawn walks its route. The strategy HUD has no hotbar, tool or pickups, as nothing is possessed.
+
+## 3 GameState
+
+`flagstone_ui::GameState` decides input routing, rendering, cursor and whether the
+simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
+returns the UI visibility and the menu to show for a legal transition. The cursor
+follows `cursor_grabbed(state, camera_mode)`, not the coordinator.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Menu
+    Menu --> Playing: start game
+    Playing --> ConsoleOpen: open console
+    Playing --> Paused: pause
+    Playing --> Menu: return to menu
+    ConsoleOpen --> Playing: close console
+    ConsoleOpen --> Menu: exit to menu
+    Paused --> Playing: resume
+    Paused --> Menu: exit to menu
+```
+
+Same-state transitions are allowed (no-op). Everything else is rejected, including
+`Menu → ConsoleOpen` and `ConsoleOpen ↔ Paused`.
+
+| State | Input goes to | Draws | Cursor | Simulation |
+|---|---|---|---|---|
+| `Menu` | menu | menu screens | free | stopped |
+| `Playing` | game | world | grabbed in first person, free in the isometric view | running |
+| `ConsoleOpen` | console text | world (frozen) + console | free | paused |
+| `Paused` | pause menu | world (frozen) + menu | free | paused |
+
+`GameState::home_screen` names the screen a state shows on entry and that Back returns to: `start` for `Menu`, `pause` for `Paused`, none for `Playing` and `ConsoleOpen`. The pause window (`PauseMenu`, screen `pause`) offers Continue, Settings and Exit to main menu. Continue and Exit publish `UiEvent::ResumeRequested` and `UiEvent::MainMenuRequested` from `process_menu_action`; the binary resumes through `StateTransitionCoordinator::resume_game`, and on a main-menu request `App::frame` autosaves, then shows the main menu.
+
+`flagstone/src/game_state.rs` re-exports `flagstone_ui::GameState`; the UI adapter takes the same type. Per-frame gameplay steps check `== Playing` ([frame-loop](frame-loop.md)).

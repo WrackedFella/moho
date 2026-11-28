@@ -4,9 +4,7 @@
 //! separation of concerns. Preparation (collecting instances, separating opaque/transparent)
 //! is now distinct from rendering (GPU command submission).
 
-use crate::{BufferManager, InstanceCollector, MaterialTable, RendererBackend};
-use legion::World;
-use legion::storage::Component;
+use crate::{InstanceCollector, MaterialTable, RendererBackend};
 use moho_render_api::{InstanceGpu, Renderable};
 
 /// Prepared scene data ready for rendering.
@@ -25,30 +23,9 @@ pub struct PreparedScene {
     pub materials_uploaded: bool,
 }
 
-impl PreparedScene {
-    /// Create an empty prepared scene (useful for testing or when no geometry exists).
-    #[allow(dead_code)] // Used in tests
-    pub fn empty() -> Self {
-        Self {
-            cube_opaque: Vec::new(),
-            sphere_opaque: Vec::new(),
-            transparent_entries: Vec::new(),
-            materials_uploaded: false,
-        }
-    }
-
-    /// Check if this prepared scene has any geometry to render.
-    #[allow(dead_code)] // Used in tests
-    pub fn is_empty(&self) -> bool {
-        self.cube_opaque.is_empty()
-            && self.sphere_opaque.is_empty()
-            && self.transparent_entries.is_empty()
-    }
-}
-
 /// Scene preparation coordinator.
 ///
-/// Handles the complex logic of collecting instances from the ECS world,
+/// Handles the complex logic of collecting instances from actors,
 /// processing materials, and separating geometry into opaque and transparent groups.
 pub struct ScenePreparation;
 
@@ -56,46 +33,37 @@ impl ScenePreparation {
     /// Prepare a scene for rendering by collecting instances and separating by transparency.
     ///
     /// This method:
-    /// 1. Collects all renderable instances from the ECS world
+    /// 1. Collects all renderable instances from the actors
     /// 2. Logs debug information about materials and instances
     /// 3. Uploads materials to GPU if they've changed
     /// 4. Separates instances into opaque and transparent groups
     ///
     /// # Arguments
-    /// * `world` - ECS world containing renderable entities
+    /// * `spheres` - Sphere-like actors to draw
+    /// * `cubes` - Cube-like actors to draw
     /// * `material_table` - Table of all materials (may be updated)
-    /// * `buffer_manager` - Manages GPU buffers for voxel chunks
-    /// * `instance_collector` - Collects instances from world
+    /// * `instance_collector` - Collects instances
     /// * `renderer` - Backend for GPU operations
     /// * `mesh_handle` - Handle for sphere mesh
     /// * `cube_mesh_handle` - Handle for cube mesh
-    /// * `terrain_material_idx` - Pre-registered material index for terrain chunks
     ///
     /// # Returns
     /// PreparedScene containing separated geometry ready for rendering
-    #[allow(clippy::too_many_arguments)]
     pub fn prepare<S, C>(
-        world: &mut World,
+        spheres: &[S],
+        cubes: &[C],
         material_table: &mut MaterialTable,
-        buffer_manager: &mut BufferManager,
         instance_collector: &mut InstanceCollector,
         renderer: &mut dyn RendererBackend,
         mesh_handle: u32,
         cube_mesh_handle: u32,
-        terrain_material_idx: u32,
     ) -> PreparedScene
     where
-        S: Renderable + Component,
-        C: Renderable + Component,
+        S: Renderable,
+        C: Renderable,
     {
-        // Step 1: Collect instances from world
-        instance_collector.collect_from_world::<S, C>(
-            world,
-            material_table,
-            buffer_manager,
-            renderer,
-            terrain_material_idx,
-        );
+        instance_collector.clear();
+        instance_collector.collect_actors(spheres, cubes, material_table);
 
         // Step 2: Debug logging (optional, can be feature-gated in future)
         Self::log_debug_info(material_table, instance_collector);
@@ -108,11 +76,6 @@ impl ScenePreparation {
         } else {
             false
         };
-
-        log::debug!(
-            "[ScenePreparation] VoxelChunks to render: {}",
-            instance_collector.chunk_renders().len()
-        );
 
         // Step 4: Separate instances by transparency
         let (cube_opaque, sphere_opaque, transparent_entries) = Self::separate_by_transparency(
@@ -135,19 +98,17 @@ impl ScenePreparation {
     /// This helps with debugging material assignments and instance counts.
     fn log_debug_info(material_table: &MaterialTable, instance_collector: &InstanceCollector) {
         if !material_table.as_slice().is_empty() {
-            log::debug!(
-                "[debug] material_table.len={} ",
-                material_table.as_slice().len()
+            tracing::debug!(
+                count = material_table.as_slice().len(),
+                "[debug] material_table.len"
             );
             for (i, m) in material_table.as_slice().iter().enumerate().take(8) {
-                log::debug!(
-                    "[debug] mat[{}] albedo=({:.3},{:.3},{:.3}) fuzz={:.3} ref={:.3}",
-                    i,
-                    m.albedo[0],
-                    m.albedo[1],
-                    m.albedo[2],
-                    m.params[0],
-                    m.params[1]
+                tracing::debug!(
+                    index = i,
+                    albedo = ?[m.albedo[0], m.albedo[1], m.albedo[2]],
+                    fuzz = m.params[0],
+                    reflectance = m.params[1],
+                    "[debug] mat"
                 );
             }
         }
@@ -158,7 +119,11 @@ impl ScenePreparation {
             .enumerate()
             .take(8)
         {
-            log::debug!("[debug] sphere_inst[{}].material={}", i, inst.material);
+            tracing::debug!(
+                index = i,
+                material = inst.material,
+                "[debug] sphere_inst material"
+            );
         }
 
         for (i, inst) in instance_collector
@@ -167,7 +132,11 @@ impl ScenePreparation {
             .enumerate()
             .take(8)
         {
-            log::debug!("[debug] cube_inst[{}].material={}", i, inst.material);
+            tracing::debug!(
+                index = i,
+                material = inst.material,
+                "[debug] cube_inst material"
+            );
         }
     }
 
@@ -222,56 +191,5 @@ impl ScenePreparation {
         }
 
         (cube_opaque, sphere_opaque, transparent_entries)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Helper to create a test instance with identity transform.
-    fn test_instance() -> InstanceGpu {
-        InstanceGpu {
-            model: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            material: 0,
-            object_type: 0,
-            padding: [0, 0],
-        }
-    }
-
-    #[test]
-    fn test_prepared_scene_empty() {
-        let prepared = PreparedScene::empty();
-        assert!(prepared.is_empty());
-        assert_eq!(prepared.cube_opaque.len(), 0);
-        assert_eq!(prepared.sphere_opaque.len(), 0);
-        assert_eq!(prepared.transparent_entries.len(), 0);
-        assert!(!prepared.materials_uploaded);
-    }
-
-    #[test]
-    fn test_prepared_scene_is_empty_with_cubes() {
-        let mut prepared = PreparedScene::empty();
-        prepared.cube_opaque.push(test_instance());
-        assert!(!prepared.is_empty());
-    }
-
-    #[test]
-    fn test_prepared_scene_is_empty_with_spheres() {
-        let mut prepared = PreparedScene::empty();
-        prepared.sphere_opaque.push(test_instance());
-        assert!(!prepared.is_empty());
-    }
-
-    #[test]
-    fn test_prepared_scene_is_empty_with_transparent() {
-        let mut prepared = PreparedScene::empty();
-        prepared.transparent_entries.push((0, test_instance()));
-        assert!(!prepared.is_empty());
     }
 }

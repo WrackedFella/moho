@@ -1,6 +1,7 @@
 # ENG-F4 — Terrain Rendering Debt
 
-**Status:** in progress
+**Status:** Draft
+**Labels:** feature, line:engine
 
 ## Summary
 
@@ -9,9 +10,9 @@ non-voxel project.
 
 ## Items
 
-| Item | Status |
-|---|---|
-| [ENG-F4-01 per-chunk-material-vote](ENG-F4-01-per-chunk-material-vote.md) | not started |
-| [ENG-F4-02 mesh-buffers-consolidation](ENG-F4-02-mesh-buffers-consolidation.md) | not started |
-| [ENG-F4-03 smooth-terrain-lighting](ENG-F4-03-smooth-terrain-lighting.md) | not started |
-| [ENG-F4-04 lod1-mesh-holes](ENG-F4-04-lod1-mesh-holes.md) | not started |
+| Item |
+|---|
+| [ENG-F4-01 per-chunk-material-vote](ENG-F4-01-per-chunk-material-vote.md) |
+| [ENG-F4-02 mesh-buffers-consolidation](ENG-F4-02-mesh-buffers-consolidation.md) |
+| ENG-F4-03 smooth-terrain-lighting: dropped 2026-10-21, covered by SG-F7-05 and [SG-F7-06](https://github.com/WrackedFella/moho/issues/482) |
+| [ENG-F4-04 lod1-mesh-holes](ENG-F4-04-lod1-mesh-holes.md) |

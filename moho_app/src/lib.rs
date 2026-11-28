@@ -1,0 +1,701 @@
+//! Fixed-timestep application loop shared by every game line.
+
+pub mod clock;
+pub mod fixed_step;
+pub mod headless;
+pub mod launch;
+mod loop_requests;
+pub mod pacing;
+pub mod runner;
+pub mod window_keys;
+
+use std::num::NonZeroU32;
+use std::sync::Arc;
+use std::time::Duration;
+
+use moho_audio::AudioSystem;
+use moho_renderer::RendererBackend;
+use winit::event::{DeviceEvent, WindowEvent};
+use winit::window::Window;
+
+pub use clock::{GameClock, LoopRecord};
+pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
+pub use headless::HeadlessLoop;
+pub(crate) use loop_requests::LoopRequests;
+pub use runner::run;
+pub use window_keys::{
+    FULLSCREEN_BINDING, Observed, ToggleKeys, WindowMode, split_fullscreen_binding,
+};
+
+/// Per-tick context handed to [`Game::tick`].
+#[derive(Debug)]
+pub struct TickContext<'a> {
+    /// Index of this tick, starting at 0.
+    pub tick: u64,
+    pub tick_length: Duration,
+    /// Advanced by the loop after the game's tick.
+    pub clock: &'a mut GameClock,
+}
+
+/// Per-frame context handed to [`Game::frame`].
+pub struct FrameContext<'a> {
+    pub tick_length: Duration,
+    /// Time since the previous frame, capped at `tick_length` times
+    /// `LoopConfig::max_catch_up_ticks`. Defaults to `tick_length`.
+    pub frame_dt: Duration,
+    clock: &'a GameClock,
+    renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
+    audio: Option<&'a mut AudioSystem>,
+    exit_requested: bool,
+    requests: LoopRequests,
+    frame_cap: Option<NonZeroU32>,
+    frame_cap_requested: bool,
+    window_mode: WindowMode,
+    next_tick: u64,
+}
+
+impl<'a> FrameContext<'a> {
+    /// A context for driving [`Game::frame`] directly; a game's tests use it
+    /// with a fake renderer.
+    pub fn new(
+        tick_length: Duration,
+        clock: &'a GameClock,
+        renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
+        audio: Option<&'a mut AudioSystem>,
+    ) -> Self {
+        Self {
+            tick_length,
+            frame_dt: tick_length,
+            clock,
+            renderer,
+            audio,
+            exit_requested: false,
+            requests: LoopRequests::default(),
+            frame_cap: None,
+            frame_cap_requested: false,
+            window_mode: WindowMode::Windowed,
+            next_tick: 0,
+        }
+    }
+
+    /// Sets the index of the next tick [`FrameContext::loop_record`] reports.
+    #[must_use]
+    pub fn with_next_tick(mut self, next_tick: u64) -> Self {
+        self.next_tick = next_tick;
+        self
+    }
+
+    /// The loop's tick index and clock, for a save.
+    pub fn loop_record(&self) -> LoopRecord {
+        self.clock.record(self.next_tick)
+    }
+
+    /// Asks the loop to resume from `record` before its next tick.
+    pub fn resume_loop(&mut self, record: LoopRecord) {
+        self.requests.resume = Some(record);
+    }
+
+    /// The last resume the game asked for, if it asked.
+    pub fn requested_resume(&self) -> Option<LoopRecord> {
+        self.requests.resume
+    }
+
+    /// Sets the window mode [`FrameContext::window_mode`] reports.
+    #[must_use]
+    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
+        self.window_mode = mode;
+        self
+    }
+
+    /// The runner's current window mode.
+    pub fn window_mode(&self) -> WindowMode {
+        self.window_mode
+    }
+
+    /// Asks the runner to switch the window to `mode` once this frame is handled;
+    /// [`Game::window_mode_changed`] is not called for it.
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        self.requests.window_mode = Some(mode);
+    }
+
+    /// The last window mode the game asked for, if it asked.
+    pub fn requested_window_mode(&self) -> Option<WindowMode> {
+        self.requests.window_mode
+    }
+
+    /// Asks the runner to resize the window to `width` by `height` physical pixels once this
+    /// frame is handled; the runner honours it only when the window ends up windowed.
+    pub fn set_window_size(&mut self, width: u32, height: u32) {
+        self.requests.window_size = Some((width, height));
+    }
+
+    /// The last window size the game asked for, as `(width, height)`, if it asked.
+    pub fn requested_window_size(&self) -> Option<(u32, u32)> {
+        self.requests.window_size
+    }
+
+    pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
+        Self::new(tick_length, clock, None, None)
+    }
+
+    pub fn clock(&self) -> &'a GameClock {
+        self.clock
+    }
+
+    /// The renderer, absent when running headless.
+    pub fn renderer(&mut self) -> Option<&mut (dyn RendererBackend + 'static)> {
+        self.renderer.as_deref_mut()
+    }
+
+    /// The audio system, absent when running headless or without audio.
+    pub fn audio(&mut self) -> Option<&mut AudioSystem> {
+        self.audio.as_deref_mut()
+    }
+
+    /// Asks the runner to leave the loop after this frame.
+    pub fn request_exit(&mut self) {
+        self.exit_requested = true;
+    }
+
+    /// Whether the game asked to leave the loop.
+    pub fn exit_requested(&self) -> bool {
+        self.exit_requested
+    }
+
+    /// Asks the loop to pause or resume from the next tick.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.requests.paused = Some(paused);
+    }
+
+    /// Asks the loop to run at `speed` from the next tick.
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.requests.speed = Some(speed);
+    }
+
+    /// The last pause state the game asked for, if it asked.
+    pub fn requested_paused(&self) -> Option<bool> {
+        self.requests.paused
+    }
+
+    /// The last speed the game asked for, if it asked.
+    pub fn requested_speed(&self) -> Option<SimSpeed> {
+        self.requests.speed
+    }
+
+    /// Asks the runner to draw at most `fps` frames per second; `None` removes the cap.
+    pub fn set_frame_cap(&mut self, fps: Option<NonZeroU32>) {
+        self.frame_cap = fps;
+        self.frame_cap_requested = true;
+    }
+
+    /// The last frame cap the game asked for: `None` if it never asked, `Some(None)`
+    /// if it asked for no cap.
+    pub fn requested_frame_cap(&self) -> Option<Option<NonZeroU32>> {
+        self.frame_cap_requested.then_some(self.frame_cap)
+    }
+
+    pub(crate) fn loop_requests(&self) -> LoopRequests {
+        self.requests
+    }
+}
+
+/// Context handed to [`Game::init`], once the window and renderer exist.
+pub struct InitContext<'a> {
+    pub window: &'a Arc<Window>,
+    pub renderer: &'a mut dyn RendererBackend,
+    pub audio: Option<&'a mut AudioSystem>,
+}
+
+/// Context handed to [`Game::event`].
+pub struct EventContext<'a> {
+    clock: &'a GameClock,
+    renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
+    audio: Option<&'a mut AudioSystem>,
+    exit_requested: bool,
+    requests: LoopRequests,
+    window_mode: WindowMode,
+    next_tick: u64,
+}
+
+impl<'a> EventContext<'a> {
+    /// A context for driving [`Game::event`] directly; a game's tests use it
+    /// with a fake renderer.
+    pub fn new(
+        clock: &'a GameClock,
+        renderer: Option<&'a mut (dyn RendererBackend + 'static)>,
+        audio: Option<&'a mut AudioSystem>,
+    ) -> Self {
+        Self {
+            clock,
+            renderer,
+            audio,
+            exit_requested: false,
+            requests: LoopRequests::default(),
+            window_mode: WindowMode::Windowed,
+            next_tick: 0,
+        }
+    }
+
+    /// Sets the index of the next tick [`EventContext::loop_record`] reports.
+    #[must_use]
+    pub fn with_next_tick(mut self, next_tick: u64) -> Self {
+        self.next_tick = next_tick;
+        self
+    }
+
+    /// The loop's tick index and clock, for a save.
+    pub fn loop_record(&self) -> LoopRecord {
+        self.clock.record(self.next_tick)
+    }
+
+    /// Asks the loop to resume from `record` before its next tick.
+    pub fn resume_loop(&mut self, record: LoopRecord) {
+        self.requests.resume = Some(record);
+    }
+
+    /// The last resume the game asked for, if it asked.
+    pub fn requested_resume(&self) -> Option<LoopRecord> {
+        self.requests.resume
+    }
+
+    /// Sets the window mode [`EventContext::window_mode`] reports.
+    #[must_use]
+    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
+        self.window_mode = mode;
+        self
+    }
+
+    /// The runner's current window mode.
+    pub fn window_mode(&self) -> WindowMode {
+        self.window_mode
+    }
+
+    /// Asks the runner to switch the window to `mode` once this event is handled;
+    /// [`Game::window_mode_changed`] is not called for it.
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        self.requests.window_mode = Some(mode);
+    }
+
+    /// The last window mode the game asked for, if it asked.
+    pub fn requested_window_mode(&self) -> Option<WindowMode> {
+        self.requests.window_mode
+    }
+
+    pub fn clock(&self) -> &'a GameClock {
+        self.clock
+    }
+
+    /// The renderer, absent before the window exists.
+    pub fn renderer(&mut self) -> Option<&mut (dyn RendererBackend + 'static)> {
+        self.renderer.as_deref_mut()
+    }
+
+    /// The audio system, absent when disabled or when its initialisation failed.
+    pub fn audio(&mut self) -> Option<&mut AudioSystem> {
+        self.audio.as_deref_mut()
+    }
+
+    /// Asks the runner to leave the loop once this event is handled.
+    pub fn request_exit(&mut self) {
+        self.exit_requested = true;
+    }
+
+    /// Whether the game asked to leave the loop.
+    pub fn exit_requested(&self) -> bool {
+        self.exit_requested
+    }
+
+    /// Asks the loop to pause or resume from the next tick.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.requests.paused = Some(paused);
+    }
+
+    /// Asks the loop to run at `speed` from the next tick.
+    pub fn set_speed(&mut self, speed: SimSpeed) {
+        self.requests.speed = Some(speed);
+    }
+
+    /// The last pause state the game asked for, if it asked.
+    pub fn requested_paused(&self) -> Option<bool> {
+        self.requests.paused
+    }
+
+    /// The last speed the game asked for, if it asked.
+    pub fn requested_speed(&self) -> Option<SimSpeed> {
+        self.requests.speed
+    }
+
+    pub(crate) fn loop_requests(&self) -> LoopRequests {
+        self.requests
+    }
+}
+
+/// A winit event the runner hands to the game unchanged.
+#[derive(Debug)]
+pub enum Event {
+    Window(WindowEvent),
+    Device(DeviceEvent),
+}
+
+/// Window, loop and audio settings for [`run`].
+#[derive(Debug, Clone)]
+pub struct AppConfig {
+    pub window_title: String,
+    pub loop_config: LoopConfig,
+    /// Whether to create an [`AudioSystem`]; a failure to create one is logged
+    /// and the game runs without audio.
+    pub init_audio: bool,
+    /// The file UI sound events play; `None` makes them silent.
+    pub ui_click: Option<std::path::PathBuf>,
+    /// Inputs that flip the window between windowed and borderless, besides the
+    /// always-on Alt+Enter; `None` leaves window handling to the game, so nothing flips.
+    pub toggle_keys: Option<Vec<moho_input::bindings::Input>>,
+    /// The mode the window opens in; the runner's current mode starts here.
+    pub window_mode: WindowMode,
+}
+
+/// Why [`run`] stopped with an error.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum AppError {
+    #[error("failed to run the event loop: {0}")]
+    EventLoop(String),
+    #[error("failed to create the window: {0}")]
+    Window(String),
+    #[error("failed to create the renderer: {0}")]
+    Renderer(String),
+}
+
+/// A game driven by a fixed-timestep loop.
+pub trait Game {
+    /// Input sampled once per tick, or once per frame while paused.
+    type Command;
+
+    /// Samples the command for the next tick; while paused, for
+    /// [`Game::apply_while_paused`] on every frame.
+    fn command(&mut self) -> Self::Command;
+
+    fn tick(&mut self, ctx: &mut TickContext<'_>, command: &Self::Command);
+
+    /// Called once the window and renderer exist; never called headless.
+    fn init(&mut self, _ctx: &mut InitContext<'_>) {}
+
+    /// Called for every window and device event the runner does not consume;
+    /// never called headless.
+    fn event(&mut self, _ctx: &mut EventContext<'_>, _event: Event) {}
+
+    /// Called after the runner flipped the window to `mode`; never called headless.
+    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, _mode: WindowMode) {}
+
+    /// Applies `command` while the loop is paused, at the boundary before tick `next_tick`.
+    ///
+    /// Runs before the frame, so its result is visible in that frame. Whatever
+    /// part of `command` it does not apply is dropped; the default drops it all.
+    fn apply_while_paused(&mut self, _next_tick: u64, _command: &Self::Command) {}
+
+    /// Presents a frame, `alpha` of the way between the last two ticks.
+    fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clock::GameClock;
+    use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu};
+
+    /// Records the point lights it is given; everything else is a no-op.
+    #[derive(Default)]
+    struct FakeRenderer {
+        lights: Vec<f32>,
+    }
+
+    impl RendererBackend for FakeRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(
+            &mut self,
+            _position: glam::Vec3,
+            _color: glam::Vec3,
+            intensity: f32,
+            _range: f32,
+        ) -> u32 {
+            self.lights.push(intensity);
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    const TICK: Duration = Duration::from_millis(16);
+
+    fn light(ctx_renderer: Option<&mut (dyn RendererBackend + 'static)>, intensity: f32) {
+        ctx_renderer.expect("renderer present").add_point_light(
+            glam::Vec3::ZERO,
+            glam::Vec3::ONE,
+            intensity,
+            1.0,
+        );
+    }
+
+    #[test]
+    fn frame_context_hands_out_the_renderer_it_was_built_with() {
+        let clock = GameClock::default();
+        let mut fake = FakeRenderer::default();
+        let mut ctx = FrameContext::new(TICK, &clock, Some(&mut fake), None);
+
+        light(ctx.renderer(), 3.0);
+
+        assert_eq!(ctx.tick_length, TICK);
+        assert_eq!(fake.lights, vec![3.0]);
+    }
+
+    #[test]
+    fn frame_context_without_renderer_or_audio_has_neither() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+
+        assert!(ctx.renderer().is_none());
+        assert!(ctx.audio().is_none());
+    }
+
+    #[test]
+    fn frame_context_exit_is_not_requested_until_asked() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        assert!(!ctx.exit_requested());
+
+        ctx.request_exit();
+
+        assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn event_context_hands_out_the_renderer_it_was_built_with() {
+        let clock = GameClock::default();
+        let mut fake = FakeRenderer::default();
+        let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
+
+        light(ctx.renderer(), 5.0);
+
+        assert_eq!(fake.lights, vec![5.0]);
+    }
+
+    #[test]
+    fn event_context_without_renderer_or_audio_has_neither() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        assert!(ctx.renderer().is_none());
+        assert!(ctx.audio().is_none());
+    }
+
+    #[test]
+    fn event_context_exit_is_not_requested_until_asked() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert!(!ctx.exit_requested());
+
+        ctx.request_exit();
+
+        assert!(ctx.exit_requested());
+    }
+
+    #[test]
+    fn frame_context_exposes_the_clock_it_was_built_with() {
+        let mut clock = GameClock::default();
+        clock.reset_to(15.25);
+
+        let ctx = FrameContext::new(TICK, &clock, None, None);
+
+        assert_eq!(ctx.clock().time_of_day(), 15.25);
+    }
+
+    #[test]
+    fn event_context_exposes_the_clock_it_was_built_with() {
+        let mut clock = GameClock::default();
+        clock.reset_to(15.25);
+
+        let ctx = EventContext::new(&clock, None, None);
+
+        assert_eq!(ctx.clock().time_of_day(), 15.25);
+    }
+
+    #[test]
+    fn frame_context_records_pause_and_speed_requests() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        assert_eq!(ctx.requested_paused(), None);
+        assert_eq!(ctx.requested_speed(), None);
+
+        ctx.set_paused(true);
+        let paused = ctx.requested_paused();
+        ctx.set_paused(false);
+        let resumed = ctx.requested_paused();
+        ctx.set_speed(SimSpeed::X3);
+
+        assert_eq!(paused, Some(true));
+        assert_eq!(resumed, Some(false));
+        assert_eq!(ctx.requested_speed(), Some(SimSpeed::X3));
+    }
+
+    #[test]
+    fn frame_context_records_the_frame_cap_request() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        let untouched = ctx.requested_frame_cap();
+
+        ctx.set_frame_cap(NonZeroU32::new(144));
+        let capped = ctx.requested_frame_cap();
+        ctx.set_frame_cap(None);
+        let uncapped = ctx.requested_frame_cap();
+
+        assert_eq!(untouched, None);
+        assert_eq!(capped, Some(NonZeroU32::new(144)));
+        assert_eq!(uncapped, Some(None));
+    }
+
+    #[test]
+    fn frame_context_records_the_window_size_request() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        let untouched = ctx.requested_window_size();
+
+        ctx.set_window_size(1280, 720);
+        let first = ctx.requested_window_size();
+        ctx.set_window_size(2560, 1440);
+        let second = ctx.requested_window_size();
+
+        assert_eq!(untouched, None);
+        assert_eq!(first, Some((1280, 720)));
+        assert_eq!(second, Some((2560, 1440)), "the last request wins");
+        assert_eq!(ctx.requested_window_mode(), None, "a size is not a mode");
+    }
+
+    #[test]
+    fn event_context_records_pause_and_speed_requests() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(ctx.requested_paused(), None);
+        assert_eq!(ctx.requested_speed(), None);
+
+        ctx.set_paused(true);
+        let paused = ctx.requested_paused();
+        ctx.set_paused(false);
+        let resumed = ctx.requested_paused();
+        ctx.set_speed(SimSpeed::X2);
+
+        assert_eq!(paused, Some(true));
+        assert_eq!(resumed, Some(false));
+        assert_eq!(ctx.requested_speed(), Some(SimSpeed::X2));
+    }
+
+    #[test]
+    fn event_context_resume_reaches_the_requests() {
+        let clock = GameClock::default();
+        let record = GameClock::new(9.0, 120.0, 60.0).record(300);
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(ctx.requested_resume(), None);
+
+        ctx.resume_loop(record);
+
+        assert_eq!(ctx.requested_resume(), Some(record));
+        assert_eq!(ctx.loop_requests().resume, Some(record));
+    }
+
+    #[test]
+    fn frame_context_resume_reaches_the_requests() {
+        let clock = GameClock::default();
+        let first = GameClock::new(9.0, 120.0, 60.0).record(300);
+        let second = GameClock::new(10.0, 120.0, 60.0).record(7);
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        assert_eq!(ctx.requested_resume(), None);
+
+        ctx.resume_loop(first);
+        ctx.resume_loop(second);
+
+        assert_eq!(
+            ctx.requested_resume(),
+            Some(second),
+            "the last request wins"
+        );
+        assert_eq!(ctx.loop_requests().resume, Some(second));
+    }
+
+    #[test]
+    fn contexts_report_the_clock_and_the_tick_they_were_given() {
+        let mut clock = GameClock::new(9.0, 120.0, 60.0);
+        clock.set_time_scale(3.0);
+        let bare_frame = FrameContext::new(TICK, &clock, None, None);
+        let bare_event = EventContext::new(&clock, None, None);
+
+        let frame = FrameContext::new(TICK, &clock, None, None).with_next_tick(300);
+        let event = EventContext::new(&clock, None, None).with_next_tick(300);
+
+        assert_eq!(frame.loop_record(), clock.record(300));
+        assert_eq!(event.loop_record(), clock.record(300));
+        assert_eq!(bare_frame.loop_record().next_tick, 0);
+        assert_eq!(bare_event.loop_record().next_tick, 0);
+    }
+
+    #[test]
+    fn event_context_reports_its_tick_and_the_last_resume_wins() {
+        let clock = GameClock::new(9.0, 120.0, 60.0);
+        let first = GameClock::new(10.0, 120.0, 60.0).record(300);
+        let second = GameClock::new(11.0, 120.0, 60.0).record(500);
+        let mut ctx = EventContext::new(&clock, None, None).with_next_tick(7);
+
+        ctx.resume_loop(first);
+        ctx.resume_loop(second);
+
+        assert_eq!(ctx.loop_record().next_tick, 7);
+        assert_eq!(ctx.requested_resume(), Some(second));
+        assert_eq!(ctx.loop_requests().resume, Some(second));
+    }
+
+    #[test]
+    fn event_context_hands_its_requests_to_the_loop() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        ctx.set_paused(true);
+        ctx.set_speed(SimSpeed::X3);
+        let requests = ctx.loop_requests();
+
+        assert_eq!(requests.paused, Some(true));
+        assert_eq!(requests.speed, Some(SimSpeed::X3));
+    }
+}

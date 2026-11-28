@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 203791445ef011452a01315d4b61e4b3c0fe0f024c951472ba27bdd6986aa9a5 # shrinks to prefs = Prefs { key_w: Binding { code: 65, mods: 0 }, key_a: Binding { code: 65, mods: 0 }, key_s: Binding { code: 65, mods: 0 }, key_d: Binding { code: 65, mods: 0 }, key_up: Binding { code: 65, mods: 0 }, key_down: Binding { code: 65, mods: 0 }, key_sprint: Binding { code: 65, mods: 0 }, key_jump: Binding { code: 65, mods: 0 }, mouse_sensitivity: 0.0, input_filtering_enabled: false, audio_sound_effect_volume: 0.0, audio_music_volume: 0.0, audio_ui_volume: 0.0, audio_voice_volume: 0.0, graphics_shadow_quality: 0, graphics_ssao_quality: 0, window_mode: Windowed, window_resolution: (0, 0), world_load_radius: 0, world_unload_radius: 0, world_chunks_per_frame: 1 }

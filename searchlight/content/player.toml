@@ -1,0 +1,11 @@
+[player]
+strength = 10.0
+carry_capacity_per_strength = 3.0
+movement_speed = 1.0
+stamina_pool = 5.0
+slowed_scale = 0.7
+
+[player.thresholds]
+slowed = 0.6
+no_sprint = 0.8
+cannot_move = 1.0

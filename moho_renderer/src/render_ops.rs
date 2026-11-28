@@ -4,9 +4,11 @@
 //! - `camera_ops`: Camera uniform buffer updates
 //! - `shadow_ops`: Shadow matrix calculation and shadow pass rendering
 //! - `main_pass_ops`: Main color pass rendering with skybox
+//! - `marker_pass_ops`: Translucent box markers drawn over the main pass
 //! - `frame_ops`: Frame finalization and presentation
 
 pub mod camera_ops;
 pub mod frame_ops;
 pub mod main_pass_ops;
+pub mod marker_pass_ops;
 pub mod shadow_ops;

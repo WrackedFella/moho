@@ -2,26 +2,27 @@
 
 Backend-agnostic 3D renderer for the Moho engine. Provides instance-based mesh rendering, cascaded shadow mapping, dynamic lighting, and skybox rendering using wgpu.
 
-## Features
+## 1 Features
 
 - **Instance Rendering** - Efficient batched rendering of multiple instances per mesh
 - **Custom Mesh Support** - Register arbitrary vertex/index buffers
-- **Cascaded Shadow Maps (CSM)** - 4 cascades covering 0-800 world units
+- **Cascaded Shadow Maps (CSM)** - sun (4) and moon (2) cascades out to 1000 world units
 - **Dynamic Lighting** - Sun and moon directional lights with time-based ambient
 - **Skybox Rendering** - Atmospheric rendering with dynamic sky colors
 - **Material System** - PBR-style materials with transparency support
 - **Scene Serialization** - Save/load scene data to disk
 
-## Architecture
+## 2 Architecture
 
 The renderer is built with a clean separation between scene data and GPU backend:
 
 - **`Scene`** - High-level scene representation (materials, meshes, instances)
-- **`Renderer`** - GPU backend implementation (wgpu)
+- **`RendererBackend`** - The facade games hold (`create_renderer`); the wgpu `Renderer` behind it is crate-private
 - **`MaterialTable`** - Material management with deduplication
-- **`ShadowSystem`** - Cascaded shadow map generation and management
 
-### Rendering Pipeline
+The GPU internals (shadow, SSAO, light and pipeline setup) are `pub(crate)`: wgpu types do not appear in the public API beyond the vertex-attribute tables in `pipeline`.
+
+### 2.1 Rendering Pipeline
 
 The frame rendering workflow is organized into three phases:
 
@@ -45,21 +46,20 @@ The frame rendering workflow is organized into three phases:
 
 > **Note**: The phase names (blocking, principal photography, compositing) are inspired by film production workflow to help organize the mental model. All code uses standard graphics terminology.
 
-## Quick Start
+## 3 Quick Start
 
-### Creating a Renderer
+### 3.1 Creating a Renderer
 
 ```rust
-use moho_renderer::create_renderer_from_arc;
-use std::sync::Arc;
+use moho_renderer::create_renderer;
 
-let window = Arc::new(winit::window::WindowBuilder::new().build(&event_loop)?);
-let mut renderer = create_renderer_from_arc(&window)?;
+let window = winit::window::WindowBuilder::new().build(&event_loop)?;
+let mut renderer = create_renderer(Some(&window))?;
 ```
 
-**Lifetime Constraint:** The `wgpu::Surface` borrows the window, so the renderer lifetime is tied to the window. Keep the window `Arc` alive for the renderer's lifetime.
+**Lifetime Constraint:** The `wgpu::Surface` borrows the window, so the renderer lifetime is tied to the window. Keep the window alive for the renderer's lifetime.
 
-### Registering Meshes
+### 3.2 Registering Meshes
 
 ```rust
 // Simple triangle list
@@ -75,7 +75,7 @@ let indices = vec![0, 1, 2, 2, 3, 0];
 let mesh_id = renderer.register_indexed_mesh(&vertices, &indices);
 ```
 
-### Setting Materials
+### 3.3 Setting Materials
 
 ```rust
 use moho_renderer::MaterialGpu;
@@ -91,21 +91,17 @@ let materials = vec![
     },
 ];
 
-renderer.set_material_table(&materials);
+renderer.set_materials(&materials);
 ```
 
-### Rendering Instances
+### 3.4 Rendering Instances
 
 ```rust
-// Render 100 cubes at different positions
-renderer.render_mesh(
-    mesh_id,
-    &instances, // Vec<[f32; 16]> - 4×4 transform matrices
-    &materials, // Vec<u32> - material indices per instance
-);
+// Queue instances of a registered mesh between begin_frame and submit_frame
+renderer.enqueue_draw(mesh_id, &instances); // &[InstanceGpu]
 ```
 
-### Updating Lighting
+### 3.5 Updating Lighting
 
 ```rust
 use moho_renderer::LightingGpu;
@@ -115,14 +111,15 @@ let lighting = LightingGpu {
     sun_color: [1.0, 0.95, 0.8, 0.0],         // Warm sunlight
     moon_direction: [0.0, 1.0, 0.0, 0.3],     // Up, intensity 0.3
     moon_color: [0.7, 0.8, 0.9, 0.0],         // Cool moonlight
-    ambient: [0.1, 0.1, 0.15, 0.15],          // Ambient color + intensity
-    time_of_day: [12.0, 0.0, 0.0, 0.0],       // Noon
+    ambient: [0.0, 0.0, 0.0, 0.15],           // Sky-ambient strength (w)
+    params: [12.0, 0.0, 0.0, 0.0],            // Noon
+    ..LightingGpu::default()                  // Sky palette: filled by the renderer
 };
 
 renderer.update_lighting(lighting);
 ```
 
-### Frame Rendering
+### 3.6 Frame Rendering
 
 ```rust
 // Called each frame by the rendering system
@@ -131,30 +128,18 @@ renderer.render_scene(&scene)?;
 renderer.present_frame()?;
 ```
 
-## Cascaded Shadow Maps
+## 4 Cascaded Shadow Maps
 
-The renderer implements 4-cascade CSM for high-quality shadows across large view distances.
+The sun casts 4 cascades and the moon 2, in one square `Depth32Float` array (6 layers) sized by the shadow quality tier (1024 to 8192).
+Splits cover the camera near plane to the smaller of the camera far plane and `SHADOW_DISTANCE` (1000 m) with a log/uniform blend, and
+the fragment shader blends between neighbouring cascades. See
+[rendering](../wiki/architecture/rendering.md#9-cascaded-shadows).
 
-**Configuration:**
-- **Cascades**: 4 (covering near to far terrain)
-- **Resolution**: 4096×4096 per cascade
-- **Split Distances**: [50, 150, 400, 800] world units
-- **Format**: Depth32Float
-- **PCF Filtering**: 2×2 sample pattern for soft shadows
+## 5 GPU Data Structures
 
-**Shadow Coverage:**
-- Cascade 0: 0-50 units (high detail near camera)
-- Cascade 1: 50-150 units (medium detail)
-- Cascade 2: 150-400 units (distant terrain)
-- Cascade 3: 400-800 units (far horizon)
+See `../wiki/reference/gpu-abi.md` for detailed structure layouts. Key types:
 
-Only the sun casts shadows. Moon does not cast shadows for performance reasons.
-
-## GPU Data Structures
-
-See `../docs/gpu_abi.md` for detailed structure layouts. Key types:
-
-### MaterialGpu (32 bytes)
+### 5.1 MaterialGpu (32 bytes)
 ```rust
 pub struct MaterialGpu {
     pub albedo: [f32; 4],    // RGBA color
@@ -162,19 +147,22 @@ pub struct MaterialGpu {
 }
 ```
 
-### LightingGpu (96 bytes)
+### 5.2 LightingGpu (144 bytes)
 ```rust
 pub struct LightingGpu {
     pub sun_direction: [f32; 4],   // xyz + intensity
     pub sun_color: [f32; 4],       // RGB + unused
     pub moon_direction: [f32; 4],  // xyz + intensity
     pub moon_color: [f32; 4],      // RGB + unused
-    pub ambient: [f32; 4],         // RGB + intensity
-    pub time_of_day: [f32; 4],     // hours (0-24) + unused
+    pub ambient: [f32; 4],         // unused + sky-ambient strength (w)
+    pub params: [f32; 4],          // hours (0-24), debug view, unused
+    pub sky_zenith: [f32; 4],      // RGB + unused; filled by the renderer
+    pub sky_horizon: [f32; 4],     // RGB + unused; filled by the renderer
+    pub sky_ground: [f32; 4],      // RGB + unused; filled by the renderer
 }
 ```
 
-### CameraGpu (80 bytes)
+### 5.3 CameraGpu (80 bytes)
 ```rust
 pub struct CameraGpu {
     pub view_proj: [[f32; 4]; 4],  // 4×4 view-projection matrix
@@ -182,19 +170,20 @@ pub struct CameraGpu {
 }
 ```
 
-## Skybox System
+## 6 Skybox System
 
 Dynamic skybox with time-of-day color transitions.
 
 **Sky Color Periods:**
-- **Night** (0-5h, 21-24h): Dark blue atmosphere
-- **Dawn** (5-7h): Orange/pink sunrise gradient
-- **Day** (7-17h): Bright blue sky
-- **Dusk** (17-21h): Red/orange sunset gradient
+- **Night** (0-5h, 22-24h): Dark blue atmosphere
+- **Dawn** (5-7h night to dawn, 7-8h dawn to day): Orange/pink sunrise gradient
+- **Day** (8-17h): Bright blue sky
+- **Dusk** (17-21h day to dusk, 21-22h dusk to night): Red/orange sunset gradient
 
-Transitions use smoothstep for natural blending between periods.
+Transitions use smoothstep. The palette is computed on the CPU (`src/sky.rs`) and shared
+with the main shader's sky ambient through `LightingGpu`.
 
-## Scene Serialization
+## 7 Scene Serialization
 
 Save and load complete scene state:
 
@@ -212,34 +201,34 @@ let scene = Scene::load_from_file("scene.bin")?;
 
 Scene data includes materials, mesh references, and instance transforms.
 
-## Performance Characteristics
+## 8 Performance Characteristics
 
 - **Instance Rendering**: 10,000+ instances at 60 FPS
 - **Shadow Map Generation**: 4 cascades in ~2-3ms
 - **Material Switches**: Minimal overhead (single buffer)
 - **Mesh Registration**: One-time CPU→GPU transfer
 
-## Backend Support
+## 9 Backend Support
 
 Currently supports:
 - **wgpu** (default) - Vulkan, Metal, DirectX 12, WebGPU
 
 Enable with cargo feature: `backend-wgpu` (enabled by default)
 
-## Logging
+## 10 Logging
 
-The crate uses the `log` facade. Initialize a logger to see renderer output:
+The crate emits `tracing` events. Install a subscriber to see renderer output:
 
 ```rust
-env_logger::init(); // Or any log implementation
+tracing_subscriber::fmt::init(); // Or any tracing subscriber
 ```
 
 Set log level:
 ```bash
-RUST_LOG=moho_renderer=debug cargo run
+RUST_LOG=moho_renderer=debug cargo run -p flagstone
 ```
 
-## Testing
+## 11 Testing
 
 ```bash
 # Run all tests (including shader validation)
@@ -252,7 +241,7 @@ cargo test --test save_load
 cargo test --test shaders_validation
 ```
 
-## Shader Files
+## 12 Shader Files
 
 Located in `shaders/`:
 - `common.wgsl` - Shared structures (Camera, Lighting, Material)
@@ -261,7 +250,7 @@ Located in `shaders/`:
 - `skybox.wgsl` - Skybox vertex/fragment shaders
 - `shadow.wgsl` - Shadow map generation
 
-## Thread Safety
+## 13 Thread Safety
 
 - **`Renderer`**: Not `Send` or `Sync` (wgpu requires main thread)
 - **`Scene`**: `Send + Sync` (can be constructed on worker threads)
@@ -269,7 +258,7 @@ Located in `shaders/`:
 
 Always create and use the renderer on the main thread with the winit event loop.
 
-## Future Plans
+## 14 Future Plans
 
 - Deferred rendering pipeline
 - Point and spot lights

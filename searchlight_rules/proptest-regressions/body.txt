@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4b7a10b2dc5fb5e02de0b3346355b53cdadba1d8d6e744592609a93727af5762 # shrinks to max_health = 1, head_status = 1, arm_status = 1, leg_status = 1, hits = [(Head, 1)]

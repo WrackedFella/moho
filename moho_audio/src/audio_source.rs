@@ -17,7 +17,7 @@ pub struct AudioSource {
     /// Whether this sound should loop when played
     looped: bool,
 
-    /// Optional 3D position for spatial audio (future feature)
+    /// World position in metres; sound effects and voices fade with distance from the listener.
     position: Option<[f32; 3]>,
 
     /// Category this audio source belongs to
@@ -97,7 +97,7 @@ impl AudioSource {
         self
     }
 
-    /// Set 3D position for spatial audio (future feature)
+    /// Set the world position; see the field for how it affects playback.
     pub fn with_position(mut self, position: [f32; 3]) -> Self {
         self.position = Some(position);
         self
@@ -119,7 +119,7 @@ impl AudioSource {
         let path = Path::new(&self.path);
         if let Some(extension) = path.extension() {
             match extension.to_str() {
-                Some("wav") | Some("ogg") | Some("mp3") | Some("flac") => Ok(()),
+                Some("wav" | "ogg" | "mp3" | "flac") => Ok(()),
                 Some(ext) => Err(AudioError::UnsupportedFormat(ext.to_string())),
                 None => Err(AudioError::UnsupportedFormat("unknown".to_string())),
             }

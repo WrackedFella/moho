@@ -6,16 +6,8 @@
 //! - Adapter selection
 //! - Device and queue creation
 //! - Surface configuration
-//!
-//! # Example
-//! ```no_run
-//! use moho_renderer::device::DeviceSetup;
-//!
-//! // Given a winit window:
-//! // let window: &winit::window::Window = ...;
-//! // let setup = DeviceSetup::new(window)?;
-//! ```
 
+use crate::block_on::block_on;
 use std::error::Error;
 use std::fmt;
 
@@ -33,20 +25,56 @@ pub enum DeviceInitError {
 impl fmt::Display for DeviceInitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DeviceInitError::SurfaceCreation(msg) => write!(f, "Surface creation failed: {}", msg),
-            DeviceInitError::AdapterRequest(msg) => write!(f, "Adapter request failed: {}", msg),
-            DeviceInitError::DeviceCreation(msg) => write!(f, "Device creation failed: {}", msg),
+            DeviceInitError::SurfaceCreation(msg) => write!(f, "Surface creation failed: {msg}"),
+            DeviceInitError::AdapterRequest(msg) => write!(f, "Adapter request failed: {msg}"),
+            DeviceInitError::DeviceCreation(msg) => write!(f, "Device creation failed: {msg}"),
         }
     }
 }
 
 impl Error for DeviceInitError {}
 
+/// The surface present mode picked for a vsync setting, and why vsync stays on
+/// when the GPU offers no low-latency mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentChoice {
+    pub mode: wgpu::PresentMode,
+    /// Set when vsync was turned off but the GPU has no mode that skips the display wait.
+    pub fallback: Option<&'static str>,
+}
+
+/// Picks the present mode for `vsync` from the modes the surface `supported`.
+///
+/// On gives `Fifo`. Off gives `Immediate`, else `Mailbox`, else `Fifo` with a fallback reason.
+pub fn choose_present_mode(vsync: bool, supported: &[wgpu::PresentMode]) -> PresentChoice {
+    use wgpu::PresentMode::{Fifo, Immediate, Mailbox};
+
+    if vsync {
+        return PresentChoice {
+            mode: Fifo,
+            fallback: None,
+        };
+    }
+    match [Immediate, Mailbox]
+        .into_iter()
+        .find(|mode| supported.contains(mode))
+    {
+        Some(mode) => PresentChoice {
+            mode,
+            fallback: None,
+        },
+        None => PresentChoice {
+            mode: Fifo,
+            fallback: Some("the GPU offers neither Immediate nor Mailbox presentation"),
+        },
+    }
+}
+
 /// Complete device setup including instance, surface, adapter, device, queue, and config
 pub struct DeviceSetup<'a> {
     pub(crate) _instance: wgpu::Instance,
     pub(crate) surface: wgpu::Surface<'a>,
-    pub(crate) _adapter: wgpu::Adapter,
+    pub(crate) present_modes: Vec<wgpu::PresentMode>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
@@ -68,17 +96,8 @@ impl<'a> DeviceSetup<'a> {
     /// # Returns
     /// * `Ok(DeviceSetup)` - Complete device setup ready for rendering
     /// * `Err(DeviceInitError)` - If any initialization step fails
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use moho_renderer::device::DeviceSetup;
-    /// # let window: &winit::window::Window = todo!();
-    /// let setup = DeviceSetup::new(window)?;
-    /// // Use setup.device, setup.queue, setup.surface, setup.config
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(window: &'a winit::window::Window) -> Result<Self, DeviceInitError> {
-        log::info!("Initializing wgpu device");
+        tracing::info!("Initializing wgpu device");
 
         let size = window.inner_size();
 
@@ -92,20 +111,25 @@ impl<'a> DeviceSetup<'a> {
         // 2. Create Surface
         let surface = instance
             .create_surface(window)
-            .map_err(|e| DeviceInitError::SurfaceCreation(format!("{:?}", e)))?;
+            .map_err(|e| DeviceInitError::SurfaceCreation(format!("{e:?}")))?;
 
         // 3. Request Adapter
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
-        .map_err(|e| DeviceInitError::AdapterRequest(format!("{:?}", e)))?;
+        .map_err(|e| DeviceInitError::AdapterRequest(format!("{e:?}")))?;
 
         // 4. Prepare device features and limits
         let experimental = {
             #[cfg(feature = "wgpu-experimental")]
+            #[allow(unsafe_code)]
             {
+                // SAFETY: experimental wgpu features may be unsound or unimplemented on
+                // some backends. Building with `wgpu-experimental` is the explicit opt-in
+                // to that risk; default builds take the `disabled()` branch.
                 unsafe { wgpu::ExperimentalFeatures::enabled() }
             }
             #[cfg(not(feature = "wgpu-experimental"))]
@@ -125,18 +149,19 @@ impl<'a> DeviceSetup<'a> {
         }
 
         // 5. Request Device and Queue
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: None,
             required_features,
             required_limits: limits,
-            memory_hints: Default::default(),
-            trace: Default::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            trace: wgpu::Trace::default(),
             experimental_features: experimental,
         }))
-        .map_err(|e| DeviceInitError::DeviceCreation(format!("{:?}", e)))?;
+        .map_err(|e| DeviceInitError::DeviceCreation(format!("{e:?}")))?;
 
         // 6. Configure Surface
-        let supported_formats = surface.get_capabilities(&adapter).formats;
+        let capabilities = surface.get_capabilities(&adapter);
+        let supported_formats = capabilities.formats;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: supported_formats[0],
@@ -146,61 +171,84 @@ impl<'a> DeviceSetup<'a> {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 0,
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
 
-        log::info!(
-            "wgpu device initialized: format={:?}, size={}x{}",
-            config.format,
-            config.width,
-            config.height
+        tracing::info!(
+            format = ?config.format,
+            width = config.width,
+            height = config.height,
+            "wgpu device initialized"
         );
 
         Ok(DeviceSetup {
             _instance: instance,
             surface,
-            _adapter: adapter,
+            present_modes: capabilities.present_modes,
             device,
             queue,
             config,
         })
-    }
-
-    /// Get the surface format
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.config.format
-    }
-
-    /// Get the surface size as (width, height)
-    pub fn surface_size(&self) -> (u32, u32) {
-        (self.config.width, self.config.height)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wgpu::PresentMode;
+
+    const ALL: [PresentMode; 4] = [
+        PresentMode::Fifo,
+        PresentMode::FifoRelaxed,
+        PresentMode::Mailbox,
+        PresentMode::Immediate,
+    ];
 
     #[test]
-    fn test_device_init_error_display() {
-        let surface_err = DeviceInitError::SurfaceCreation("test error".to_string());
-        assert_eq!(
-            surface_err.to_string(),
-            "Surface creation failed: test error"
-        );
+    fn vsync_on_chooses_fifo() {
+        let choice = choose_present_mode(true, &ALL);
 
-        let adapter_err = DeviceInitError::AdapterRequest("no adapter".to_string());
-        assert_eq!(
-            adapter_err.to_string(),
-            "Adapter request failed: no adapter"
-        );
-
-        let device_err = DeviceInitError::DeviceCreation("device failed".to_string());
-        assert_eq!(
-            device_err.to_string(),
-            "Device creation failed: device failed"
-        );
+        assert_eq!(choice.mode, PresentMode::Fifo);
+        assert_eq!(choice.fallback, None);
     }
 
-    // Note: Actual device creation tests require GPU hardware.
+    #[test]
+    fn vsync_off_prefers_immediate_then_mailbox() {
+        let with_immediate = choose_present_mode(false, &ALL);
+        let mailbox_only = choose_present_mode(false, &[PresentMode::Fifo, PresentMode::Mailbox]);
+
+        assert_eq!(with_immediate.mode, PresentMode::Immediate);
+        assert_eq!(with_immediate.fallback, None);
+        assert_eq!(mailbox_only.mode, PresentMode::Mailbox);
+        assert_eq!(mailbox_only.fallback, None);
+    }
+
+    #[test]
+    fn vsync_off_without_immediate_or_mailbox_keeps_fifo_with_a_reason() {
+        let choice = choose_present_mode(false, &[PresentMode::Fifo, PresentMode::FifoRelaxed]);
+
+        assert_eq!(choice.mode, PresentMode::Fifo);
+        assert!(choice.fallback.is_some_and(|reason| !reason.is_empty()));
+    }
+
+    #[test]
+    fn vsync_off_never_picks_fifo_relaxed() {
+        let choice = choose_present_mode(false, &[PresentMode::FifoRelaxed, PresentMode::Fifo]);
+
+        assert_eq!(choice.mode, PresentMode::Fifo);
+    }
+
+    #[test]
+    fn vsync_on_ignores_low_latency_modes_and_gives_no_reason() {
+        let choice = choose_present_mode(true, &[PresentMode::Immediate, PresentMode::Fifo]);
+
+        assert_eq!(
+            choice,
+            PresentChoice {
+                mode: PresentMode::Fifo,
+                fallback: None
+            }
+        );
+    }
 }

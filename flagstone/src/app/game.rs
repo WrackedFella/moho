@@ -1,0 +1,5727 @@
+//! The strategy game as a [`moho_app::Game`].
+
+use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
+use crate::app::input_state::Designation;
+use crate::app::view_level;
+use crate::game_state::GameState;
+use crate::{App, RenderRequest};
+use flagstone_game::actors::Cube;
+use flagstone_game::colony::MarkChange;
+use flagstone_game::controller::{
+    CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
+};
+use flagstone_game::raycast::{SurfaceHit, raycast_surface_below};
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, pawn_aabb, pick_pawn};
+use flagstone_ui::actions::StrategyAction;
+use flagstone_ui::console_commands::StrategyConsoleCommand;
+use flagstone_voxel::VoxelGrid;
+use moho_core::pointer::{Ray, screen_ray};
+use moho_input::action_map;
+use moho_input::bindings::Input;
+use moho_render_api::{Marker, MarkerId, MarkerStyle};
+use moho_ui_shell::host::input_of;
+use moho_ui_shell::{EngineCommand, Routing};
+use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::keyboard::{KeyCode, PhysicalKey};
+
+/// The marker id reserved for the selection outline; per-frame sync means it wins over a
+/// console marker with the same id.
+const SELECTION_MARKER_ID: MarkerId = MarkerId(u64::MAX);
+
+const SELECTION_MARK_COLOUR: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
+
+/// The placeholder body drawn for the pawn in the strategy view.
+const PAWN_BODY_MATERIAL: flagstone_voxel::MaterialType =
+    flagstone_voxel::MaterialType::Lambertian {
+        albedo: glam::Vec3::new(0.2, 0.5, 0.9),
+    };
+
+/// How far a pointer ray reaches into the world, in metres.
+pub const POINTER_RAY_RANGE: f32 = 256.0;
+
+const MARK_VOLUME: f32 = 0.6;
+
+/// One tick's worth of player input.
+#[derive(Clone, Debug, Default)]
+pub struct StrategyCommand {
+    pub input: ControllerInput,
+    pub jump: bool,
+    /// Switch between the strategy view and first person.
+    pub toggle_view: bool,
+    /// The pawn that was selected when the command was sampled: the one `toggle_view`
+    /// possesses from the strategy view.
+    pub possess: Option<flagstone_game::pawn::PawnId>,
+    /// The world ray under the pointer when `Select` was pressed in the strategy view.
+    ///
+    /// A ray rather than a pixel, so the command replays without a window.
+    pub select: Option<Ray>,
+    /// The world ray under the pointer when the same press ordered a mining mark, in place of
+    /// `select`, because the mining designation was active.
+    pub mark: Option<Ray>,
+    /// The view-height ceiling the click was made under: the pick treats blocks at or above
+    /// it as air. Travels in the command so a replayed click marks what the player saw.
+    pub ceiling: Option<i32>,
+    /// Strategy console commands typed since the last tick.
+    pub console: Vec<StrategyConsoleCommand>,
+    /// Engine console commands typed since the last tick.
+    pub engine: Vec<EngineCommand>,
+}
+
+/// How far a pointer ray reaches, measured from its origin.
+///
+/// Under a ceiling the reach counts from where the ray gets down to the cut plane, because
+/// the camera follows the uncut ground and the kept ground can lie far below it. The extra
+/// reach is capped at `POINTER_RAY_RANGE`, so a near-horizontal ray cannot make the walk
+/// cross millions of empty cells. The cap covers the world's tallest cut: terrain reaches
+/// 144 blocks and the strategy camera's rays descend 1 in √3, so at most about 250 units.
+fn pointer_range(ray: Ray, ceiling: Option<i32>) -> f32 {
+    let descent = ceiling
+        .filter(|&ceiling| ray.direction.y < 0.0 && ray.origin.y > ceiling as f32)
+        .map_or(0.0, |ceiling| {
+            (ray.origin.y - ceiling as f32) / -ray.direction.y
+        });
+    POINTER_RAY_RANGE + descent.min(POINTER_RAY_RANGE)
+}
+
+fn pick_surface(grid: &VoxelGrid, ray: Ray, ceiling: Option<i32>) -> Option<SurfaceHit> {
+    raycast_surface_below(
+        grid,
+        ray.origin,
+        ray.direction,
+        pointer_range(ray, ceiling),
+        ceiling,
+    )
+}
+
+/// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
+///
+/// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
+fn look_to_turn((look_x, look_y): (f32, f32)) -> (f32, f32) {
+    (-look_x, -look_y)
+}
+
+impl App {
+    /// Sums the held bindings into the movement and look input for one tick.
+    fn sample_command(&mut self) -> StrategyCommand {
+        let frame = self.input.actions.end_tick();
+        let is_active = |action: StrategyAction| frame.held(action);
+        let axis = |positive: StrategyAction, negative: StrategyAction| -> f32 {
+            f32::from(u8::from(is_active(positive))) - f32::from(u8::from(is_active(negative)))
+        };
+
+        let edge_pan = if self.simulation.camera_mode() == CameraMode::Isometric
+            && self.game_state == GameState::Playing
+            && self.input.focused
+        {
+            edge_pan_axes(frame.pointer(), self.viewport, EDGE_PAN_MARGIN_PX)
+        } else {
+            glam::Vec2::ZERO
+        };
+        let forward = (axis(StrategyAction::MoveForward, StrategyAction::MoveBack) + edge_pan.y)
+            .clamp(-1.0, 1.0);
+        let right = (axis(StrategyAction::MoveRight, StrategyAction::MoveLeft) + edge_pan.x)
+            .clamp(-1.0, 1.0);
+        // No up/down in isometric mode
+        let up = if self.simulation.camera_mode() == CameraMode::FirstPerson {
+            axis(StrategyAction::Ascend, StrategyAction::Descend)
+        } else {
+            0.0
+        };
+        let sprint = is_active(StrategyAction::Sprint);
+        // A tap shorter than one tick still jumps.
+        let jump = is_active(StrategyAction::Jump) || frame.pressed(StrategyAction::Jump);
+
+        let (yaw_delta, pitch_delta) = look_to_turn(frame.look());
+
+        if frame.pressed(StrategyAction::MineDesignation) {
+            self.input.designation.toggle();
+        }
+
+        // The camera the player saw: the one drawn, not the one this tick will move.
+        let click_ray = (self.simulation.camera_mode() == CameraMode::Isometric
+            && frame.pressed(StrategyAction::Select))
+        .then(|| frame.press_pointer())
+        .flatten()
+        .and_then(|(x, y)| {
+            screen_ray(
+                self.camera.0,
+                self.camera.1,
+                self.viewport,
+                glam::Vec2::new(x, y),
+            )
+        });
+        let (select, mark) = match self.input.designation {
+            Designation::None => (click_ray, None),
+            Designation::Mine => (None, click_ray),
+        };
+
+        StrategyCommand {
+            input: ControllerInput {
+                forward,
+                right,
+                up,
+                yaw_delta,
+                pitch_delta,
+                sprint,
+                // Zoom is handled separately via mouse wheel input
+                zoom_delta: 0.0,
+            },
+            jump,
+            toggle_view: frame.pressed(StrategyAction::Possess),
+            possess: self.selection.selected(),
+            select,
+            mark,
+            // Only a click reads the ceiling; sampling it walks every loaded chunk.
+            ceiling: (select.is_some() || mark.is_some())
+                .then(|| self.view_ceiling())
+                .flatten(),
+            console: Vec::new(),
+            engine: Vec::new(),
+        }
+    }
+
+    /// The live view ceiling; `None` without a world or without a cut in the strategy view.
+    fn view_ceiling(&self) -> Option<i32> {
+        let extent = view_level::layer_extent(self)?;
+        self.view_level
+            .ceiling(self.simulation.camera_mode(), extent)
+    }
+
+    /// Where one key or mouse button press or release goes. The console sees it before egui or
+    /// the action map; `Opened` and `Closed` also enter and leave `GameState::ConsoleOpen`.
+    /// Outside `Playing` and `ConsoleOpen` the console is skipped and the input is the game's.
+    /// Takes an `Input` so it is testable without a winit `KeyEvent`.
+    fn route_console_input(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
+        if !matches!(self.game_state, GameState::Playing | GameState::ConsoleOpen) {
+            return Routing::Game;
+        }
+        let Some(ui_adapter) = &self.ui_adapter else {
+            return Routing::Game;
+        };
+        let routing = match ui_adapter.lock() {
+            Ok(mut adapter) => adapter.on_key(input, pressed, repeat),
+            Err(error) => {
+                tracing::warn!(%error, "UI adapter lock poisoned; console input skipped");
+                return Routing::Game;
+            }
+        };
+        // The adapter lock is released: the transitions lock it again.
+        match routing {
+            Routing::Opened => self.enter_console(),
+            Routing::Closed => self.exit_console(),
+            Routing::Console | Routing::Game | Routing::Menu => {}
+        }
+        routing
+    }
+
+    /// Takes the commands the console has queued: strategy's, then the engine's.
+    fn take_console_commands(&mut self) -> (Vec<StrategyConsoleCommand>, Vec<EngineCommand>) {
+        let Some(ui_adapter) = &self.ui_adapter else {
+            return (Vec::new(), Vec::new());
+        };
+        match ui_adapter.lock() {
+            Ok(mut adapter) => (
+                adapter.take_console_commands(),
+                adapter.take_engine_commands(),
+            ),
+            Err(error) => {
+                tracing::warn!(%error, "UI adapter lock poisoned; console commands dropped");
+                (Vec::new(), Vec::new())
+            }
+        }
+    }
+
+    /// Feeds pad events to the action map while playing with focus. Otherwise the
+    /// events are discarded unapplied, so no press edge waits for resume, and pad
+    /// actions are released.
+    fn poll_gamepads(&mut self) {
+        let live = self.game_state == GameState::Playing && self.input.focused;
+        if let Some(gamepads) = self.input.gamepads.as_mut() {
+            if live {
+                gamepads.poll(&mut self.input.actions);
+            } else {
+                gamepads.discard();
+            }
+        }
+        if !live {
+            self.input.actions.pad_disconnected();
+        }
+    }
+
+    fn apply_command(&mut self, command: &StrategyCommand) {
+        *self.simulation.controller_input_mut() = command.input;
+        self.physics.jump_pressed = command.jump;
+        if command.toggle_view {
+            self.toggle_camera_mode(command.possess);
+            self.apply_cursor();
+        }
+        if let Some(ray) = command.select
+            && let Some(light_system) = &self.light_system
+        {
+            self.pointer_hit = pick_surface(light_system.grid(), ray, command.ceiling);
+            tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
+            let boxes = self
+                .pawn_centres()
+                .into_iter()
+                .map(|(id, centre)| (id, pawn_aabb(centre)));
+            let picked = pick_pawn(ray, boxes, self.pointer_hit.map(|hit| hit.distance));
+            self.selection.click(picked);
+            if picked.is_some() {
+                self.event_bus
+                    .publish(moho_core::events::AudioEvent::ButtonClick);
+            }
+        }
+        if let Some(ray) = command.mark {
+            self.apply_mark(ray, command.ceiling);
+        }
+    }
+
+    /// Outlines the selected pawn in the strategy view; removes the mark otherwise. Run every
+    /// frame so the mark follows the pawn and survives a console marker clear.
+    fn sync_selection_mark(&mut self) {
+        let strategy = self.simulation.camera_mode() == CameraMode::Isometric;
+        let selected = strategy
+            .then(|| self.selection.selected())
+            .flatten()
+            .and_then(|id| self.pawn_centre(id));
+        if let Some(centre) = selected {
+            let aabb = pawn_aabb(centre);
+            self.scene.markers_mut().upsert(
+                SELECTION_MARKER_ID,
+                Marker::new(
+                    aabb.min.to_array(),
+                    aabb.max.to_array(),
+                    SELECTION_MARK_COLOUR,
+                )
+                .with_style(MarkerStyle::Outline),
+            );
+        } else {
+            self.scene.markers_mut().remove(SELECTION_MARKER_ID);
+        }
+    }
+
+    /// Toggles the mining mark on the block the ray hits and plays the cue for it; a ray that
+    /// hits nothing changes nothing. Uses no `dt`, so it can run while the simulation is paused.
+    fn apply_mark(&mut self, ray: Ray, ceiling: Option<i32>) {
+        let Some(light_system) = &self.light_system else {
+            return;
+        };
+        let Some(hit) = pick_surface(light_system.grid(), ray, ceiling) else {
+            return;
+        };
+        let pos = hit.block_pos.to_array();
+        let change = self.colony.marks.toggle(pos);
+        let clip = match change {
+            MarkChange::Marked => &self.sounds.mark,
+            MarkChange::Cancelled => &self.sounds.unmark,
+        };
+        self.event_bus
+            .publish(moho_core::events::AudioEvent::PlaySound {
+                path: clip.to_string_lossy().into_owned(),
+                volume: MARK_VOLUME,
+            });
+        tracing::debug!(?pos, ?change, "Mining mark toggled");
+    }
+
+    /// Applies what the player asked for through the HUD this frame.
+    fn apply_hud_intents(&mut self, intents: flagstone_ui::overlays::HudIntents) {
+        if intents.toggle_mine_designation {
+            self.input.designation.toggle();
+        }
+    }
+
+    fn apply_pending_render(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
+        for request in std::mem::take(&mut self.pending_render) {
+            match request {
+                RenderRequest::AddPointLight {
+                    position,
+                    color,
+                    intensity,
+                    range,
+                } => {
+                    renderer.add_point_light(position, color, intensity, range);
+                }
+                RenderRequest::ShadowQuality(quality) => {
+                    let applied = renderer.set_shadow_quality(quality);
+                    self.shadow_quality_applied(applied);
+                }
+                RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
+                RenderRequest::BloomQuality(quality) => renderer.set_bloom_quality(quality),
+                RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
+                RenderRequest::Vsync(on) => renderer.set_vsync(on),
+                RenderRequest::Brightness(brightness) => renderer.set_brightness(brightness),
+                RenderRequest::ToneMap(enabled) => renderer.set_tone_map(enabled),
+            }
+        }
+    }
+
+    fn drain_audio_events(&mut self, mut audio: Option<&mut moho_audio::AudioSystem>) {
+        while let Ok(event) = self.audio_event_rx.try_recv() {
+            if let Some(audio) = audio.as_mut()
+                && let Err(e) = audio.handle_event(event)
+            {
+                // Don't spam errors for missing audio files during development
+                tracing::debug!(error = %e, "Audio event failed");
+            }
+        }
+    }
+
+    /// The camera to draw this frame. In first person it is the simulation turned by the look
+    /// frames sampled but no tick has consumed yet: while walking, the eye blends between the
+    /// last two ticks; otherwise it is the tick camera's, since ticks keep cycling `alpha`
+    /// outside play while the player stands frozen. Isometric draws the tick camera.
+    fn render_camera(&self, alpha: f32) -> (glam::Mat4, glam::Mat4, glam::Vec3) {
+        if self.simulation.camera_mode() != CameraMode::FirstPerson {
+            return self.camera;
+        }
+        let pending = self.input.actions.pending_look();
+        let (yaw_delta, pitch_delta) = look_to_turn(pending);
+        let walking_states = self
+            .is_kcc_walking()
+            .then(|| self.physics.player_states())
+            .flatten();
+        match walking_states {
+            Some((previous, current)) => {
+                let view = moho_physics::first_person_view(
+                    &previous,
+                    &current,
+                    alpha,
+                    (yaw_delta, pitch_delta),
+                );
+                (view.view_matrix(), self.camera.1, view.eye)
+            }
+            // Nothing shown since the tick: its camera stands, which is also the initial
+            // camera before any tick.
+            None if pending == (0.0, 0.0) => self.camera,
+            None => controller_to_camera(
+                &self
+                    .simulation
+                    .player_controller
+                    .turned(yaw_delta, pitch_delta),
+            ),
+        }
+    }
+
+    /// Whether ticks move the player through the character controller: playing,
+    /// first person, collision on.
+    pub(crate) fn is_kcc_walking(&self) -> bool {
+        self.game_state == GameState::Playing
+            && self.simulation.camera_mode() == CameraMode::FirstPerson
+            && self.physics.is_kcc_active()
+    }
+
+    /// Where each pawn's body box stands, in id order. The possessed pawn stands where the
+    /// view does, which is its body once a tick has synced them; the others stand at their
+    /// bodies. A pawn without a body is not drawn or picked.
+    fn pawn_centres(&self) -> Vec<(flagstone_game::pawn::PawnId, glam::Vec3)> {
+        self.crew
+            .ids()
+            .filter_map(|id| Some((id, self.pawn_centre(id)?)))
+            .collect()
+    }
+
+    /// Where pawn `id`'s body box stands, as [`App::pawn_centres`] places it; `None` for a
+    /// pawn without a body.
+    fn pawn_centre(&self, id: flagstone_game::pawn::PawnId) -> Option<glam::Vec3> {
+        if Some(id) == self.possessed {
+            return Some(self.simulation.position());
+        }
+        let handle = *self.physics.pawns.get(&id)?;
+        Some(self.physics.world.as_ref()?.character(handle)?.position)
+    }
+
+    fn render_scene(
+        &mut self,
+        renderer: &mut dyn moho_renderer::RendererBackend,
+        camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+    ) {
+        self.sync_selection_mark();
+        let with_bodies;
+        let cubes =
+            if self.simulation.camera_mode() == CameraMode::Isometric {
+                let size = PAWN_HALF_EXTENTS * 2.0;
+                let mut all = self.entities.actors.cubes().to_vec();
+                all.extend(self.pawn_centres().into_iter().map(|(_, centre)| {
+                    Cube::new(centre, size.x, size.z, size.y, PAWN_BODY_MATERIAL)
+                }));
+                with_bodies = all;
+                with_bodies.as_slice()
+            } else {
+                self.entities.actors.cubes()
+            };
+        if let Err(e) = self.scene.render(
+            renderer,
+            self.entities.actors.spheres(),
+            cubes,
+            self.mesh_handle,
+            self.cube_mesh_handle,
+            camera,
+        ) {
+            tracing::warn!(error = %e, "Skipped frame");
+        }
+    }
+
+    fn initial_render(&mut self, ctx: &mut moho_app::InitContext<'_>) {
+        tracing::info!("Initial render");
+        self.render_scene(&mut *ctx.renderer, self.camera);
+        ctx.window.request_redraw();
+    }
+
+    /// Autosaves with the renderer's lights, queued ones included, logging a failure, and
+    /// tells the schedule how it went.
+    fn autosave(
+        &mut self,
+        clock: &moho_app::GameClock,
+        renderer: Option<&mut (dyn moho_renderer::RendererBackend + 'static)>,
+    ) {
+        let lights = renderer.map_or_else(Vec::new, |r| {
+            self.apply_pending_render(r);
+            r.all_lights_as_descs()
+        });
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => self.autosave.saved(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to auto-save");
+                self.autosave.save_failed();
+            }
+        }
+    }
+
+    fn handle_window_event(&mut self, ctx: &mut moho_app::EventContext<'_>, event: WindowEvent) {
+        // Handle Tab key BEFORE dispatcher to prevent UI from consuming it
+        if let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Tab),
+                    state: ElementState::Pressed,
+                    ..
+                },
+            ..
+        } = &event
+            && self.game_state == GameState::Playing
+        {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+            return;
+        }
+
+        if let WindowEvent::Resized(size) = &event {
+            self.viewport = glam::UVec2::new(size.width, size.height);
+        }
+
+        if let WindowEvent::Focused(focused) = event {
+            self.input.focused = focused;
+        }
+        // Focus loss must release held actions whatever the UI or game state does.
+        if matches!(event, WindowEvent::Focused(false)) {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+        }
+
+        if let Some((input, pressed, repeat)) = input_of(&event) {
+            match self.route_console_input(input, pressed, repeat) {
+                Routing::Opened | Routing::Closed => return,
+                // Only egui sees what the open console takes.
+                Routing::Console => {
+                    self.dispatcher.dispatch(&event);
+                    return;
+                }
+                Routing::Game | Routing::Menu => {}
+            }
+        }
+
+        if self.take_escape_before_ui(&event) {
+            return;
+        }
+
+        if self.dispatcher.dispatch(&event) {
+            return;
+        }
+
+        // Hotkeys run first; an event that leaves or enters play does not reach the action map.
+        let was_playing = self.game_state == GameState::Playing;
+        match &event {
+            WindowEvent::CloseRequested => {
+                self.autosave(ctx.clock(), ctx.renderer());
+                ctx.request_exit();
+            }
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => self.handle_keyboard_input(key_event),
+            _ => {}
+        }
+        if was_playing && self.game_state == GameState::Playing {
+            action_map::handle_window_event(&mut self.input.actions, &event);
+        }
+    }
+
+    /// Input stops reaching the action map outside play: held actions would stick, and a
+    /// press recorded but not yet ticked would fire on resume.
+    pub(crate) fn drop_pending_input(&mut self) {
+        self.input.actions.release_all();
+        self.input.actions.discard_edges();
+    }
+
+    /// The window is now in `mode`. The platform drops held keys' releases and the cursor
+    /// grab across a mode change, so release the keys, drop the look and grab or free the
+    /// cursor for the state. Saved prefs stay as they are.
+    fn window_mode_applied(&mut self, mode: moho_app::WindowMode) {
+        self.drop_pending_input();
+        self.input.actions.reset_look();
+        if let Some(adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = adapter.lock()
+        {
+            adapter.window_mode_changed(mode);
+        }
+        self.apply_cursor();
+    }
+
+    /// Hands the player's controls to pawn `id`: its job is suspended (the mark stays for
+    /// another pawn), its body becomes the player's, and the view takes the body's position
+    /// and yaw with the pitch level.
+    fn possess(&mut self, id: flagstone_game::pawn::PawnId) {
+        if let Some(pawn) = self.crew.get_mut(id) {
+            flagstone_game::jobs::suspend(&mut pawn.job, &mut self.colony.marks);
+        }
+        self.possessed = Some(id);
+        self.physics.possess(id);
+        let body = self
+            .physics
+            .pawns
+            .get(&id)
+            .zip(self.physics.world.as_ref())
+            .and_then(|(&handle, world)| world.character(handle));
+        if let Some(body) = body {
+            self.simulation
+                .set_position_yaw_pitch(body.position, body.yaw, 0.0);
+            self.physics.set_player_look(body.yaw, 0.0);
+        }
+    }
+
+    /// Switches the view. From the strategy view it possesses `target`, the pawn that was
+    /// selected when the command was sampled; with no such pawn in the crew the view stays and
+    /// the rejection cue plays. From first person it returns to the strategy view and `target`
+    /// is ignored.
+    fn toggle_camera_mode(&mut self, target: Option<flagstone_game::pawn::PawnId>) {
+        // Placeholder cues until the mode switch has its own clips.
+        use moho_core::events::AudioEvent;
+        match self.simulation.camera_mode() {
+            CameraMode::FirstPerson => {
+                self.event_bus.publish(AudioEvent::Cancel);
+                self.possessed = None;
+                // Switch to RTS first so look_at runs in Isometric mode,
+                // setting rts_look_target without touching FPS yaw/pitch.
+                self.simulation.set_camera_mode(CameraMode::Isometric);
+                self.simulation.look_at(self.simulation.position());
+            }
+            CameraMode::Isometric => {
+                let Some(id) = target.filter(|&id| self.crew.get(id).is_some()) else {
+                    self.event_bus.publish(AudioEvent::Cancel);
+                    return;
+                };
+                self.event_bus.publish(AudioEvent::Confirm);
+                self.possess(id);
+                self.simulation.set_camera_mode(CameraMode::FirstPerson);
+            }
+        }
+        tracing::info!(
+            mode = ?self.simulation.camera_mode(),
+            "Switched to camera mode"
+        );
+    }
+}
+
+impl moho_app::Game for App {
+    type Command = StrategyCommand;
+
+    fn command(&mut self) -> StrategyCommand {
+        // Before the `Playing` check: the console is open only outside `Playing`.
+        let (console, engine) = self.take_console_commands();
+        let mut command = if self.game_state == GameState::Playing {
+            self.sample_command()
+        } else {
+            StrategyCommand::default()
+        };
+        command.console = console;
+        command.engine = engine;
+        command
+    }
+
+    fn tick(&mut self, ctx: &mut moho_app::TickContext<'_>, command: &StrategyCommand) {
+        let dt = ctx.tick_length.as_secs_f32();
+        // The world's time runs only while playing.
+        ctx.clock
+            .set_time_scale(f32::from(self.game_state == GameState::Playing));
+        if self.game_state == GameState::Playing {
+            self.autosave.tick();
+            // Every pawn's feed runs, so a popup does not outlive its time while its pawn
+            // is not the one the player is in.
+            for (_, pawn) in self.crew.iter_mut() {
+                pawn.pickups.tick();
+            }
+        }
+        let frame_processor = FrameProcessor::new();
+        let event_processor = EventProcessor::new();
+
+        let frame_number = frame_processor.publish_frame_start(self, dt);
+        if self.game_state == GameState::Playing {
+            self.apply_command(command);
+        }
+        for console_command in &command.console {
+            crate::app::console::apply_console_command(self, console_command);
+        }
+        for engine_command in &command.engine {
+            crate::app::console::apply_engine_command(self, engine_command);
+        }
+        frame_processor.update_game_state(self, dt);
+        frame_processor.update_chunk_streaming(self);
+        // Light propagation runs after game state
+        frame_processor.update_light_system(self);
+        frame_processor.publish_frame_end(self, frame_number);
+
+        event_processor.process_ui_events(self, ctx.clock);
+        event_processor.process_graphics_events(self, ctx.clock);
+        event_processor.process_world_events(self);
+        event_processor.process_input_events(self);
+        event_processor.process_debug_events(self);
+
+        event_processor.check_generation_cancel(self);
+
+        GenerationProcessor::new().poll_generation(self);
+    }
+
+    fn init(&mut self, ctx: &mut moho_app::InitContext<'_>) {
+        let size = ctx.window.inner_size();
+        self.viewport = glam::UVec2::new(size.width, size.height);
+        crate::app::renderer_setup::init_renderer_and_ui(self, ctx.window, &mut *ctx.renderer);
+        crate::app::renderer_setup::apply_video_settings(&self.prefs, ctx.window);
+        ctx.renderer.set_vsync(self.prefs.vsync());
+        self.set_pending_frame_cap(self.prefs.frame_cap());
+        self.initial_render(ctx);
+    }
+
+    fn event(&mut self, ctx: &mut moho_app::EventContext<'_>, event: moho_app::Event) {
+        match event {
+            moho_app::Event::Window(event) => self.handle_window_event(ctx, event),
+            moho_app::Event::Device(event) => self.handle_device_input(&event),
+        }
+    }
+
+    fn window_mode_changed(
+        &mut self,
+        _ctx: &mut moho_app::EventContext<'_>,
+        mode: moho_app::WindowMode,
+    ) {
+        self.window_mode_applied(mode);
+    }
+
+    fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, alpha: f32) {
+        let frame_processor = FrameProcessor::new();
+
+        let requested = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_requested_window_mode());
+        if let Some(mode) = requested {
+            ctx.set_window_mode(mode);
+            self.window_mode_applied(mode);
+        }
+        let size = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_requested_window_size());
+        if let Some((width, height)) = size {
+            ctx.set_window_size(width, height);
+        }
+
+        if std::mem::take(&mut self.frame_cap_changed) {
+            ctx.set_frame_cap(self.pending_frame_cap);
+        }
+        self.poll_gamepads();
+        if self.game_state == GameState::Playing
+            && self.input.focused
+            && self.simulation.camera_mode() == CameraMode::FirstPerson
+        {
+            self.input.actions.sample_frame(ctx.frame_dt);
+        }
+        let intents = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .map(|mut adapter| adapter.take_hud_intents())
+            .unwrap_or_default();
+        crate::app::view_level::update(self, intents.view_level);
+        self.apply_hud_intents(intents);
+        if let Some(renderer) = ctx.renderer() {
+            self.apply_pending_render(renderer);
+        }
+        let camera = self.render_camera(alpha);
+        if let Some(audio) = ctx.audio() {
+            if let Some(settings) = self.pending_audio_settings.take() {
+                audio.set_settings(settings);
+            }
+            audio.set_listener(moho_audio::Listener::from_view(camera.0));
+        }
+        self.drain_audio_events(ctx.audio());
+
+        if self.exit_requested {
+            self.exit_requested = false;
+            self.autosave(ctx.clock(), ctx.renderer());
+            ctx.request_exit();
+            return;
+        }
+
+        if self.main_menu_requested {
+            self.main_menu_requested = false;
+            self.autosave(ctx.clock(), ctx.renderer());
+            self.show_menu();
+        }
+
+        if self.autosave.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
+        }
+
+        let clock = ctx.clock();
+        frame_processor.update_hud_data(self, clock, ctx.tick_length);
+        frame_processor.update_cut_caps(self);
+        let ceiling = self.view_ceiling();
+        self.designation_markers
+            .sync(&self.colony.marks, ceiling, self.scene.markers_mut());
+        if let Some(renderer) = ctx.renderer() {
+            frame_processor.update_lighting(self, clock, &mut *renderer);
+            self.render_scene(renderer, camera);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game_state::GameState;
+    use flagstone_game::TICK_HZ;
+    use flagstone_ui::actions::StrategyAction;
+    use moho_app::{Game, GameClock, HeadlessLoop, LoopConfig, TickContext};
+    use moho_input::bindings::Input;
+    use moho_physics::HitTag;
+
+    fn playing_app() -> App {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.0);
+        app
+    }
+
+    #[test]
+    fn app_starts_with_audio_settings_from_saved_prefs() {
+        let mut prefs = moho_core::prefs::Prefs::default();
+        *prefs.sound_effect_volume_mut() = 5.0;
+
+        let app = App::from_config(
+            crate::app::config::AppConfig::builder()
+                .prefs(prefs)
+                .build(),
+            crate::app::sounds::Sounds::in_checkout(),
+        );
+
+        let settings = app
+            .pending_audio_settings
+            .as_ref()
+            .expect("startup queues audio settings from prefs");
+        let volume = settings.effective_volume(&moho_audio::AudioCategory::SoundEffect);
+        assert!((volume - 0.5).abs() < 1e-6, "volume={volume}");
+    }
+
+    fn hold(app: &mut App, action: StrategyAction) {
+        let key = default_key(app, action);
+        app.input.actions.key(key, true);
+    }
+
+    fn default_key(app: &App, action: StrategyAction) -> moho_input::key::Key {
+        app.input
+            .actions
+            .bindings()
+            .get(action)
+            .iter()
+            .find_map(|binding| match binding.input {
+                Input::Key(key) => Some(key),
+                Input::Mouse(_) | Input::Pad(_) => None,
+            })
+            .expect("the action has a default key binding")
+    }
+
+    fn tick_app(app: &mut App, command: &StrategyCommand) {
+        let mut clock = GameClock::default();
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: tick(),
+            clock: &mut clock,
+        };
+        Game::tick(app, &mut ctx, command);
+    }
+
+    #[test]
+    fn held_forward_binding_is_in_the_tick_command_and_moves_player() {
+        let mut app = playing_app();
+        hold(&mut app, StrategyAction::MoveForward);
+        let (yaw, _) = app.simulation.yaw_pitch();
+        let expected_dir = glam::Vec3::new(yaw.sin(), 0.0, yaw.cos());
+        let before = app.simulation.position();
+        let speed = app.simulation.player_controller.speed;
+        let ctx_dt = tick().as_secs_f32();
+
+        let cmd = Game::command(&mut app);
+        tick_app(&mut app, &cmd);
+
+        let moved = app.simulation.position() - before;
+        assert_eq!(cmd.input.forward, 1.0);
+        assert!(
+            moved.dot(expected_dir) > 0.9 * speed * ctx_dt,
+            "player should advance along its facing, moved {moved:?}"
+        );
+        assert!(
+            moved.normalize_or_zero().dot(expected_dir) > 0.99,
+            "movement should follow the facing, moved {moved:?}"
+        );
+    }
+
+    #[test]
+    fn tick_without_held_keys_does_not_move_player() {
+        let mut app = playing_app();
+        let before = app.simulation.position();
+
+        let cmd = Game::command(&mut app);
+        tick_app(&mut app, &cmd);
+
+        assert_eq!(cmd.input.forward, 0.0);
+        assert!(!cmd.jump);
+        assert!(
+            (app.simulation.position() - before).length() < 1e-6,
+            "no input, no movement"
+        );
+    }
+
+    #[test]
+    fn held_jump_binding_sets_the_command_jump_flag() {
+        let mut app = playing_app();
+        hold(&mut app, StrategyAction::Jump);
+
+        let cmd = Game::command(&mut app);
+
+        assert!(cmd.jump);
+        assert_eq!(cmd.input.forward, 0.0);
+    }
+
+    #[test]
+    fn jump_tapped_within_one_tick_sets_the_command_jump_flag() {
+        let mut app = playing_app();
+        let key = default_key(&app, StrategyAction::Jump);
+        app.input.actions.key(key, true);
+        app.input.actions.key(key, false);
+
+        let cmd = Game::command(&mut app);
+
+        assert!(cmd.jump);
+    }
+
+    #[test]
+    fn command_outside_playing_is_the_default_command() {
+        let mut app = playing_app();
+        app.game_state = GameState::Menu;
+        hold(&mut app, StrategyAction::MoveForward);
+        hold(&mut app, StrategyAction::Jump);
+
+        let cmd = Game::command(&mut app);
+
+        assert_eq!(cmd.input.forward, 0.0);
+        assert!(!cmd.jump);
+    }
+
+    use std::time::Duration;
+
+    const TICKS: u32 = 120;
+
+    fn floor() -> moho_render_api::WorldMesh {
+        moho_render_api::WorldMesh::new(
+            vec![
+                [-50.0, 0.0, -50.0],
+                [50.0, 0.0, -50.0],
+                [-50.0, 0.0, 50.0],
+                [50.0, 0.0, 50.0],
+            ],
+            vec![[0.0, 1.0, 0.0]; 4],
+            vec![1.0; 4],
+            vec![[0.0; 3]; 4],
+            vec![1.0; 4],
+            vec![0; 4],
+            vec![0, 2, 1, 1, 2, 3],
+        )
+        .expect("valid floor mesh")
+    }
+
+    /// A first-person player standing on a floor, facing +Z, holding forward and jump.
+    fn walking_app() -> App {
+        let mut app = standing_app();
+        hold(&mut app, StrategyAction::MoveForward);
+        hold(&mut app, StrategyAction::Jump);
+        app
+    }
+
+    /// A first-person player on a floor, facing +Z, holding nothing.
+    fn standing_app() -> App {
+        let mut app = playing_app();
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(0.0, 1.2, 0.0), 0.0, 0.0);
+        app.physics
+            .world
+            .as_mut()
+            .expect("physics world")
+            .set_world_mesh(moho_render_api::WorldMeshId(1), &floor(), HitTag(0));
+        app.physics.spawn_player(glam::Vec3::new(0.0, 1.2, 0.0));
+        app
+    }
+
+    /// Position after `TICKS` ticks delivered in frames of `1 / fps` s, and the highest point reached.
+    fn drive_at(fps: u64) -> (glam::Vec3, f32) {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        // Rounded up so the integer accumulator never lands one tick short.
+        let frame = Duration::from_nanos(1_000_000_000u64.div_ceil(fps));
+        let mut ticks = 0;
+        let mut highest = f32::MIN;
+
+        while ticks < TICKS {
+            ticks += sim.advance(&mut app, frame);
+            highest = highest.max(app.simulation.position().y);
+        }
+
+        assert_eq!(ticks, TICKS, "frames deliver exactly the requested ticks");
+        (app.simulation.position(), highest)
+    }
+
+    #[test]
+    fn walking_and_jumping_end_at_the_same_position_at_30_60_and_144_fps() {
+        let (at_60, highest) = drive_at(60);
+
+        let (at_30, _) = drive_at(30);
+        let (at_144, _) = drive_at(144);
+
+        assert!(at_60.z > 2.0, "the player walked forward: {at_60:?}");
+        assert!(highest > 1.5, "the player jumped: highest {highest}");
+        assert!(
+            at_30.distance(at_60) < 1e-4,
+            "30 fps {at_30:?} vs 60 fps {at_60:?}"
+        );
+        assert!(
+            at_144.distance(at_60) < 1e-4,
+            "144 fps {at_144:?} vs 60 fps {at_60:?}"
+        );
+    }
+
+    use moho_app::{EventContext, FrameContext};
+    use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu, RendererBackend};
+
+    /// Records the renderer calls the game makes; everything else is a no-op.
+    #[derive(Default)]
+    struct FakeRenderer {
+        lights: Vec<(glam::Vec3, glam::Vec3, f32, f32)>,
+        shadow_qualities: Vec<u8>,
+        /// Highest shadow level the fake GPU can allocate; `None` allows every level.
+        shadow_cap: Option<u8>,
+        ssao_qualities: Vec<u8>,
+        view_heights: Vec<Option<f32>>,
+        vsyncs: Vec<bool>,
+        brightnesses: Vec<f32>,
+        tone_maps: Vec<bool>,
+        lightings: Vec<LightingGpu>,
+        frames_begun: u32,
+        cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
+        /// Every instance enqueued through `enqueue_draw`, in order.
+        drawn: Vec<InstanceGpu>,
+    }
+
+    impl RendererBackend for FakeRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), FrameError> {
+            self.frames_begun += 1;
+            self.cameras.push(camera);
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, instances: &[InstanceGpu]) {
+            self.drawn.extend_from_slice(instances);
+        }
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, lighting: LightingGpu) {
+            self.lightings.push(lighting);
+        }
+        fn add_point_light(
+            &mut self,
+            position: glam::Vec3,
+            color: glam::Vec3,
+            intensity: f32,
+            range: f32,
+        ) -> u32 {
+            self.lights.push((position, color, intensity, range));
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            self.shadow_qualities.push(quality);
+            self.shadow_cap.map_or(quality, |cap| quality.min(cap))
+        }
+        fn set_ssao_quality(&mut self, quality: u8) {
+            self.ssao_qualities.push(quality);
+        }
+        fn set_view_height(&mut self, height: Option<f32>) {
+            self.view_heights.push(height);
+        }
+        fn set_vsync(&mut self, on: bool) {
+            self.vsyncs.push(on);
+        }
+        fn set_brightness(&mut self, brightness: f32) {
+            self.brightnesses.push(brightness);
+        }
+        fn set_tone_map(&mut self, enabled: bool) {
+            self.tone_maps.push(enabled);
+        }
+    }
+
+    fn tick() -> std::time::Duration {
+        LoopConfig::new(TICK_HZ).tick_length()
+    }
+
+    /// An app with a loaded world whose autosaves land in a fresh temp dir, which must
+    /// outlive it.
+    fn app_with_saves_dir() -> (App, tempfile::TempDir) {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut app = playing_app();
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        app.saves_dir = temp.path().join("saves");
+        (app, temp)
+    }
+
+    fn run_frame(app: &mut App, fake: &mut FakeRenderer) -> bool {
+        run_frame_at(app, fake, GameClock::default().time_of_day())
+    }
+
+    fn run_frame_at(app: &mut App, fake: &mut FakeRenderer, hours: f32) -> bool {
+        let mut clock = GameClock::default();
+        clock.reset_to(hours);
+        let mut ctx = FrameContext::new(tick(), &clock, Some(fake), None);
+        Game::frame(app, &mut ctx, 0.5);
+        ctx.exit_requested()
+    }
+
+    fn frame_without_renderer(app: &mut App) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(tick(), &clock, None, None);
+        Game::frame(app, &mut ctx, 0.5);
+    }
+
+    fn walker_state(app: &App) -> moho_physics::CharacterState {
+        app.physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(app.physics.player.expect("player"))
+            .expect("player resolves")
+    }
+
+    /// Walks `TICKS` ticks, rendering `frames_per_tick` frames after each, and returns the final state.
+    fn walk_rendering(
+        frames_per_tick: u32,
+        fake: &mut FakeRenderer,
+    ) -> moho_physics::CharacterState {
+        let mut app = walking_app();
+        let mut clock = GameClock::default();
+        for n in 0..TICKS {
+            let command = Game::command(&mut app);
+            let mut ctx = TickContext {
+                tick: u64::from(n),
+                tick_length: tick(),
+                clock: &mut clock,
+            };
+            Game::tick(&mut app, &mut ctx, &command);
+            for f in 0..frames_per_tick {
+                let alpha = f as f32 / frames_per_tick as f32;
+                let mut ctx = FrameContext::new(tick(), &clock, Some(&mut *fake), None);
+                Game::frame(&mut app, &mut ctx, alpha);
+            }
+        }
+        walker_state(&app)
+    }
+
+    #[test]
+    fn rendering_many_frames_between_ticks_leaves_the_walk_unchanged() {
+        let mut silent = FakeRenderer::default();
+        let mut rendering = FakeRenderer::default();
+
+        let without_frames = walk_rendering(0, &mut silent);
+        let with_frames = walk_rendering(10, &mut rendering);
+
+        assert_eq!(silent.frames_begun, 0);
+        assert_eq!(rendering.frames_begun, 10 * TICKS, "frames were rendered");
+        assert!(without_frames.position.z > 2.0, "the player walked");
+        assert_eq!(with_frames, without_frames);
+    }
+
+    #[test]
+    fn walking_frame_uses_the_blended_eye() {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let before = walker_state(&app).position;
+        sim.step(&mut app, 1);
+        let after = walker_state(&app).position;
+        assert!(before.distance(after) > 1e-3, "the tick moved the player");
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        let (view, _projection, eye) = *fake.cameras.last().expect("a frame began");
+        let expected = before.lerp(after, 0.5);
+        assert!(eye.distance(expected) < 1e-4, "eye {eye:?} vs {expected:?}");
+        assert!(
+            view.transform_point3(eye).length() < 1e-4,
+            "the view matrix is centred on the eye"
+        );
+    }
+
+    /// Walks one tick, then returns the app with a renderer that has seen no frame.
+    fn app_after_a_moving_tick() -> App {
+        let mut app = walking_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let before = walker_state(&app).position;
+        sim.step(&mut app, 1);
+        let after = walker_state(&app).position;
+        assert!(before.distance(after) > 1e-3, "the tick moved the player");
+        app
+    }
+
+    #[test]
+    fn paused_frame_renders_the_tick_camera() {
+        let mut app = app_after_a_moving_tick();
+        app.game_state = GameState::Menu;
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
+    fn a_frame_before_any_tick_draws_the_initial_camera() {
+        let mut app = App::headless();
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
+    fn isometric_frame_renders_the_tick_camera() {
+        let mut app = app_after_a_moving_tick();
+        app.simulation.set_camera_mode(CameraMode::Isometric);
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    #[test]
+    fn noclip_frame_renders_the_tick_camera() {
+        let mut app = app_after_a_moving_tick();
+        app.physics.noclip = true;
+        let mut fake = FakeRenderer::default();
+
+        run_frame(&mut app, &mut fake);
+
+        assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+    }
+
+    mod command_axes {
+        use super::*;
+
+        #[test]
+        fn held_move_back_makes_forward_negative() {
+            let mut app = playing_app();
+            hold(&mut app, StrategyAction::MoveBack);
+
+            let cmd = Game::command(&mut app);
+
+            assert_eq!(cmd.input.forward, -1.0);
+        }
+
+        #[test]
+        fn held_move_forward_and_back_cancel_out() {
+            let mut app = playing_app();
+            hold(&mut app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveBack);
+
+            let cmd = Game::command(&mut app);
+
+            assert_eq!(cmd.input.forward, 0.0);
+        }
+
+        #[test]
+        fn held_left_and_right_map_to_negative_and_positive_right() {
+            let mut app = playing_app();
+            hold(&mut app, StrategyAction::MoveLeft);
+            assert_eq!(Game::command(&mut app).input.right, -1.0);
+
+            hold(&mut app, StrategyAction::MoveRight);
+            assert_eq!(Game::command(&mut app).input.right, 0.0);
+        }
+
+        #[test]
+        fn ascend_and_descend_apply_in_first_person() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            hold(&mut app, StrategyAction::Ascend);
+            assert_eq!(Game::command(&mut app).input.up, 1.0);
+
+            hold(&mut app, StrategyAction::Descend);
+            assert_eq!(Game::command(&mut app).input.up, 0.0);
+        }
+
+        #[test]
+        fn descend_alone_is_negative_up_in_first_person() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            hold(&mut app, StrategyAction::Descend);
+
+            assert_eq!(Game::command(&mut app).input.up, -1.0);
+        }
+
+        #[test]
+        fn ascend_is_ignored_in_isometric() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            hold(&mut app, StrategyAction::Ascend);
+
+            assert_eq!(Game::command(&mut app).input.up, 0.0);
+        }
+    }
+
+    mod camera_mode {
+        use super::*;
+
+        #[test]
+        fn toggle_switches_between_first_person_and_isometric() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let toggle = StrategyCommand {
+                toggle_view: true,
+                ..StrategyCommand::default()
+            };
+
+            tick_app(&mut app, &toggle);
+            assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+
+            let possess = StrategyCommand {
+                possess: Some(FIRST_PAWN),
+                ..toggle
+            };
+            tick_app(&mut app, &possess);
+            assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        }
+    }
+
+    mod possess {
+        use super::*;
+        use crate::app::dig_site::pawn_state_of;
+        use moho_core::events::AudioEvent;
+        use std::sync::mpsc::Receiver;
+
+        fn tap(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, true);
+            app.input.actions.key(key, false);
+        }
+
+        fn press(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, true);
+        }
+
+        fn release(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, false);
+        }
+
+        fn step(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn mode(app: &App) -> CameraMode {
+            app.simulation.camera_mode()
+        }
+
+        fn pose(app: &App) -> (glam::Vec3, (f32, f32)) {
+            (app.simulation.position(), app.simulation.yaw_pitch())
+        }
+
+        fn app_in(camera_mode: CameraMode) -> App {
+            let mut app = playing_app();
+            app.simulation
+                .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.2);
+            app.simulation.set_camera_mode(camera_mode);
+            if camera_mode == CameraMode::Isometric {
+                app.possessed = None;
+            }
+            app
+        }
+
+        fn record_audio(app: &App) -> Receiver<AudioEvent> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                let _ = tx.send(event.clone());
+            });
+            rx
+        }
+
+        fn cues(app: &App, audio: &Receiver<AudioEvent>) -> Vec<AudioEvent> {
+            app.event_bus.process_deferred();
+            audio.try_iter().collect()
+        }
+
+        #[test]
+        fn possess_enters_first_person_at_the_pawns_pose() {
+            let (mut app, pawns) = app_with_three_pawns_in_view();
+            let (id, _) = pawns[1];
+            app.selection.click(Some(id));
+            app.simulation
+                .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.2);
+            let view_before = app.simulation.position();
+            let body_before = pawn_state_of(&app, id);
+            tap(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let (position, (yaw, pitch)) = pose(&app);
+            let body = pawn_state_of(&app, id);
+            assert!(
+                position.distance(body.position) < 1e-3,
+                "the view stands at {position:?}, the body at {:?}",
+                body.position
+            );
+            assert!(
+                position.distance(body_before.position) < 0.05,
+                "the body was not where the view started"
+            );
+            assert!(
+                view_before.distance(position) > 1.0,
+                "the view did not move"
+            );
+            assert!((yaw - body_before.yaw).abs() < 1e-4, "yaw {yaw}");
+            assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
+        }
+
+        #[test]
+        fn possess_return_possess_restores_the_same_pawn_pose() {
+            let (mut app, pawns) = app_with_three_pawns_in_view();
+            let (id, _) = pawns[1];
+            app.selection.click(Some(id));
+            tap(&mut app);
+            step(&mut app);
+            let first_entry = pose(&app).0;
+            let walk = StrategyCommand {
+                input: ControllerInput {
+                    forward: 1.0,
+                    yaw_delta: 0.03,
+                    pitch_delta: 0.02,
+                    ..ControllerInput::default()
+                },
+                ..StrategyCommand::default()
+            };
+            for _ in 0..20 {
+                tick_app(&mut app, &walk);
+            }
+            let (_, (walked_yaw, walked_pitch)) = pose(&app);
+            assert!(walked_pitch.abs() > 0.1, "setup: the look pitched up");
+            let walked_to = pawn_state_of(&app, id);
+
+            tap(&mut app);
+            step(&mut app);
+            let in_strategy = mode(&app);
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(in_strategy, CameraMode::Isometric);
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let (position, (yaw, pitch)) = pose(&app);
+            let body = pawn_state_of(&app, id);
+            assert!(
+                first_entry.distance(walked_to.position) > 1.0,
+                "setup: it walked"
+            );
+            assert!(
+                position.distance(body.position) < 1e-3,
+                "the view stands at {position:?}, the body at {:?}",
+                body.position
+            );
+            assert!(
+                position.distance(walked_to.position) < 0.05,
+                "the second possession starts away from where the pawn was left"
+            );
+            assert!(
+                (yaw - walked_yaw).abs() < 1e-3,
+                "yaw {yaw}, walked {walked_yaw}"
+            );
+            assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
+        }
+
+        #[test]
+        fn possess_key_in_first_person_switches_to_strategy() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            tap(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn mode_switch_applies_on_the_next_tick_not_on_the_key_event() {
+            let mut app = app_in(CameraMode::FirstPerson);
+
+            press(&mut app);
+            let on_the_key_event = mode(&app);
+            let command = Game::command(&mut app);
+            let before_the_tick = mode(&app);
+            tick_app(&mut app, &command);
+
+            assert_eq!(on_the_key_event, CameraMode::FirstPerson);
+            assert!(command.toggle_view, "the press is in the sampled command");
+            assert_eq!(before_the_tick, CameraMode::FirstPerson);
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn a_tap_shorter_than_a_tick_still_switches_once() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            tap(&mut app);
+
+            let first = step(&mut app);
+            let after_first = mode(&app);
+            let second = step(&mut app);
+
+            assert!(first.toggle_view);
+            assert_eq!(after_first, CameraMode::Isometric);
+            assert!(!second.toggle_view, "the edge is consumed by one tick");
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn held_possess_key_switches_once() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            press(&mut app);
+
+            let first = step(&mut app);
+            press(&mut app);
+            let repeats: Vec<_> = (0..5).map(|_| step(&mut app)).collect();
+
+            assert!(first.toggle_view);
+            assert!(
+                repeats.iter().all(|command| !command.toggle_view),
+                "key repeat toggled again"
+            );
+            assert_eq!(mode(&app), CameraMode::Isometric);
+
+            release(&mut app);
+            step(&mut app);
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn the_sampled_command_carries_the_selected_pawn() {
+            for selected in [Some(FIRST_PAWN), None] {
+                let mut app = app_in(CameraMode::Isometric);
+                app.selection.click(selected);
+                tap(&mut app);
+
+                let command = Game::command(&mut app);
+
+                assert!(command.toggle_view, "{selected:?}");
+                assert_eq!(command.possess, selected);
+            }
+        }
+
+        #[test]
+        fn pawn_does_not_move_while_in_strategy_mode() {
+            let mut app = standing_app();
+            let before = (pose(&app), walker_state(&app).position);
+            tap(&mut app);
+            step(&mut app);
+            hold(&mut app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveRight);
+            hold(&mut app, StrategyAction::Jump);
+
+            for _ in 0..30 {
+                step(&mut app);
+            }
+
+            assert_eq!(mode(&app), CameraMode::Isometric);
+            assert_eq!((pose(&app), walker_state(&app).position), before);
+        }
+
+        #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::dig_site::{dig_site, pawn_start, pawn_state};
+            let target = [24, 8, 12];
+            let mut app = dig_site(&[(target, Some(7))]);
+            app.colony.marks.toggle(target);
+            let focus = app.simulation.player_controller.rts_look_target;
+            for _ in 0..40 {
+                step(&mut app);
+            }
+            let walked_to = pawn_state(&app).position;
+            let focus_after = app.simulation.player_controller.rts_look_target;
+            assert!(
+                (focus_after.x - focus.x).abs() < 1e-6 && (focus_after.z - focus.z).abs() < 1e-6,
+                "the walk moved the strategy camera's focus: {focus:?} to {focus_after:?}"
+            );
+            assert!(
+                walked_to.distance(pawn_start()) > 1.5,
+                "the pawn did not walk: {walked_to:?}"
+            );
+
+            app.selection.click(Some(FIRST_PAWN));
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let (position, (yaw, pitch)) = pose(&app);
+            assert!(
+                position.distance(pawn_state(&app).position) < 1e-3,
+                "possession starts at {position:?}, the pawn stands at {:?}",
+                pawn_state(&app).position
+            );
+            assert!(
+                position.distance(pawn_start()) > 1.5,
+                "possession starts back at the spawn: {position:?}"
+            );
+            assert!(
+                (yaw - pawn_state(&app).yaw).abs() < 1e-4,
+                "the view faces {yaw}, the pawn {}",
+                pawn_state(&app).yaw
+            );
+            assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
+        }
+
+        #[test]
+        fn switch_publishes_the_placeholder_cue() {
+            let mut app = app_in(CameraMode::Isometric);
+            app.selection.click(Some(FIRST_PAWN));
+            let audio = record_audio(&app);
+
+            tap(&mut app);
+            step(&mut app);
+            let entering = cues(&app, &audio);
+            tap(&mut app);
+            step(&mut app);
+            let returning = cues(&app, &audio);
+
+            assert!(
+                matches!(entering.as_slice(), [AudioEvent::Confirm]),
+                "entering first person: {entering:?}"
+            );
+            assert!(
+                matches!(returning.as_slice(), [AudioEvent::Cancel]),
+                "returning to strategy: {returning:?}"
+            );
+        }
+
+        #[test]
+        fn a_possess_press_queued_before_a_pause_does_not_switch_on_resume() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            let audio = record_audio(&app);
+            tap(&mut app);
+
+            app.game_state = GameState::Paused;
+            app.drop_pending_input();
+            app.game_state = GameState::Playing;
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(cues(&app, &audio).is_empty());
+        }
+
+        #[test]
+        fn possess_is_ignored_outside_playing() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            let audio = record_audio(&app);
+            app.game_state = GameState::Menu;
+            tap(&mut app);
+
+            let sampled = step(&mut app);
+            let forced = StrategyCommand {
+                toggle_view: true,
+                ..StrategyCommand::default()
+            };
+            tick_app(&mut app, &forced);
+
+            assert!(!sampled.toggle_view);
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(cues(&app, &audio).is_empty());
+        }
+    }
+
+    mod frame {
+        use super::*;
+        use moho_core::prefs::Prefs;
+
+        #[test]
+        fn queued_point_light_reaches_the_renderer_and_the_queue_empties() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render.push(RenderRequest::AddPointLight {
+                position: glam::Vec3::new(1.0, 2.0, 3.0),
+                color: glam::Vec3::new(0.1, 0.2, 0.3),
+                intensity: 7.0,
+                range: 9.0,
+            });
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(
+                fake.lights,
+                vec![(
+                    glam::Vec3::new(1.0, 2.0, 3.0),
+                    glam::Vec3::new(0.1, 0.2, 0.3),
+                    7.0,
+                    9.0
+                )]
+            );
+            assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn queued_quality_changes_reach_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render.push(RenderRequest::ShadowQuality(2));
+            app.pending_render.push(RenderRequest::SsaoQuality(3));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.shadow_qualities, vec![2]);
+            assert_eq!(fake.ssao_qualities, vec![3]);
+        }
+
+        #[test]
+        fn a_shadow_quality_the_gpu_cannot_allocate_is_saved_at_the_level_it_fell_back_to() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let path = temp.path().join("prefs.ini");
+            let mut app = playing_app();
+            app.prefs.set_shadow_quality(4);
+            app.prefs_path = Some(path.clone());
+            let mut fake = FakeRenderer {
+                shadow_cap: Some(2),
+                ..FakeRenderer::default()
+            };
+            app.pending_render.push(RenderRequest::ShadowQuality(4));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.shadow_qualities, vec![4]);
+            assert_eq!(app.prefs.shadow_quality(), 2);
+            let (on_disk, _) = moho_core::prefs::Prefs::load_from(&path);
+            assert_eq!(on_disk.shadow_quality(), 2, "the next start asks for 2");
+        }
+
+        #[test]
+        fn a_shadow_quality_the_gpu_allocates_is_not_saved_again() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let path = temp.path().join("prefs.ini");
+            let mut app = playing_app();
+            app.prefs.set_shadow_quality(4);
+            app.prefs_path = Some(path.clone());
+            app.pending_render.push(RenderRequest::ShadowQuality(4));
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert_eq!(app.prefs.shadow_quality(), 4);
+            assert!(!path.exists(), "nothing changed, so nothing was written");
+        }
+
+        #[test]
+        fn view_height_request_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render
+                .push(RenderRequest::ViewHeight(Some(12.5)));
+            app.pending_render.push(RenderRequest::ViewHeight(None));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.view_heights, vec![Some(12.5), None]);
+            assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn brightness_request_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render.push(RenderRequest::Brightness(1.5));
+            app.pending_render.push(RenderRequest::ToneMap(false));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.brightnesses, vec![1.5]);
+            assert_eq!(fake.tone_maps, vec![false]);
+            assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn adopting_vsync_off_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            let mut off = Prefs::default();
+            off.set_vsync(false);
+
+            app.adopt_settings(off);
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.vsyncs, vec![false]);
+            assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn adopting_vsync_back_on_reaches_the_renderer_after_off() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            let mut off = Prefs::default();
+            off.set_vsync(false);
+
+            app.adopt_settings(off);
+            app.adopt_settings(Prefs::default());
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.vsyncs, vec![false, true]);
+        }
+
+        #[test]
+        fn adopting_unchanged_vsync_does_not_touch_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            app.adopt_settings(Prefs::default());
+            run_frame(&mut app, &mut fake);
+
+            assert!(fake.vsyncs.is_empty());
+        }
+
+        /// The cap `frame` hands the loop after the game adopts `prefs`; fails the test
+        /// if `frame` hands it none at all.
+        fn cap_handed_to_the_loop(prefs: Prefs) -> Option<std::num::NonZeroU32> {
+            let mut app = playing_app();
+            app.adopt_settings(prefs);
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.5);
+
+            ctx.requested_frame_cap()
+                .expect("frame hands the loop a cap request")
+        }
+
+        #[test]
+        fn vsync_off_hands_the_default_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(false);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, std::num::NonZeroU32::new(300));
+        }
+
+        #[test]
+        fn vsync_off_hands_the_configured_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(false);
+            prefs.set_fps_max(144);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, std::num::NonZeroU32::new(144));
+        }
+
+        #[test]
+        fn zero_cap_hands_no_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(false);
+            prefs.set_fps_max(0);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, None);
+        }
+
+        #[test]
+        fn vsync_on_hands_no_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_fps_max(60);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, None);
+        }
+
+        #[test]
+        fn frame_after_vsync_is_turned_back_on_lifts_the_cap() {
+            let mut app = playing_app();
+            let mut off = Prefs::default();
+            off.set_vsync(false);
+            app.adopt_settings(off);
+            app.adopt_settings(Prefs::default());
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.5);
+
+            assert_eq!(ctx.requested_frame_cap(), Some(None));
+        }
+
+        #[test]
+        fn frame_renders_the_scene_and_does_not_exit() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            let exit = run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.frames_begun, 1);
+            assert!(!exit);
+        }
+
+        #[test]
+        fn frame_without_a_renderer_does_not_panic() {
+            let mut app = playing_app();
+            app.pending_render.push(RenderRequest::ShadowQuality(1));
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+
+            assert!(!ctx.exit_requested());
+        }
+
+        #[test]
+        fn frame_drains_queued_audio_events_even_without_an_audio_system() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.event_bus
+                .publish(moho_core::events::AudioEvent::ButtonClick);
+            app.event_bus.process_deferred();
+
+            run_frame(&mut app, &mut fake);
+
+            assert!(app.audio_event_rx.try_recv().is_err());
+        }
+
+        #[test]
+        fn exit_request_autosaves_requests_exit_clears_flag_and_skips_render() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut fake = FakeRenderer::default();
+            app.exit_requested = true;
+
+            let exit = run_frame(&mut app, &mut fake);
+
+            assert!(exit);
+            assert!(!app.exit_requested);
+            assert!(app.saves_dir.join("scene.bin").is_file());
+            assert_eq!(fake.frames_begun, 0);
+        }
+
+        #[test]
+        fn frame_without_exit_request_does_not_autosave() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut fake = FakeRenderer::default();
+
+            run_frame(&mut app, &mut fake);
+
+            assert!(!app.saves_dir.exists());
+        }
+
+        #[test]
+        fn paused_game_does_not_advance_the_autosave_schedule() {
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = playing_app();
+                app.autosave_interval = Some(Duration::from_secs(1));
+                app.restart_autosave();
+                app.autosave.mark_edited();
+                app.game_state = state;
+                let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+                sim.step(&mut app, 2 * TICK_HZ);
+                assert!(
+                    !app.autosave.due(),
+                    "{state:?}: two intervals of standing still came due"
+                );
+                app.game_state = GameState::Playing;
+                sim.step(&mut app, TICK_HZ / 2);
+                assert!(
+                    !app.autosave.due(),
+                    "{state:?}: half an interval of play came due, so the paused ticks counted"
+                );
+                sim.step(&mut app, TICK_HZ);
+
+                assert!(
+                    app.autosave.due(),
+                    "{state:?}: a full interval of play never came due"
+                );
+            }
+        }
+
+        fn push_pickup(app: &mut App) {
+            app.possessed_pawn_mut()
+                .pickups
+                .push(flagstone_game::inventory::ResourceYield {
+                    resource_id: 7,
+                    amount: 1,
+                });
+        }
+
+        #[test]
+        fn playing_ages_the_player_pawns_pickups() {
+            use flagstone_game::pickups::PICKUP_POPUP_TICKS;
+            let mut app = playing_app();
+            push_pickup(&mut app);
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+            sim.step(&mut app, PICKUP_POPUP_TICKS - 1);
+            assert_eq!(
+                app.possessed_pawn().pickups.entries().len(),
+                1,
+                "expired a tick early"
+            );
+            sim.step(&mut app, 1);
+
+            assert!(app.possessed_pawn().pickups.entries().is_empty());
+        }
+
+        #[test]
+        fn paused_game_does_not_age_the_player_pawns_pickups() {
+            use flagstone_game::pickups::PICKUP_POPUP_TICKS;
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = playing_app();
+                push_pickup(&mut app);
+                app.game_state = state;
+                let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+                sim.step(&mut app, PICKUP_POPUP_TICKS);
+
+                let ticks_left: Vec<u32> = app
+                    .possessed_pawn()
+                    .pickups
+                    .entries()
+                    .iter()
+                    .map(|e| e.ticks_left)
+                    .collect();
+                assert_eq!(ticks_left, [PICKUP_POPUP_TICKS], "{state:?}");
+            }
+        }
+
+        #[test]
+        fn playing_frame_uploads_full_sun_intensity_by_day() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            run_frame_at(&mut app, &mut fake, 12.0);
+
+            assert_eq!(fake.lightings.len(), 1);
+            assert_eq!(fake.lightings[0].sun_direction[3], 1.0);
+        }
+
+        #[test]
+        fn playing_frame_uploads_the_sky_ambient_strength_by_day() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            run_frame_at(&mut app, &mut fake, 12.0);
+
+            assert_eq!(fake.lightings[0].ambient, [0.0, 0.0, 0.0, 0.15]);
+        }
+
+        #[test]
+        fn playing_frame_uploads_zero_sun_intensity_by_night() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            run_frame_at(&mut app, &mut fake, 0.0);
+
+            assert_eq!(fake.lightings.len(), 1);
+            assert_eq!(fake.lightings[0].sun_direction[3], 0.0);
+        }
+
+        #[test]
+        fn sun_exactly_on_the_horizon_has_no_intensity() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            run_frame_at(&mut app, &mut fake, 6.0);
+
+            assert_eq!(fake.lightings[0].sun_direction[1], 0.0);
+            assert_eq!(fake.lightings[0].sun_direction[3], 0.0);
+        }
+
+        #[test]
+        fn lighting_is_not_uploaded_outside_playing() {
+            let mut app = playing_app();
+            app.game_state = GameState::Menu;
+            let mut fake = FakeRenderer::default();
+
+            run_frame(&mut app, &mut fake);
+
+            assert!(fake.lightings.is_empty());
+        }
+    }
+
+    mod pad_release {
+        use super::*;
+        use moho_input::pad::PadButton;
+
+        fn app_holding_pad_jump() -> App {
+            let mut app = playing_app();
+            app.input.actions.pad_button(PadButton::South, true);
+            assert!(app.input.actions.end_tick().held(StrategyAction::Jump));
+            app
+        }
+
+        #[test]
+        fn pad_actions_release_when_play_stops() {
+            let mut app = app_holding_pad_jump();
+
+            app.game_state = GameState::Menu;
+            app.poll_gamepads();
+            app.game_state = GameState::Playing;
+            let frame = app.input.actions.end_tick();
+
+            assert!(!frame.held(StrategyAction::Jump));
+            assert!(!frame.pressed(StrategyAction::Jump));
+        }
+
+        #[test]
+        fn pad_actions_release_while_unfocused() {
+            let mut app = app_holding_pad_jump();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::Focused(false)),
+            );
+            app.poll_gamepads();
+            let frame = app.input.actions.end_tick();
+
+            assert!(!frame.held(StrategyAction::Jump));
+            assert!(!frame.pressed(StrategyAction::Jump));
+        }
+    }
+
+    mod play_stop_release {
+        use super::*;
+
+        fn app_holding_forward() -> (App, moho_input::key::Key) {
+            let mut app = playing_app();
+            let key = default_key(&app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveForward);
+            assert!(
+                app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
+            assert_eq!(app.game_state, GameState::Playing);
+            (app, key)
+        }
+
+        fn assert_forward_not_held_on_resume(app: &mut App) {
+            assert_eq!(app.game_state, GameState::Playing);
+            let frame = app.input.actions.end_tick();
+            assert!(!frame.held(StrategyAction::MoveForward));
+            assert!(!frame.pressed(StrategyAction::MoveForward));
+            let command = Game::command(app);
+            assert_eq!(command.input.forward, 0.0);
+        }
+
+        #[test]
+        fn forward_held_when_the_menu_opens_is_not_held_on_resume() {
+            let (mut app, _key) = app_holding_forward();
+
+            app.show_menu();
+            assert_eq!(app.game_state, GameState::Menu);
+            app.hide_menu();
+
+            assert_forward_not_held_on_resume(&mut app);
+        }
+
+        #[test]
+        fn forward_held_when_the_console_opens_is_not_held_on_resume() {
+            let (mut app, _key) = app_holding_forward();
+
+            app.enter_console();
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            app.exit_console();
+
+            assert_forward_not_held_on_resume(&mut app);
+        }
+
+        #[test]
+        fn key_still_down_on_resume_acts_only_after_it_is_pressed_again() {
+            let (mut app, key) = app_holding_forward();
+
+            app.show_menu();
+            assert_eq!(app.game_state, GameState::Menu);
+            app.hide_menu();
+            assert_eq!(app.game_state, GameState::Playing);
+            let before = app.input.actions.end_tick();
+            assert!(!before.held(StrategyAction::MoveForward));
+            app.input.actions.key(key, true);
+            let after = app.input.actions.end_tick();
+
+            assert!(after.held(StrategyAction::MoveForward));
+            assert!(after.pressed(StrategyAction::MoveForward));
+        }
+    }
+
+    mod window_mode {
+        use super::*;
+        use moho_app::WindowMode;
+        use std::sync::{Arc, Mutex};
+        use winit::event::DeviceEvent;
+
+        /// A first-person app holding forward, with mouse look not yet taken by a tick.
+        fn possessing_app_mid_turn() -> App {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            hold(&mut app, StrategyAction::MoveForward);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (40.0, 30.0),
+                }),
+            );
+            frame_without_renderer(&mut app);
+            assert_ne!(app.input.actions.pending_look(), (0.0, 0.0));
+            app
+        }
+
+        fn mode_changed(app: &mut App, mode: WindowMode) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::window_mode_changed(app, &mut ctx, mode);
+        }
+
+        #[test]
+        fn window_mode_changed_releases_keys_and_recaptures_cursor_in_play() {
+            for mode in [WindowMode::Borderless, WindowMode::Windowed] {
+                let mut app = possessing_app_mid_turn();
+                assert!(!app.cursor_grabbed, "the platform dropped the grab");
+
+                mode_changed(&mut app, mode);
+
+                assert_eq!(app.input.actions.pending_look(), (0.0, 0.0), "{mode:?}");
+                let frame = app.input.actions.end_tick();
+                assert!(!frame.held(StrategyAction::MoveForward), "{mode:?}");
+                assert!(app.cursor_grabbed, "{mode:?}");
+                assert_eq!(Game::command(&mut app).input.forward, 0.0, "{mode:?}");
+            }
+        }
+
+        #[test]
+        fn leaves_the_cursor_free_in_the_pause_menu() {
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = possessing_app_mid_turn();
+                app.game_state = state;
+                app.grab_cursor();
+
+                mode_changed(&mut app, WindowMode::Borderless);
+
+                assert!(!app.cursor_grabbed, "{state:?}");
+                assert_eq!(app.input.actions.pending_look(), (0.0, 0.0), "{state:?}");
+                assert!(
+                    !app.input
+                        .actions
+                        .end_tick()
+                        .held(StrategyAction::MoveForward)
+                );
+            }
+        }
+
+        #[test]
+        fn window_mode_changed_in_the_strategy_view_leaves_the_cursor_free() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            app.grab_cursor();
+
+            mode_changed(&mut app, WindowMode::Borderless);
+
+            assert!(!app.cursor_grabbed);
+        }
+
+        fn attach_adapter(app: &mut App) -> Arc<Mutex<flagstone_ui::EguiAdapter>> {
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            adapter
+        }
+
+        #[test]
+        fn window_mode_changed_tells_the_ui_so_the_video_tab_opens_on_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = playing_app();
+            let adapter = attach_adapter(&mut app);
+            mode_changed(&mut app, WindowMode::Borderless);
+
+            let mut adapter = adapter.lock().expect("adapter lock");
+            adapter.open_settings(app.prefs.clone(), dir.path().join("prefs.ini"));
+            let menu = adapter.settings_menu_mut().expect("Settings is open");
+
+            assert_eq!(
+                menu.staged_window_mode(),
+                moho_core::prefs::WindowMode::Borderless
+            );
+            assert!(!menu.has_unsaved_changes());
+        }
+
+        #[test]
+        fn a_mode_applied_in_settings_is_requested_from_the_engine_by_the_next_frame() {
+            use flagstone_ui::screens::MenuAction;
+            let mut app = playing_app();
+            let adapter = attach_adapter(&mut app);
+            let mut prefs = app.prefs.clone();
+            prefs.set_window_mode(moho_core::prefs::WindowMode::Fullscreen);
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .record_menu_action(&MenuAction::SettingsSaved(prefs));
+            let clock = GameClock::default();
+            let mut ctx = moho_app::FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+
+            assert_eq!(ctx.requested_window_mode(), Some(WindowMode::Borderless));
+            let mut again = moho_app::FrameContext::new(tick(), &clock, None, None);
+            Game::frame(&mut app, &mut again, 0.0);
+            assert_eq!(again.requested_window_mode(), None, "asked once");
+        }
+
+        fn frame_after_applying(mode: moho_core::prefs::WindowMode, size: (u32, u32)) -> Requests {
+            use flagstone_ui::screens::MenuAction;
+            let mut app = playing_app();
+            let adapter = attach_adapter(&mut app);
+            let mut prefs = app.prefs.clone();
+            prefs.set_window_mode(mode);
+            prefs.set_window_resolution(size.0, size.1);
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .record_menu_action(&MenuAction::SettingsSaved(prefs));
+            let clock = GameClock::default();
+            let mut ctx = moho_app::FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+            let first = (ctx.requested_window_mode(), ctx.requested_window_size());
+            let mut again = moho_app::FrameContext::new(tick(), &clock, None, None);
+            Game::frame(&mut app, &mut again, 0.0);
+
+            Requests {
+                first,
+                again: (again.requested_window_mode(), again.requested_window_size()),
+            }
+        }
+
+        struct Requests {
+            first: (Option<WindowMode>, Option<(u32, u32)>),
+            again: (Option<WindowMode>, Option<(u32, u32)>),
+        }
+
+        #[test]
+        fn applying_windowed_asks_for_the_mode_and_the_size_in_the_same_frame() {
+            let requests =
+                frame_after_applying(moho_core::prefs::WindowMode::Windowed, (1280, 720));
+
+            assert_eq!(
+                requests.first,
+                (Some(WindowMode::Windowed), Some((1280, 720)))
+            );
+            assert_eq!(requests.again, (None, None), "asked once");
+        }
+
+        #[test]
+        fn the_frame_after_a_settings_apply_releases_held_actions_and_resets_look() {
+            use flagstone_ui::screens::MenuAction;
+            let mut app = possessing_app_mid_turn();
+            let adapter = attach_adapter(&mut app);
+            let mut prefs = app.prefs.clone();
+            prefs.set_window_mode(moho_core::prefs::WindowMode::Fullscreen);
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .record_menu_action(&MenuAction::SettingsSaved(prefs));
+            let clock = GameClock::default();
+            let mut ctx = moho_app::FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+
+            assert_eq!(app.input.actions.pending_look(), (0.0, 0.0));
+            assert!(
+                !app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
+            assert!(app.cursor_grabbed);
+        }
+
+        #[test]
+        fn applying_a_fullscreen_mode_asks_for_no_size() {
+            for mode in [
+                moho_core::prefs::WindowMode::Fullscreen,
+                moho_core::prefs::WindowMode::Borderless,
+            ] {
+                let requests = frame_after_applying(mode, (1280, 720));
+
+                assert_eq!(
+                    requests.first,
+                    (Some(WindowMode::Borderless), None),
+                    "{mode:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn window_mode_changed_leaves_saved_prefs_and_the_world_alone() {
+            let mut app = possessing_app_mid_turn();
+            let prefs = app.prefs.clone();
+            let position = app.simulation.position();
+            let state = app.game_state;
+
+            mode_changed(&mut app, WindowMode::Borderless);
+            mode_changed(&mut app, WindowMode::Windowed);
+
+            assert_eq!(app.prefs, prefs);
+            assert_eq!(app.simulation.position(), position);
+            assert_eq!(app.game_state, state);
+        }
+    }
+
+    mod events {
+        use super::*;
+        use winit::event::DeviceEvent;
+
+        #[test]
+        fn close_requested_autosaves_and_requests_exit() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut fake = FakeRenderer::default();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CloseRequested),
+            );
+
+            assert!(ctx.exit_requested());
+            assert!(app.saves_dir.join("scene.bin").is_file());
+        }
+
+        #[test]
+        fn close_requested_applies_queued_lights_before_autosaving() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let position = glam::Vec3::new(1.0, 2.0, 3.0);
+            app.pending_render.push(RenderRequest::AddPointLight {
+                position,
+                color: glam::Vec3::ONE,
+                intensity: 5.0,
+                range: 20.0,
+            });
+            let mut fake = FakeRenderer::default();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, Some(&mut fake), None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CloseRequested),
+            );
+
+            assert!(app.pending_render.is_empty());
+            assert_eq!(fake.lights, vec![(position, glam::Vec3::ONE, 5.0, 20.0)]);
+        }
+
+        #[test]
+        fn unrelated_window_event_does_not_exit_or_save() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::Focused(true)),
+            );
+
+            assert!(!ctx.exit_requested());
+            assert!(!app.saves_dir.exists());
+        }
+
+        #[test]
+        fn mouse_motion_in_first_person_reaches_the_next_command_look_delta() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (400.0, 200.0),
+                }),
+            );
+            frame_without_renderer(&mut app);
+            let cmd = Game::command(&mut app);
+
+            assert_ne!(cmd.input.yaw_delta, 0.0);
+            assert_ne!(cmd.input.pitch_delta, 0.0);
+        }
+
+        #[test]
+        fn mouse_motion_in_isometric_is_ignored() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (400.0, 200.0),
+                }),
+            );
+            frame_without_renderer(&mut app);
+            let cmd = Game::command(&mut app);
+
+            assert_eq!(cmd.input.yaw_delta, 0.0);
+        }
+
+        #[test]
+        fn mouse_motion_outside_play_is_ignored() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.game_state = GameState::Menu;
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (400.0, 200.0),
+                }),
+            );
+
+            frame_without_renderer(&mut app);
+
+            assert_eq!(app.input.actions.end_tick().look(), (0.0, 0.0));
+        }
+
+        #[test]
+        fn positive_mouse_motion_turns_first_person_yaw_and_pitch_negative() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.simulation
+                .set_position_yaw_pitch(glam::Vec3::new(100.0, 100.0, 100.0), 0.0, 0.0);
+            app.input.actions.mouse_motion(5.0, 5.0);
+
+            frame_without_renderer(&mut app);
+            let cmd = Game::command(&mut app);
+            tick_app(&mut app, &cmd);
+
+            let (yaw, pitch) = app.simulation.yaw_pitch();
+            assert!(yaw < 0.0, "yaw = {yaw}");
+            assert!(pitch < 0.0, "pitch = {pitch}");
+        }
+    }
+
+    mod view_turn {
+        use super::*;
+        use flagstone_game::controller::controller_to_camera;
+        use glam::{Mat4, Vec3};
+        use moho_input::action_map::LookSettings;
+        use moho_input::pad::{Stick, StickAxis};
+        use moho_physics::{PITCH_LIMIT, first_person_view};
+        use winit::event::DeviceEvent;
+
+        /// How the first-person view is drawn: from the character controller or the free camera.
+        #[derive(Clone, Copy, Debug)]
+        enum Rig {
+            Walking,
+            FreeCam,
+        }
+
+        const RIGS: [Rig; 2] = [Rig::Walking, Rig::FreeCam];
+        /// The `alpha` `run_frame` draws with.
+        const ALPHA: f32 = 0.5;
+
+        fn rig_app(rig: Rig) -> App {
+            let mut app = match rig {
+                Rig::Walking => standing_app(),
+                Rig::FreeCam => {
+                    let mut app = playing_app();
+                    app.simulation.set_camera_mode(CameraMode::FirstPerson);
+                    app.physics.noclip = true;
+                    app
+                }
+            };
+            HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ)).step(&mut app, 1);
+            app
+        }
+
+        fn mouse(app: &mut App, dx: f64, dy: f64) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion { delta: (dx, dy) }),
+            );
+        }
+
+        fn drawn(fake: &FakeRenderer) -> Mat4 {
+            fake.cameras.last().expect("a frame began").0
+        }
+
+        fn forward_of(view: Mat4) -> Vec3 {
+            -view.transpose().col(2).truncate()
+        }
+
+        fn yaw_of(view: Mat4) -> f32 {
+            let forward = forward_of(view);
+            forward.x.atan2(forward.z)
+        }
+
+        fn pitch_of(view: Mat4) -> f32 {
+            forward_of(view).y.asin()
+        }
+
+        /// The character's yaw and pitch as the simulation holds them.
+        fn sim_look(app: &App, rig: Rig) -> (f32, f32) {
+            match rig {
+                Rig::Walking => {
+                    let state = walker_state(app);
+                    (state.yaw, state.pitch)
+                }
+                Rig::FreeCam => app.simulation.yaw_pitch(),
+            }
+        }
+
+        /// The view a frame must draw: the simulation turned by the look shown but not yet ticked.
+        fn expected_view(app: &App, rig: Rig) -> Mat4 {
+            let (look_x, look_y) = app.input.actions.pending_look();
+            match rig {
+                Rig::Walking => {
+                    let (previous, current) = app.physics.player_states().expect("a walker");
+                    first_person_view(&previous, &current, ALPHA, (-look_x, -look_y)).view_matrix()
+                }
+                Rig::FreeCam => {
+                    controller_to_camera(&app.simulation.player_controller.turned(-look_x, -look_y))
+                        .0
+                }
+            }
+        }
+
+        #[test]
+        fn mouse_motion_turns_the_next_frame_before_any_tick() {
+            for rig in RIGS {
+                let mut app = rig_app(rig);
+                let mut fake = FakeRenderer::default();
+                let before_look = sim_look(&app, rig);
+                run_frame(&mut app, &mut fake);
+                let before = drawn(&fake);
+
+                mouse(&mut app, 400.0, 200.0);
+                run_frame(&mut app, &mut fake);
+                let after = drawn(&fake);
+
+                assert!(
+                    forward_of(after).distance(forward_of(before)) > 1e-3,
+                    "{rig:?}: the frame did not turn"
+                );
+                assert!(
+                    yaw_of(after) < yaw_of(before),
+                    "{rig:?}: right is negative yaw"
+                );
+                assert!(
+                    pitch_of(after) < pitch_of(before),
+                    "{rig:?}: down is negative pitch"
+                );
+                assert_eq!(sim_look(&app, rig), before_look, "{rig:?}: no tick ran");
+                assert_eq!(after, expected_view(&app, rig), "{rig:?}");
+            }
+        }
+
+        #[test]
+        fn tick_lands_on_the_last_frames_view() {
+            const MOTION: [(f64, f64); 3] = [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)];
+
+            for rig in RIGS {
+                for smoothing in [false, true] {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: 0.002,
+                        smoothing,
+                        invert_y: false,
+                        acceleration: 0.0,
+                    });
+                    let mut fake = FakeRenderer::default();
+                    let (yaw_before, pitch_before) = sim_look(&app, rig);
+                    run_frame(&mut app, &mut fake);
+                    let level = drawn(&fake);
+
+                    for (dx, dy) in MOTION {
+                        mouse(&mut app, dx, dy);
+                        run_frame(&mut app, &mut fake);
+                    }
+                    let last_frame = drawn(&fake);
+                    assert_ne!(last_frame, level, "{rig:?}: the frames turned the view");
+                    let (look_x, look_y) = app.input.actions.pending_look();
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+
+                    let case = format!("{rig:?}, smoothing {smoothing}");
+                    let yaw = yaw_before + (-look_x);
+                    let pitch = (pitch_before + (-look_y)).clamp(-PITCH_LIMIT, PITCH_LIMIT);
+                    assert_ne!(yaw, yaw_before, "{case}: the frames turned");
+                    assert_eq!(sim_look(&app, rig), (yaw, pitch), "{case}");
+                    assert_eq!(app.input.actions.pending_look(), (0.0, 0.0), "{case}");
+                    if let Rig::FreeCam = rig {
+                        assert_eq!(app.camera.0, last_frame, "{case}: the tick camera");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn drawn_view_is_the_simulation_turned_by_the_pending_look() {
+            const MOTION: [(f64, f64); 3] = [(120.0, 40.0), (-30.0, 80.0), (200.0, -150.0)];
+
+            for rig in RIGS {
+                for smoothing in [false, true] {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: 0.002,
+                        smoothing,
+                        invert_y: false,
+                        acceleration: 0.0,
+                    });
+                    let mut fake = FakeRenderer::default();
+                    run_frame(&mut app, &mut fake);
+                    let mut previous = drawn(&fake);
+
+                    for (dx, dy) in MOTION {
+                        mouse(&mut app, dx, dy);
+                        run_frame(&mut app, &mut fake);
+                        assert_ne!(drawn(&fake), previous, "{rig:?}: the frame turned");
+                        previous = drawn(&fake);
+
+                        assert_eq!(
+                            drawn(&fake),
+                            expected_view(&app, rig),
+                            "{rig:?}, smoothing {smoothing}"
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn pitch_held_at_the_limit_on_screen_and_after_the_tick() {
+            for rig in RIGS {
+                for (direction, limit) in [("up", PITCH_LIMIT), ("down", -PITCH_LIMIT)] {
+                    let mut app = rig_app(rig);
+                    let mut fake = FakeRenderer::default();
+                    // Mouse y is down-positive.
+                    let toward = -f64::from(limit.signum());
+
+                    for (round, count) in [100_000.0_f64, 5_000.0].into_iter().enumerate() {
+                        mouse(&mut app, 0.0, toward * count);
+                        run_frame(&mut app, &mut fake);
+                        let height = forward_of(drawn(&fake)).y;
+                        let command = Game::command(&mut app);
+                        tick_app(&mut app, &command);
+
+                        assert!(
+                            (height - limit.sin()).abs() < 1e-5,
+                            "{rig:?} {direction} round {round}: view at {height}"
+                        );
+                        assert_eq!(
+                            sim_look(&app, rig).1,
+                            limit,
+                            "{rig:?} {direction} round {round}"
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn stick_turns_each_frame_between_ticks() {
+            for rig in RIGS {
+                let mut app = rig_app(rig);
+                let mut fake = FakeRenderer::default();
+                let before_look = sim_look(&app, rig);
+                run_frame(&mut app, &mut fake);
+                let mut yaws = vec![yaw_of(drawn(&fake))];
+
+                app.input
+                    .actions
+                    .pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+                for _ in 0..4 {
+                    run_frame(&mut app, &mut fake);
+                    yaws.push(yaw_of(drawn(&fake)));
+                }
+
+                assert!(
+                    yaws.windows(2).all(|pair| pair[1] < pair[0]),
+                    "{rig:?}: yaw should fall (turn right) every frame: {yaws:?}"
+                );
+                assert_eq!(sim_look(&app, rig), before_look, "{rig:?}: no tick ran");
+            }
+        }
+
+        #[test]
+        fn stick_turn_follows_the_frame_time() {
+            const LOOK_PER_COUNT: f32 = 0.002;
+
+            for rig in RIGS {
+                let pending_after = |frame_dt: Duration| {
+                    let mut app = rig_app(rig);
+                    app.input.actions.set_look(LookSettings {
+                        look_per_count: LOOK_PER_COUNT,
+                        smoothing: false,
+                        invert_y: false,
+                        acceleration: 0.0,
+                    });
+                    app.input
+                        .actions
+                        .pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+                    let clock = GameClock::default();
+                    let mut fake = FakeRenderer::default();
+                    let mut ctx = FrameContext::new(tick(), &clock, Some(&mut fake), None);
+                    ctx.frame_dt = frame_dt;
+                    Game::frame(&mut app, &mut ctx, ALPHA);
+                    app.input.actions.pending_look().0
+                };
+
+                let full = pending_after(tick());
+                let half = pending_after(tick() / 2);
+
+                let by_hand = moho_input::action_map::PAD_LOOK_PER_SECOND
+                    * tick().as_secs_f32()
+                    * LOOK_PER_COUNT;
+                assert!(
+                    (full - by_hand).abs() < 1e-5,
+                    "{rig:?}: {full} vs {by_hand}"
+                );
+                assert_eq!(half * 2.0, full, "{rig:?}: half the time, half the turn");
+            }
+        }
+
+        fn focus(app: &mut App, focused: bool) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::Focused(focused)),
+            );
+        }
+
+        /// Why the view must hold still.
+        #[derive(Clone, Copy, Debug)]
+        enum Stop {
+            Paused,
+            Menu,
+            Console,
+            Unfocused,
+        }
+
+        const STOPS: [Stop; 4] = [Stop::Paused, Stop::Menu, Stop::Console, Stop::Unfocused];
+
+        impl Stop {
+            /// Enters the stop through the game's own transition.
+            fn enter(self, app: &mut App) {
+                match self {
+                    Stop::Paused => app.escape_pressed(),
+                    Stop::Menu => app.show_menu(),
+                    Stop::Console => app.enter_console(),
+                    Stop::Unfocused => focus(app, false),
+                }
+            }
+
+            /// Leaves the stop through the matching transition. Resuming from pause uses
+            /// `toggle_pause`, which Escape calls too, because Escape resumes only from the
+            /// home screen.
+            fn leave(self, app: &mut App) {
+                match self {
+                    Stop::Paused => app.toggle_pause(),
+                    Stop::Menu => app.hide_menu(),
+                    Stop::Console => app.exit_console(),
+                    Stop::Unfocused => focus(app, true),
+                }
+            }
+        }
+
+        #[test]
+        fn paused_or_unfocused_frames_do_not_turn() {
+            for rig in RIGS {
+                for stop in STOPS {
+                    let mut app = rig_app(rig);
+                    let mut fake = FakeRenderer::default();
+                    run_frame(&mut app, &mut fake);
+                    let level = forward_of(drawn(&fake));
+                    mouse(&mut app, 300.0, 150.0);
+                    run_frame(&mut app, &mut fake);
+                    let shown_view = drawn(&fake);
+                    let shown = forward_of(shown_view);
+                    assert!(
+                        shown.distance(level) > 1e-3,
+                        "{rig:?} {stop:?}: look is live first"
+                    );
+                    let (look_x, look_y) = app.input.actions.pending_look();
+                    let (yaw_before, pitch_before) = sim_look(&app, rig);
+
+                    stop.enter(&mut app);
+                    assert!(
+                        app.game_state != GameState::Playing || !app.input.focused,
+                        "{rig:?} {stop:?}: stopped"
+                    );
+                    let mut views = Vec::new();
+                    for _ in 0..3 {
+                        if !matches!(stop, Stop::Unfocused) {
+                            // A paused loop asks for the command on every frame.
+                            Game::command(&mut app);
+                        }
+                        mouse(&mut app, 500.0, 500.0);
+                        run_frame(&mut app, &mut fake);
+                        views.push(forward_of(drawn(&fake)));
+                    }
+
+                    for view in views {
+                        assert!(
+                            view.distance(shown) < 1e-4,
+                            "{rig:?} {stop:?}: the view moved from {shown:?} to {view:?}"
+                        );
+                    }
+                    assert_eq!(
+                        sim_look(&app, rig),
+                        (yaw_before, pitch_before),
+                        "{rig:?} {stop:?}"
+                    );
+
+                    stop.leave(&mut app);
+                    assert!(
+                        app.game_state == GameState::Playing && app.input.focused,
+                        "{rig:?} {stop:?}: play resumed"
+                    );
+                    run_frame(&mut app, &mut fake);
+                    assert_eq!(
+                        drawn(&fake),
+                        shown_view,
+                        "{rig:?} {stop:?}: the first frame after resuming still draws the shown view"
+                    );
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+
+                    assert_eq!(
+                        sim_look(&app, rig),
+                        (
+                            yaw_before + (-look_x),
+                            (pitch_before + (-look_y)).clamp(-PITCH_LIMIT, PITCH_LIMIT)
+                        ),
+                        "{rig:?} {stop:?}: the tick lands on the view that was shown"
+                    );
+                }
+            }
+        }
+
+        fn frame_at(app: &mut App, fake: &mut FakeRenderer, alpha: f32) -> (Mat4, Vec3) {
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, Some(&mut *fake), None);
+            Game::frame(app, &mut ctx, alpha);
+            let camera = fake.cameras.last().expect("a frame began");
+            (camera.0, camera.2)
+        }
+
+        #[test]
+        fn paused_walking_view_holds_still() {
+            for stop in [Stop::Paused, Stop::Menu, Stop::Console] {
+                let mut app = walking_app();
+                HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ)).step(&mut app, 3);
+                let (previous, current) = app.physics.player_states().expect("a walker");
+                assert!(
+                    previous.position.distance(current.position) > 1e-3,
+                    "the walk is moving"
+                );
+                let mut fake = FakeRenderer::default();
+                mouse(&mut app, 300.0, 150.0);
+                frame_at(&mut app, &mut fake, 0.5);
+                let pending = app.input.actions.pending_look();
+                assert_ne!(pending, (0.0, 0.0), "{stop:?}: look is live first");
+
+                stop.enter(&mut app);
+                let (yaw_delta, pitch_delta) = look_to_turn(pending);
+                let (expected_view, _, expected_eye) = controller_to_camera(
+                    &app.simulation
+                        .player_controller
+                        .turned(yaw_delta, pitch_delta),
+                );
+                let mut drawn_views = Vec::new();
+                for alpha in [0.0, 0.3, 0.7, 1.0] {
+                    // The strategy loop keeps ticking while stopped.
+                    let command = Game::command(&mut app);
+                    tick_app(&mut app, &command);
+                    drawn_views.push((alpha, frame_at(&mut app, &mut fake, alpha)));
+                }
+
+                assert_eq!(
+                    app.physics.player_states(),
+                    Some((previous, current)),
+                    "{stop:?}: the tick states stay frozen"
+                );
+                for (alpha, (view, eye)) in drawn_views {
+                    assert_eq!(eye, expected_eye, "{stop:?} at alpha {alpha}: the eye");
+                    assert_eq!(view, expected_view, "{stop:?} at alpha {alpha}: the view");
+                }
+            }
+        }
+
+        #[test]
+        fn unfocused_device_motion_does_not_turn_after_refocus() {
+            for rig in RIGS {
+                let mut app = rig_app(rig);
+                let mut fake = FakeRenderer::default();
+                run_frame(&mut app, &mut fake);
+                let level = forward_of(drawn(&fake));
+                focus(&mut app, false);
+
+                mouse(&mut app, 400.0, 200.0);
+                focus(&mut app, true);
+                run_frame(&mut app, &mut fake);
+                let command = Game::command(&mut app);
+
+                assert!(
+                    forward_of(drawn(&fake)).distance(level) < 1e-6,
+                    "{rig:?}: the view turned"
+                );
+                assert_eq!(command.input.yaw_delta, 0.0, "{rig:?}");
+                assert_eq!(command.input.pitch_delta, 0.0, "{rig:?}");
+            }
+        }
+
+        #[test]
+        fn isometric_frames_do_not_turn_the_view() {
+            let mut app = rig_app(Rig::FreeCam);
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let mut fake = FakeRenderer::default();
+
+            app.input.actions.mouse_motion(400.0, 200.0);
+            run_frame(&mut app, &mut fake);
+
+            let command = Game::command(&mut app);
+
+            assert_eq!(fake.cameras.last().copied(), Some(app.camera));
+            assert_eq!(command.input.yaw_delta, 0.0);
+            assert_eq!(command.input.pitch_delta, 0.0);
+        }
+    }
+
+    mod pointer_select {
+        use super::*;
+        use glam::{UVec2, Vec3};
+        use moho_input::key::MouseButton;
+
+        pub(super) const VIEWPORT: UVec2 = UVec2::new(1280, 720);
+
+        /// A flat floor of smooth blocks seen from above and behind, in `mode`.
+        pub(super) fn app_over_flat_ground(mode: CameraMode) -> App {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(mode);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 2..14 {
+                for z in 2..14 {
+                    for y in 2..=3 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            let eye = Vec3::new(8.0, 14.0, 20.0);
+            let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 3.0, 8.0), Vec3::Y);
+            let proj = glam::camera::rh::proj::directx::perspective(
+                std::f32::consts::FRAC_PI_3,
+                16.0 / 9.0,
+                0.1,
+                500.0,
+            );
+            app.camera = (view, proj, eye);
+            app.viewport = VIEWPORT;
+            app
+        }
+
+        /// The ground surface point under world `(x, z)`, found by a straight-down cast.
+        pub(super) fn ground_at(app: &App, x: f32, z: f32) -> Vec3 {
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            flagstone_game::raycast::raycast_surface(
+                grid,
+                Vec3::new(x, 30.0, z),
+                Vec3::NEG_Y,
+                100.0,
+            )
+            .expect("the floor is under the point")
+            .position
+        }
+
+        pub(super) fn click_on(app: &mut App, world: Vec3) {
+            let (view, proj, _) = app.camera;
+            let ndc = (proj * view).project_point3(world);
+            let (x, y) = (
+                (ndc.x + 1.0) * 0.5 * VIEWPORT.x as f32,
+                (1.0 - ndc.y) * 0.5 * VIEWPORT.y as f32,
+            );
+            app.input.actions.pointer_moved(x, y);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+        }
+
+        #[test]
+        fn strategy_click_records_the_surface_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_some());
+            let hit = app.pointer_hit.expect("the click found the ground");
+            assert!(
+                hit.position.distance(ground) < 0.05,
+                "hit {:?} vs ground {ground:?}",
+                hit.position
+            );
+        }
+
+        #[test]
+        fn first_person_click_records_no_pointer_hit() {
+            let mut app = app_over_flat_ground(CameraMode::FirstPerson);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_none());
+            assert!(app.pointer_hit.is_none());
+        }
+
+        #[test]
+        fn strategy_click_without_a_pointer_records_no_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_none());
+            assert!(app.pointer_hit.is_none());
+        }
+
+        #[test]
+        fn strategy_click_on_the_sky_clears_the_previous_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+            assert!(app.pointer_hit.is_some());
+            app.input.actions.pointer_moved(640.0, 2.0);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_some());
+            assert!(app.pointer_hit.is_none());
+        }
+
+        #[test]
+        fn tick_without_a_click_keeps_the_last_hit() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            let idle = Game::command(&mut app);
+            tick_app(&mut app, &idle);
+
+            assert!(idle.select.is_none());
+            assert!(app.pointer_hit.is_some());
+        }
+    }
+
+    mod mine_designation {
+        use super::pointer_select::{app_over_flat_ground, click_on, ground_at};
+        use super::*;
+        use crate::app::input_state::Designation;
+        use flagstone_game::raycast::raycast_surface;
+        use flagstone_ui::overlays::HudIntents;
+        use glam::Vec3;
+        use moho_core::events::AudioEvent;
+        use moho_input::key::MouseButton;
+        use moho_renderer::MARKER_INFLATE;
+        use std::sync::mpsc::Receiver;
+
+        fn designating_app() -> App {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            app.input.designation = Designation::Mine;
+            app
+        }
+
+        /// The block the straight-down surface cast names under world `(x, z)`.
+        fn block_under(app: &App, x: f32, z: f32) -> [i32; 3] {
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            raycast_surface(grid, Vec3::new(x, 30.0, z), Vec3::NEG_Y, 100.0)
+                .expect("the floor is under the point")
+                .block_pos
+                .to_array()
+        }
+
+        fn step(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn marked(app: &App) -> Vec<[i32; 3]> {
+            app.colony.marks.iter().map(|(pos, _)| pos).collect()
+        }
+
+        fn fills(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
+            app.scene.markers_mut().draws(Vec3::ZERO).fills
+        }
+
+        /// Whether `fill` is the box of the unit cell at `pos`, within the renderer's inflation.
+        fn is_cell(fill: &moho_render_api::MarkerGpu, pos: [i32; 3]) -> bool {
+            (0..3).all(|axis| {
+                let lo = pos[axis] as f32;
+                (fill.min[axis] - (lo - MARKER_INFLATE)).abs() < 1e-4
+                    && (fill.max[axis] - (lo + 1.0 + MARKER_INFLATE)).abs() < 1e-4
+            })
+        }
+
+        fn click_the_sky(app: &mut App) {
+            app.input.actions.pointer_moved(640.0, 2.0);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+        }
+
+        fn click_ground(app: &mut App) -> [i32; 3] {
+            let ground = ground_at(app, 6.3, 9.1);
+            click_on(app, ground);
+            block_under(app, 6.3, 9.1)
+        }
+
+        fn tap(app: &mut App) {
+            let key = default_key(app, StrategyAction::MineDesignation);
+            app.input.actions.key(key, true);
+            app.input.actions.key(key, false);
+        }
+
+        fn record_audio(app: &App) -> Receiver<AudioEvent> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                let _ = tx.send(event.clone());
+            });
+            rx
+        }
+
+        fn sounds(app: &App, audio: &Receiver<AudioEvent>) -> Vec<(String, f32)> {
+            app.event_bus.process_deferred();
+            audio
+                .try_iter()
+                .filter_map(|event| match event {
+                    AudioEvent::PlaySound { path, volume } => Some((path, volume)),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn asset(name: &str) -> std::path::PathBuf {
+            let sounds = crate::app::sounds::Sounds::in_checkout();
+            match name {
+                "mark.wav" => sounds.mark,
+                "unmark.wav" => sounds.unmark,
+                other => panic!("no cue named {other}"),
+            }
+        }
+
+        #[test]
+        fn a_click_with_the_designation_active_marks_the_hit_block() {
+            let mut app = designating_app();
+            let block = click_ground(&mut app);
+
+            let command = step(&mut app);
+
+            assert!(command.mark.is_some(), "the press forms the mark command");
+            assert!(command.select.is_none(), "and not a selection");
+            assert_eq!(marked(&app), [block]);
+            assert!(app.pointer_hit.is_none(), "a mark click never selects");
+        }
+
+        #[test]
+        fn a_mark_shows_a_marker_on_the_next_frame() {
+            let mut app = designating_app();
+            let block = click_ground(&mut app);
+            step(&mut app);
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            let drawn = fills(&mut app);
+            assert_eq!(drawn.len(), 1);
+            assert!(is_cell(&drawn[0], block), "{:?} vs {block:?}", drawn[0]);
+            assert!(drawn[0].color[3] > 0.0 && drawn[0].color[3] < 1.0);
+        }
+
+        #[test]
+        fn a_second_click_on_a_marked_block_cancels_it_and_its_marker() {
+            let mut app = designating_app();
+            click_ground(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let marked_once = (marked(&app).len(), fills(&mut app).len());
+
+            click_ground(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert_eq!(marked_once, (1, 1));
+            assert!(marked(&app).is_empty(), "the second click cancels");
+            assert!(fills(&mut app).is_empty(), "and its marker goes");
+        }
+
+        #[test]
+        fn a_click_on_the_sky_marks_nothing() {
+            let mut app = designating_app();
+            let audio = record_audio(&app);
+            let block = click_ground(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let marking_cues = sounds(&app, &audio).len();
+            click_the_sky(&mut app);
+
+            let command = step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert_eq!(marking_cues, 1, "the first click marked a block");
+            assert!(command.mark.is_some(), "the click is still a mark command");
+            assert_eq!(marked(&app), [block], "the sky click cancels nothing");
+            assert_eq!(fills(&mut app).len(), 1, "and its marker stays");
+            assert!(sounds(&app, &audio).is_empty(), "and plays no cue");
+        }
+
+        #[test]
+        fn a_click_without_the_designation_selects_and_marks_nothing() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            click_ground(&mut app);
+
+            let command = step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert!(command.select.is_some());
+            assert!(command.mark.is_none());
+            assert!(app.pointer_hit.is_some(), "the click selected");
+            assert!(marked(&app).is_empty());
+            assert!(fills(&mut app).is_empty());
+        }
+
+        #[test]
+        fn the_mark_command_is_not_formed_in_first_person() {
+            let mut app = app_over_flat_ground(CameraMode::FirstPerson);
+            app.input.designation = Designation::Mine;
+            click_ground(&mut app);
+
+            let command = step(&mut app);
+
+            assert!(command.mark.is_none());
+            assert!(marked(&app).is_empty());
+        }
+
+        #[test]
+        fn the_designation_key_toggles_the_control_once_per_press() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let initially = app.input.designation;
+
+            tap(&mut app);
+            step(&mut app);
+            let after_first_press = app.input.designation;
+            step(&mut app);
+            let with_no_press = app.input.designation;
+            tap(&mut app);
+            step(&mut app);
+            let after_second_press = app.input.designation;
+            let key = default_key(&app, StrategyAction::MineDesignation);
+            app.input.actions.key(key, true);
+            step(&mut app);
+            app.input.actions.key(key, true);
+            let repeats: Vec<_> = (0..4)
+                .map(|_| {
+                    step(&mut app);
+                    app.input.designation
+                })
+                .collect();
+
+            assert_eq!(initially, Designation::None);
+            assert_eq!(after_first_press, Designation::Mine);
+            assert_eq!(with_no_press, Designation::Mine, "the edge is consumed");
+            assert_eq!(after_second_press, Designation::None);
+            assert!(
+                repeats.iter().all(|&d| d == Designation::Mine),
+                "a held key toggled again: {repeats:?}"
+            );
+        }
+
+        #[test]
+        fn the_hud_toggle_flips_the_designation() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let toggle = HudIntents {
+                toggle_mine_designation: true,
+                ..HudIntents::default()
+            };
+
+            app.apply_hud_intents(toggle);
+            let on = app.input.designation;
+            app.apply_hud_intents(HudIntents::default());
+            let unchanged = app.input.designation;
+            app.apply_hud_intents(toggle);
+
+            assert_eq!(on, Designation::Mine);
+            assert_eq!(unchanged, Designation::Mine, "no intent, no change");
+            assert_eq!(app.input.designation, Designation::None);
+        }
+
+        #[test]
+        fn the_mark_applies_on_the_next_tick_not_on_the_event() {
+            let mut app = designating_app();
+
+            click_ground(&mut app);
+            let on_the_event = marked(&app);
+            let command = Game::command(&mut app);
+            let before_the_tick = marked(&app);
+            tick_app(&mut app, &command);
+
+            assert!(on_the_event.is_empty());
+            assert!(
+                command.mark.is_some(),
+                "the press is in the sampled command"
+            );
+            assert!(before_the_tick.is_empty(), "sampling marks nothing");
+            assert_eq!(marked(&app).len(), 1);
+        }
+
+        #[test]
+        fn marking_and_cancelling_publish_their_cues() {
+            let mut app = designating_app();
+            let audio = record_audio(&app);
+
+            click_ground(&mut app);
+            step(&mut app);
+            let marking = sounds(&app, &audio);
+            click_ground(&mut app);
+            step(&mut app);
+            let cancelling = sounds(&app, &audio);
+            click_the_sky(&mut app);
+            step(&mut app);
+            let missing = sounds(&app, &audio);
+
+            assert_eq!(marking.len(), 1, "{marking:?}");
+            assert_eq!(
+                std::path::Path::new(&marking[0].0),
+                asset("mark.wav").as_path()
+            );
+            assert!(marking[0].1 > 0.0, "audible: {marking:?}");
+            assert_eq!(cancelling.len(), 1, "{cancelling:?}");
+            assert_eq!(
+                std::path::Path::new(&cancelling[0].0),
+                asset("unmark.wav").as_path()
+            );
+            assert!(cancelling[0].1 > 0.0, "audible: {cancelling:?}");
+            assert!(missing.is_empty(), "a miss is silent: {missing:?}");
+        }
+
+        #[test]
+        fn mark_assets_exist() {
+            for name in ["mark.wav", "unmark.wav"] {
+                let path = asset(name);
+
+                let bytes =
+                    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+                assert!(bytes.starts_with(b"RIFF"), "{name} is not a WAV file");
+            }
+        }
+
+        /// A first-person player facing a wall of blocks, tool in hand, with an input channel.
+        fn app_facing_a_wall() -> (App, std::sync::mpsc::Sender<crate::input_event::InputEvent>) {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.simulation.set_position_yaw_pitch(
+                Vec3::new(4.5, 70.5, 6.5),
+                std::f32::consts::PI,
+                0.0,
+            );
+            app.possessed_pawn_mut()
+                .select_slot(flagstone_game::pawn::TOOL_SLOT);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 2..=6 {
+                for y in 68..=72 {
+                    for z in 1..=3 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.input.unconsumed_rx = Some(rx);
+            (app, tx)
+        }
+
+        #[test]
+        fn mining_a_marked_block_by_hand_removes_its_marker() {
+            let (mut app, input) = app_facing_a_wall();
+            for x in 2..=6 {
+                for y in 68..=72 {
+                    for z in 1..=3 {
+                        app.colony.marks.toggle([x, y, z]);
+                    }
+                }
+            }
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let before = fills(&mut app).len();
+            input
+                .send(crate::input_event::InputEvent::MineRequested)
+                .expect("the receiver is alive");
+
+            step(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            let solid_left = marked(&app)
+                .into_iter()
+                .filter(|&[x, y, z]| grid.is_solid_at(flagstone_voxel::BlockPos::new(x, y, z)))
+                .count();
+            assert_eq!(before, 75, "every marked block shows a marker");
+            assert_eq!(marked(&app).len(), 74, "the mined block's mark is gone");
+            assert_eq!(solid_left, 74, "every remaining mark is still a block");
+            assert_eq!(fills(&mut app).len(), 74, "and so is its marker");
+        }
+    }
+
+    mod view_ceiling {
+        use super::pointer_select::{VIEWPORT, click_on};
+        use super::*;
+        use crate::app::cut_caps::tests::ground_app;
+        use crate::app::input_state::Designation;
+        use crate::app::view_level;
+        use glam::Vec3;
+
+        /// The loaded extent's top: choosing it clears the cut.
+        const TOP: i32 = 32;
+        const LEVEL: i32 = 4;
+
+        /// Ground over blocks y `0..=27`, in the strategy view, the view lowered to `LEVEL`.
+        fn lowered_app() -> App {
+            let mut app = ground_app();
+            app.game_state = GameState::Playing;
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            view_level::update(&mut app, Some(LEVEL));
+            let eye = Vec3::new(8.0, 50.0, 30.0);
+            let view =
+                glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 27.0, 8.0), Vec3::Y);
+            let proj = glam::camera::rh::proj::directx::perspective(
+                std::f32::consts::FRAC_PI_3,
+                16.0 / 9.0,
+                0.1,
+                500.0,
+            );
+            app.camera = (view, proj, eye);
+            app.viewport = VIEWPORT;
+            app
+        }
+
+        fn down_at(x: f32, z: f32) -> Ray {
+            Ray {
+                origin: Vec3::new(x, 60.0, z),
+                direction: Vec3::NEG_Y,
+            }
+        }
+
+        fn marked(app: &App) -> Vec<[i32; 3]> {
+            app.colony.marks.iter().map(|(pos, _)| pos).collect()
+        }
+
+        fn mark_with(ceiling: Option<i32>) -> StrategyCommand {
+            StrategyCommand {
+                mark: Some(down_at(8.3, 9.1)),
+                ceiling,
+                ..StrategyCommand::default()
+            }
+        }
+
+        fn click_and_sample(app: &mut App) -> StrategyCommand {
+            click_on(app, Vec3::new(8.0, 27.0, 8.0));
+            Game::command(app)
+        }
+
+        #[test]
+        fn with_the_view_lowered_a_mark_click_marks_the_visible_layer() {
+            let mut app = lowered_app();
+
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn with_the_view_lowered_a_second_click_cancels_the_mark_below() {
+            let mut app = lowered_app();
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+            let after_first = marked(&app);
+
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+
+            assert_eq!(after_first, [[8, LEVEL - 1, 9]]);
+            assert!(marked(&app).is_empty(), "the second click cancels it");
+        }
+
+        #[test]
+        fn with_the_view_lowered_the_pointer_hit_is_below_the_cut() {
+            let mut app = lowered_app();
+            let command = StrategyCommand {
+                select: Some(down_at(8.3, 9.1)),
+                ceiling: Some(LEVEL),
+                ..StrategyCommand::default()
+            };
+            view_level::update(&mut app, Some(TOP));
+
+            tick_app(&mut app, &command);
+
+            let hit = app.pointer_hit.expect("the click found the kept ground");
+            assert_eq!(hit.block_pos.to_array(), [8, LEVEL - 1, 9]);
+            assert!((hit.position.y - LEVEL as f32).abs() < 0.01, "{hit:?}");
+        }
+
+        #[test]
+        fn a_mark_uses_the_ceiling_its_command_carries_not_the_live_slider() {
+            let cases = [
+                (Some(LEVEL), TOP, [8, LEVEL - 1, 9]),
+                (None, LEVEL, [8, 27, 9]),
+            ];
+
+            for (carried, live, expected) in cases {
+                let mut app = lowered_app();
+                view_level::update(&mut app, Some(live));
+
+                tick_app(&mut app, &mark_with(carried));
+
+                assert_eq!(marked(&app), [expected], "carried {carried:?}, live {live}");
+            }
+        }
+
+        #[test]
+        fn the_frame_hides_marks_above_the_live_cut_and_shows_them_again() {
+            let mut app = lowered_app();
+            app.colony.marks.toggle([8, 27, 9]);
+            let drawn = |app: &mut App| app.scene.markers_mut().draws(Vec3::ZERO).fills.len();
+            view_level::update(&mut app, Some(LEVEL));
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let lowered = drawn(&mut app);
+            view_level::update(&mut app, Some(TOP));
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let raised = drawn(&mut app);
+
+            assert_eq!(lowered, 0, "the mark above the cut is not drawn");
+            assert_eq!(raised, 1, "raising the view draws it again");
+        }
+
+        #[test]
+        fn a_deep_cut_is_still_in_pointer_range_of_the_camera_above_the_surface() {
+            let mut app = lowered_app();
+            app.light_system
+                .as_mut()
+                .expect("light system")
+                .grid_mut()
+                .mutator()
+                .fill_region(glam::IVec3::new(0, 28, 0), glam::IVec3::new(15, 170, 15), 0);
+            let direction = Vec3::new(-1.0, -1.0, -1.0).normalize();
+            let target = Vec3::new(8.3, LEVEL as f32, 9.1);
+            let origin = target - direction * ((195.0 - LEVEL as f32) / -direction.y);
+            let command = StrategyCommand {
+                mark: Some(Ray { origin, direction }),
+                ceiling: Some(LEVEL),
+                ..StrategyCommand::default()
+            };
+
+            tick_app(&mut app, &command);
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn a_near_horizontal_ray_under_a_ceiling_has_a_bounded_reach() {
+            let at = |origin_y: f32, dir_y: f32| Ray {
+                origin: Vec3::new(0.0, origin_y, 0.0),
+                direction: Vec3::new(1.0, dir_y, 0.0),
+            };
+            let rays = [
+                at(100.0, -1e-6),
+                at(100.0, -f32::MIN_POSITIVE),
+                at(100.0, -0.0),
+                at(100.0, 0.0),
+                at(100.0, f32::NAN),
+                at(f32::NAN, -1.0),
+                at(f32::INFINITY, -1e-6),
+                at(100.0, f32::NEG_INFINITY),
+            ];
+
+            for ray in rays {
+                let range = pointer_range(ray, Some(4));
+
+                assert!(range.is_finite(), "{ray:?}: {range}");
+                assert!(
+                    (POINTER_RAY_RANGE..=2.0 * POINTER_RAY_RANGE).contains(&range),
+                    "{ray:?}: {range}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_ray_without_a_ceiling_or_above_the_cut_keeps_the_plain_range() {
+            let down = Ray {
+                origin: Vec3::new(0.0, 3.0, 0.0),
+                direction: Vec3::NEG_Y,
+            };
+
+            assert_eq!(pointer_range(down, Some(4)), POINTER_RAY_RANGE);
+            assert_eq!(
+                pointer_range(
+                    Ray {
+                        origin: Vec3::splat(50.0),
+                        ..down
+                    },
+                    None
+                ),
+                POINTER_RAY_RANGE
+            );
+        }
+
+        #[test]
+        fn sampling_a_click_records_the_view_ceiling() {
+            let mut app = lowered_app();
+            let select = click_and_sample(&mut app);
+            app.input.designation = Designation::Mine;
+            let mark = click_and_sample(&mut app);
+            view_level::update(&mut app, Some(TOP));
+            let uncut = click_and_sample(&mut app);
+            view_level::update(&mut app, Some(LEVEL));
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let possessed = Game::command(&mut app);
+
+            assert!(select.select.is_some() && mark.mark.is_some() && uncut.mark.is_some());
+            assert_eq!(select.ceiling, Some(LEVEL), "a select click");
+            assert_eq!(mark.ceiling, Some(LEVEL), "a mark click");
+            assert_eq!(uncut.ceiling, None, "no cut");
+            assert_eq!(possessed.ceiling, None, "first person");
+        }
+    }
+
+    mod strategy_camera {
+        use super::*;
+        use flagstone_game::controller::CAMERA_CLEARANCE;
+        use glam::{UVec2, Vec3};
+
+        const VIEWPORT: UVec2 = UVec2::new(1280, 720);
+
+        /// A strategy view over an empty world, the window focused and `VIEWPORT` pixels wide.
+        fn strategy_app(mode: CameraMode) -> App {
+            let mut app = standing_app();
+            app.simulation.set_camera_mode(mode);
+            app.simulation.look_at(Vec3::new(8.0, 0.0, 8.0));
+            app.viewport = VIEWPORT;
+            app.input.focused = true;
+            app
+        }
+
+        fn tick_once(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn pawn_state(app: &App) -> moho_physics::CharacterState {
+            let handle = app.physics.player.expect("the pawn was spawned");
+            app.physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(handle)
+                .expect("the pawn exists")
+        }
+
+        #[test]
+        fn strategy_pan_leaves_the_pawn_where_it_was() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            hold(&mut app, StrategyAction::MoveForward);
+            tick_once(&mut app);
+            let pawn = app.simulation.position();
+            let body = pawn_state(&app).position;
+            let eye = app.camera.2;
+
+            for _ in 0..60 {
+                tick_once(&mut app);
+            }
+
+            assert_eq!(app.simulation.position(), pawn);
+            assert!(pawn_state(&app).position.distance(body) < 1e-4);
+            assert!(
+                app.camera.2.distance(eye) > 3.0,
+                "the eye moved from {eye} to {}",
+                app.camera.2
+            );
+        }
+
+        #[test]
+        fn pointer_at_the_screen_edge_pans_toward_it() {
+            let forward = Vec3::new(-1.0, 0.0, -1.0).normalize();
+            let right = Vec3::new(1.0, 0.0, -1.0).normalize();
+            let rows = [
+                ("left", (0.0, 360.0), -right),
+                ("right", (1279.0, 360.0), right),
+                ("top", (640.0, 0.0), forward),
+                ("bottom", (640.0, 719.0), -forward),
+            ];
+
+            for (name, (x, y), direction) in rows {
+                let mut app = strategy_app(CameraMode::Isometric);
+                let start = app.simulation.player_controller.rts_look_target;
+                app.input.actions.pointer_moved(x, y);
+
+                let command = tick_once(&mut app);
+
+                let moved = app.simulation.player_controller.rts_look_target - start;
+                let step = app.simulation.player_controller.speed * tick().as_secs_f32();
+                assert!(
+                    command.input.forward != 0.0 || command.input.right != 0.0,
+                    "{name}: no pan in the command"
+                );
+                assert!(moved.length() > 0.9 * step, "{name}: moved {moved}");
+                assert!(
+                    moved.normalize().dot(direction) > 0.99,
+                    "{name}: moved {moved}"
+                );
+            }
+        }
+
+        #[test]
+        fn pointer_outside_the_window_does_not_pan() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            let start = app.simulation.player_controller.rts_look_target;
+            app.input.actions.pointer_moved(0.0, 0.0);
+            app.input.actions.pointer_left();
+
+            let command = tick_once(&mut app);
+
+            assert_eq!(command.input.forward, 0.0);
+            assert_eq!(command.input.right, 0.0);
+            assert_eq!(app.simulation.player_controller.rts_look_target, start);
+        }
+
+        #[test]
+        fn edge_pan_is_ignored_outside_focused_strategy_mode() {
+            let cases = [
+                (
+                    "first person, focused",
+                    CameraMode::FirstPerson,
+                    true,
+                    GameState::Playing,
+                ),
+                (
+                    "strategy, unfocused",
+                    CameraMode::Isometric,
+                    false,
+                    GameState::Playing,
+                ),
+                (
+                    "strategy, focused, paused",
+                    CameraMode::Isometric,
+                    true,
+                    GameState::Paused,
+                ),
+                (
+                    "strategy, focused, menu",
+                    CameraMode::Isometric,
+                    true,
+                    GameState::Menu,
+                ),
+            ];
+
+            for (name, mode, focused, state) in cases {
+                let mut app = strategy_app(mode);
+                app.game_state = state;
+                app.input.focused = focused;
+                app.input.actions.pointer_moved(0.0, 0.0);
+
+                let command = Game::command(&mut app);
+
+                assert_eq!(command.input.forward, 0.0, "{name}");
+                assert_eq!(command.input.right, 0.0, "{name}");
+            }
+        }
+
+        #[test]
+        fn strategy_camera_clears_a_hillside_in_the_grid() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            app.simulation.player_controller.rts_height = 5.0;
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            // A 45 degree slope rising toward +x only: the column at x has its top block at y = x.
+            for x in 2..30 {
+                for z in 2..30 {
+                    for y in [x - 1, x] {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            app.simulation.look_at(Vec3::new(10.5, 11.0, 10.5));
+            hold(&mut app, StrategyAction::MoveBack);
+
+            for tick_number in 0..120 {
+                tick_once(&mut app);
+
+                let eye = app.camera.2;
+                let top = app
+                    .light_system
+                    .as_ref()
+                    .expect("light system")
+                    .grid()
+                    .get_height(eye.x.floor() as i32, eye.z.floor() as i32)
+                    .expect("the eye is over loaded ground");
+                let floor = top as f32 + 1.0 + CAMERA_CLEARANCE;
+                assert!(
+                    eye.y >= floor - 1e-3,
+                    "tick {tick_number}: eye {eye} below {floor}"
+                );
+            }
+        }
+    }
+
+    mod day_night {
+        use super::*;
+
+        fn time_after_60_ticks(state: GameState, clock: GameClock) -> f32 {
+            let mut app = playing_app();
+            app.game_state = state;
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(clock));
+
+            sim.step(&mut app, 60);
+
+            sim.clock().time_of_day()
+        }
+
+        /// Day runs 12 h per 600 s, so one second of ticks is 0.02 h.
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        #[test]
+        fn time_of_day_advances_only_while_playing() {
+            let playing = time_after_60_ticks(GameState::Playing, noon());
+
+            assert!((playing - 12.02).abs() < 1e-3, "playing: {playing}");
+            for state in [GameState::Menu, GameState::Paused, GameState::ConsoleOpen] {
+                assert_eq!(time_after_60_ticks(state, noon()), 12.0, "{state:?}");
+            }
+        }
+
+        #[test]
+        fn playing_overrides_a_frozen_time_scale() {
+            let mut frozen = noon();
+            frozen.set_time_scale(0.0);
+
+            let time = time_after_60_ticks(GameState::Playing, frozen);
+
+            assert!((time - 12.02).abs() < 1e-3, "time {time}");
+        }
+
+        #[test]
+        fn console_time_command_resets_the_loop_clock() {
+            let mut app = playing_app();
+            app.game_state = GameState::ConsoleOpen;
+            app.event_bus
+                .publish(moho_core::events::GraphicsEvent::TimeOfDayChanged {
+                    time: 18.5,
+                    sun_angle: 0.0,
+                });
+            app.event_bus.process_deferred();
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+
+            sim.step(&mut app, 1);
+
+            assert_eq!(sim.clock().time_of_day(), 18.5);
+        }
+
+        #[test]
+        fn close_requested_autosaves_the_clock_time_of_day() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut clock = GameClock::default();
+            clock.reset_to(17.5);
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CloseRequested),
+            );
+
+            let (spec, _, _) =
+                crate::save::read_scene_and_metadata(app.saves_dir.join("scene.bin"))
+                    .expect("autosave is readable");
+            assert_eq!(spec.initial_time_of_day, 17.5);
+        }
+    }
+
+    mod pause {
+        use super::*;
+        use moho_core::events::UiEvent;
+        use std::sync::{Arc, Mutex};
+        use winit::event::DeviceEvent;
+
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        fn attach_adapter(app: &mut App) -> Arc<Mutex<flagstone_ui::EguiAdapter>> {
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            adapter
+        }
+
+        fn screen_shown(adapter: &Arc<Mutex<flagstone_ui::EguiAdapter>>) -> Option<String> {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .active_screen_name()
+                .map(str::to_owned)
+        }
+
+        fn publish_ui(app: &mut App, clock: &mut GameClock, event: UiEvent) {
+            app.event_bus.publish(event);
+            app.event_bus.process_deferred();
+            EventProcessor::new().process_ui_events(app, clock);
+        }
+
+        fn first_person_app() -> App {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app
+        }
+
+        /// Records every scene load the UI requests on `app`'s bus.
+        fn record_loads(app: &App) -> Arc<Mutex<Vec<std::path::PathBuf>>> {
+            let loads = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&loads);
+            app.event_bus.subscribe(move |e: &UiEvent| {
+                if let UiEvent::LoadSceneRequested { path } = e {
+                    sink.lock().expect("load sink").push(path.clone());
+                }
+            });
+            loads
+        }
+
+        #[test]
+        fn escape_while_playing_pauses_in_place() {
+            let mut app = first_person_app();
+            let adapter = attach_adapter(&mut app);
+
+            app.escape_pressed();
+
+            assert_eq!(app.game_state, GameState::Paused);
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("pause"));
+            let position = app.simulation.position();
+            let look = app.simulation.yaw_pitch();
+            hold(&mut app, StrategyAction::MoveForward);
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+            sim.step(&mut app, 60);
+            assert_eq!(app.simulation.position(), position, "the pawn moved");
+            assert_eq!(app.simulation.yaw_pitch(), look, "the camera turned");
+            assert_eq!(sim.clock().time_of_day(), 12.0, "game time ran");
+            let mut fake = FakeRenderer::default();
+            let exit = run_frame(&mut app, &mut fake);
+            assert_eq!(fake.frames_begun, 1, "the world is still drawn");
+            assert!(!exit);
+        }
+
+        #[test]
+        fn resuming_restores_play_without_a_load() {
+            type Resume = fn(&mut App, &mut GameClock);
+            let rows: [(&str, Resume); 3] = [
+                ("Continue", |app, clock| {
+                    publish_ui(app, clock, UiEvent::ResumeRequested);
+                }),
+                ("Escape without a UI", |app, _| app.escape_pressed()),
+                ("Escape on the pause window", |app, _| {
+                    let adapter = attach_adapter(app);
+                    adapter.lock().expect("adapter lock").show_menu("pause");
+                    app.escape_pressed();
+                }),
+            ];
+
+            for (row, resume) in rows {
+                let mut app = first_person_app();
+                app.game_state = GameState::Paused;
+                let position = app.simulation.position();
+                let look = app.simulation.yaw_pitch();
+                let loads = record_loads(&app);
+                let mut clock = noon();
+
+                resume(&mut app, &mut clock);
+                app.event_bus.process_deferred();
+
+                assert_eq!(app.game_state, GameState::Playing, "row {row}");
+                assert_eq!(app.simulation.position(), position, "row {row}");
+                assert_eq!(app.simulation.yaw_pitch(), look, "row {row}");
+                assert_eq!(clock.time_of_day(), 12.0, "row {row}");
+                let loads = loads.lock().expect("load sink");
+                assert!(loads.is_empty(), "row {row}: loaded {loads:?}");
+            }
+        }
+
+        #[test]
+        fn settings_from_pause_keep_the_game_paused() {
+            let mut app = first_person_app();
+            let adapter = attach_adapter(&mut app);
+            let mut clock = noon();
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+
+            publish_ui(
+                &mut app,
+                &mut clock,
+                UiEvent::MenuShown {
+                    name: "settings".to_string(),
+                },
+            );
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
+            assert_eq!(app.game_state, GameState::Paused);
+            publish_ui(
+                &mut app,
+                &mut clock,
+                UiEvent::MenuShown {
+                    name: "pause".to_string(),
+                },
+            );
+
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("pause"));
+            assert_eq!(app.game_state, GameState::Paused);
+        }
+
+        #[test]
+        fn exit_to_main_menu_saves_then_shows_the_start_menu() {
+            let (mut app, _temp) = app_with_saves_dir();
+            let mut clock = noon();
+            let at_pause = glam::Vec3::new(3.0, 40.0, 5.0);
+            app.simulation.set_position_yaw_pitch(at_pause, 0.7, 0.1);
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            publish_ui(&mut app, &mut clock, UiEvent::MainMenuRequested);
+            let mut fake = FakeRenderer::default();
+
+            let exit = run_frame_at(&mut app, &mut fake, 17.5);
+
+            assert!(!exit, "leaving for the menu must not quit");
+            assert_eq!(app.game_state, GameState::Menu);
+            assert!(!app.main_menu_requested, "the request is consumed");
+            let (spec, scene_bytes, _) =
+                crate::save::read_scene_and_metadata(app.saves_dir.join("scene.bin"))
+                    .expect("the world is saved before leaving it");
+            assert_eq!(spec.initial_time_of_day, 17.5);
+            let mut entities = flagstone_game::scene::SceneEntities::default();
+            let (camera, _lights) =
+                flagstone_game::scene_persistence::load_from_bytes(&scene_bytes, &mut entities)
+                    .expect("the save decodes");
+            assert_eq!(camera, Some((at_pause, 0.7, 0.1)));
+        }
+
+        #[test]
+        fn play_input_does_not_reach_the_world_while_paused() {
+            let mut app = first_person_app();
+            app.possessed_pawn_mut()
+                .select_slot(flagstone_game::pawn::TOOL_SLOT);
+            // Identity rotation: the camera looks down -Z from just in front of the wall.
+            app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+            let aimed = flagstone_voxel::BlockPos::new(4, 70, 3);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 2..=6 {
+                for y in 68..=72 {
+                    for z in 1..=3 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            assert!(grid.is_solid_at(aimed));
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            let position = app.simulation.position();
+            let look = app.simulation.yaw_pitch();
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.input.unconsumed_tx = Some(tx.clone());
+            app.input.unconsumed_rx = Some(rx);
+
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (400.0, 200.0),
+                }),
+            );
+            hold(&mut app, StrategyAction::MoveForward);
+            tx.send(crate::input_event::InputEvent::MineRequested)
+                .expect("channel open");
+            tx.send(crate::input_event::InputEvent::MouseWheel { delta_y: 3.0 })
+                .expect("channel open");
+            EventProcessor::new().process_input_events(&mut app);
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+
+            assert_eq!(command.input.yaw_delta, 0.0);
+            assert_eq!(command.input.pitch_delta, 0.0);
+            assert_eq!(command.input.forward, 0.0);
+            assert_eq!(app.simulation.position(), position, "the pawn moved");
+            assert_eq!(app.simulation.yaw_pitch(), look, "the camera turned");
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            assert!(grid.is_solid_at(aimed), "a block was mined while paused");
+        }
+
+        #[test]
+        fn key_held_at_pause_does_not_stick() {
+            let mut app = playing_app();
+            let key = default_key(&app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveForward);
+            assert!(
+                app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
+            let mut clock = noon();
+
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            app.input.actions.key(key, false);
+            publish_ui(&mut app, &mut clock, UiEvent::ResumeRequested);
+
+            assert_eq!(app.game_state, GameState::Playing);
+            let frame = app.input.actions.end_tick();
+            assert!(!frame.held(StrategyAction::MoveForward));
+            assert!(!frame.pressed(StrategyAction::MoveForward));
+            assert_eq!(Game::command(&mut app).input.forward, 0.0);
+        }
+
+        #[test]
+        fn escape_on_settings_from_pause_changes_nothing() {
+            let mut app = first_person_app();
+            let adapter = attach_adapter(&mut app);
+            let mut clock = noon();
+            app.escape_pressed();
+            assert_eq!(app.game_state, GameState::Paused);
+            publish_ui(
+                &mut app,
+                &mut clock,
+                UiEvent::MenuShown {
+                    name: "settings".to_string(),
+                },
+            );
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
+
+            app.escape_pressed();
+
+            assert_eq!(app.game_state, GameState::Paused);
+            assert_eq!(screen_shown(&adapter).as_deref(), Some("settings"));
+        }
+
+        /// egui swallows Escape once a pause-window button has keyboard focus (Tab),
+        /// so an Escape that pauses or resumes must be taken before the UI sees it.
+        #[test]
+        fn escape_skips_the_ui_only_where_it_pauses_or_resumes() {
+            let rows: [(&str, GameState, Option<&str>, bool); 5] = [
+                ("playing", GameState::Playing, None, true),
+                ("pause window", GameState::Paused, Some("pause"), true),
+                (
+                    "settings from pause",
+                    GameState::Paused,
+                    Some("settings"),
+                    false,
+                ),
+                ("console", GameState::ConsoleOpen, None, false),
+                ("start menu", GameState::Menu, Some("start"), false),
+            ];
+
+            for (label, state, screen, expected) in rows {
+                let mut app = first_person_app();
+                let adapter = attach_adapter(&mut app);
+                app.game_state = state;
+                if let Some(screen) = screen {
+                    adapter.lock().expect("adapter lock").show_menu(screen);
+                }
+
+                assert_eq!(app.escape_skips_the_ui(), expected, "row {label}");
+            }
+        }
+    }
+
+    mod console {
+        use super::*;
+        use flagstone_ui::console_commands::StrategyConsoleCommand;
+        use moho_input::key::Key;
+        use moho_ui_shell::{EngineCommand, Routing};
+        use std::collections::BTreeMap;
+        use std::sync::{Arc, Mutex};
+
+        type SharedAdapter = Arc<Mutex<flagstone_ui::EguiAdapter>>;
+
+        fn noon() -> GameClock {
+            GameClock::new(12.0, 600.0, 420.0)
+        }
+
+        /// A playing app whose UI adapter is built from the app's own prefs.
+        fn app_with_console() -> (App, SharedAdapter) {
+            let mut app = playing_app();
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            (app, adapter)
+        }
+
+        fn press(app: &mut App, key: Key) -> Routing {
+            app.route_console_input(Input::Key(key), true, false)
+        }
+
+        fn type_line(adapter: &SharedAdapter, line: &str) {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .console_mut()
+                .submit(line);
+        }
+
+        fn console_is_open(adapter: &SharedAdapter) -> bool {
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .console_mut()
+                .is_open()
+        }
+
+        #[test]
+        fn console_key_opens_the_console_and_stops_game_time() {
+            let (mut app, adapter) = app_with_console();
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ).with_clock(noon()));
+            sim.step(&mut app, 60);
+            let playing = sim.clock().time_of_day();
+            assert!(playing > 12.0, "time runs while playing: {playing}");
+
+            let routing = press(&mut app, Key::Backtick);
+            let opened_at = sim.clock().time_of_day();
+            sim.step(&mut app, 60);
+
+            assert_eq!(routing, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+            assert_eq!(sim.clock().time_of_day(), opened_at, "time ran while open");
+        }
+
+        #[test]
+        fn console_key_and_escape_close_the_console() {
+            for closing in [Key::Backtick, Key::Escape] {
+                let (mut app, adapter) = app_with_console();
+                assert_eq!(press(&mut app, Key::Backtick), Routing::Opened);
+
+                let routing = press(&mut app, closing);
+
+                assert_eq!(routing, Routing::Closed, "{closing:?}");
+                assert_eq!(app.game_state, GameState::Playing, "{closing:?}");
+                assert!(!console_is_open(&adapter), "{closing:?}");
+            }
+        }
+
+        #[test]
+        fn console_key_is_skipped_in_menu_and_paused() {
+            for state in [GameState::Menu, GameState::Paused] {
+                let (mut app, adapter) = app_with_console();
+                app.game_state = state;
+
+                press(&mut app, Key::Backtick);
+
+                assert_eq!(app.game_state, state, "{state:?}");
+                assert!(!console_is_open(&adapter), "{state:?}");
+            }
+        }
+
+        #[test]
+        fn leaving_the_console_through_the_menu_closes_it() {
+            let (mut app, adapter) = app_with_console();
+            assert_eq!(press(&mut app, Key::Backtick), Routing::Opened);
+
+            app.show_menu();
+            app.hide_menu();
+            let movement = press(&mut app, Key::W);
+            let reopened = press(&mut app, Key::Backtick);
+
+            assert_eq!(movement, Routing::Game, "the closed console took W");
+            assert_eq!(reopened, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+        }
+
+        #[test]
+        fn a_rebound_console_key_opens_the_console() {
+            let mut app = playing_app();
+            app.prefs.set_bindings(BTreeMap::from([(
+                "console".to_owned(),
+                "Backslash".to_owned(),
+            )]));
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+
+            let default_key = press(&mut app, Key::Backtick);
+            let default_state = app.game_state;
+            let rebound = press(&mut app, Key::Backslash);
+
+            assert_eq!(default_key, Routing::Game);
+            assert_eq!(default_state, GameState::Playing);
+            assert_eq!(rebound, Routing::Opened);
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+            assert!(console_is_open(&adapter));
+        }
+
+        #[test]
+        fn command_carries_console_commands_outside_playing() {
+            let (mut app, adapter) = app_with_console();
+            press(&mut app, Key::Backtick);
+            type_line(&adapter, "time 18");
+            type_line(&adapter, "quit");
+            assert_eq!(app.game_state, GameState::ConsoleOpen);
+
+            let command = Game::command(&mut app);
+            let drained = Game::command(&mut app);
+
+            assert_eq!(
+                command.console,
+                vec![StrategyConsoleCommand::SetTimeOfDay(18.0)]
+            );
+            assert_eq!(command.engine, vec![EngineCommand::Quit]);
+            assert_eq!(command.input.forward, 0.0);
+            assert!(!command.jump);
+            assert!(drained.console.is_empty(), "commands are delivered once");
+            assert!(drained.engine.is_empty(), "commands are delivered once");
+        }
+
+        #[test]
+        fn tick_applies_the_console_commands_while_the_console_is_open() {
+            let (mut app, adapter) = app_with_console();
+            press(&mut app, Key::Backtick);
+            type_line(&adapter, "time 18");
+            type_line(&adapter, "noclip");
+            type_line(&adapter, "quit");
+            let command = Game::command(&mut app);
+            let mut clock = noon();
+
+            let mut ctx = TickContext {
+                tick: 0,
+                tick_length: tick(),
+                clock: &mut clock,
+            };
+            Game::tick(&mut app, &mut ctx, &command);
+
+            assert_eq!(clock.time_of_day(), 18.0);
+            assert!(app.physics.noclip);
+            assert!(app.exit_requested);
+        }
+    }
+
+    use flagstone_game::selection::{FIRST_PAWN, PAWN_HALF_EXTENTS, pawn_aabb};
+    use moho_core::events::{AudioEvent, DebugEvent};
+
+    const SELECTION_VIEWPORT: glam::UVec2 = glam::UVec2::new(1280, 720);
+
+    /// Points the strategy camera at the floor from above and behind, as the tick last left it.
+    fn look_at_the_floor(app: &mut App) {
+        let eye = glam::Vec3::new(8.0, 14.0, 20.0);
+        let view = glam::camera::rh::view::look_at_mat4(
+            eye,
+            glam::Vec3::new(8.0, 3.0, 8.0),
+            glam::Vec3::Y,
+        );
+        let proj = glam::camera::rh::proj::directx::perspective(
+            std::f32::consts::FRAC_PI_3,
+            16.0 / 9.0,
+            0.1,
+            500.0,
+        );
+        app.camera = (view, proj, eye);
+    }
+
+    /// The floor's surface height under world `(x, z)`.
+    fn floor_point(app: &App, x: f32, z: f32) -> glam::Vec3 {
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        flagstone_game::raycast::raycast_surface(
+            grid,
+            glam::Vec3::new(x, 30.0, z),
+            glam::Vec3::NEG_Y,
+            100.0,
+        )
+        .expect("the floor is under the point")
+        .position
+    }
+
+    /// A playing strategy-view app over a flat floor of blocks, the pawn standing on it
+    /// in view of the camera.
+    fn app_with_pawn_in_view() -> App {
+        let mut app = playing_app();
+        app.simulation.set_camera_mode(CameraMode::Isometric);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..14 {
+            for z in 2..14 {
+                for y in 2..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        let standing = floor_point(&app, 8.0, 8.0) + glam::Vec3::Y * PAWN_HALF_EXTENTS.y;
+        app.simulation.set_position_yaw_pitch(standing, 0.7, 0.0);
+        app.possessed = None;
+        app.physics.spawn_possessed(FIRST_PAWN, standing);
+        app.viewport = SELECTION_VIEWPORT;
+        look_at_the_floor(&mut app);
+        app
+    }
+
+    /// A wall of blocks standing on the floor between the camera and the pawn.
+    fn raise_a_hill_in_front_of_the_pawn(app: &mut App) {
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 5..=11 {
+            for z in 12..=13 {
+                for y in 4..=9 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+    }
+
+    fn click_pixel(app: &mut App, x: f32, y: f32) {
+        use moho_input::key::MouseButton;
+        look_at_the_floor(app);
+        app.input.actions.pointer_moved(x, y);
+        app.input.actions.mouse_button(MouseButton::Left, true);
+        app.input.actions.mouse_button(MouseButton::Left, false);
+    }
+
+    /// Clicks the pixel that `world` projects to through the strategy camera.
+    fn click_world(app: &mut App, world: glam::Vec3) {
+        look_at_the_floor(app);
+        let (view, proj, _) = app.camera;
+        let ndc = (proj * view).project_point3(world);
+        click_pixel(
+            app,
+            (ndc.x + 1.0) * 0.5 * SELECTION_VIEWPORT.x as f32,
+            (1.0 - ndc.y) * 0.5 * SELECTION_VIEWPORT.y as f32,
+        );
+    }
+
+    fn step_once(app: &mut App) -> StrategyCommand {
+        let command = Game::command(app);
+        tick_app(app, &command);
+        command
+    }
+
+    fn tap_possess(app: &mut App) {
+        let key = default_key(app, StrategyAction::Possess);
+        app.input.actions.key(key, true);
+        app.input.actions.key(key, false);
+    }
+
+    /// Clicks the pawn and ticks, so the pawn is selected.
+    fn select_the_pawn(app: &mut App) {
+        let centre = body_centre(app, FIRST_PAWN);
+        click_world(app, centre);
+        step_once(app);
+        assert_eq!(
+            app.selection.selected(),
+            Some(FIRST_PAWN),
+            "setup: the click on the pawn selects it"
+        );
+    }
+
+    fn outlined_markers(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
+        app.scene.markers_mut().draws(glam::Vec3::ZERO).outlines
+    }
+
+    /// Whether exactly one outline marker is drawn and it spans the pawn's box.
+    fn assert_outlines_the_pawn(app: &mut App, case: &str) {
+        let outlines = outlined_markers(app);
+        assert_eq!(outlines.len(), 1, "{case}: one outline over the pawn");
+        let aabb = pawn_aabb(body_centre(app, FIRST_PAWN));
+        let grow = moho_renderer::MARKER_INFLATE;
+        for axis in 0..3 {
+            assert!(
+                (outlines[0].min[axis] - (aabb.min[axis] - grow)).abs() < 1e-4,
+                "{case}: min {axis}: {:?} vs {:?}",
+                outlines[0].min,
+                aabb.min
+            );
+            assert!(
+                (outlines[0].max[axis] - (aabb.max[axis] + grow)).abs() < 1e-4,
+                "{case}: max {axis}: {:?} vs {:?}",
+                outlines[0].max,
+                aabb.max
+            );
+        }
+    }
+
+    fn frame_of(app: &mut App) -> FakeRenderer {
+        let mut fake = FakeRenderer::default();
+        run_frame(app, &mut fake);
+        fake
+    }
+
+    /// Whether a drawn instance is a box of the pawn's size centred on `center`.
+    fn draws_the_pawn_body(fake: &FakeRenderer, center: glam::Vec3) -> bool {
+        let size = PAWN_HALF_EXTENTS * 2.0;
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        fake.drawn.iter().any(|instance| {
+            near(instance.model[0][0], size.x)
+                && near(instance.model[1][1], size.y)
+                && near(instance.model[2][2], size.z)
+                && (0..3).all(|axis| near(instance.model[3][axis], center[axis]))
+        })
+    }
+
+    #[test]
+    fn strategy_view_draws_the_pawn_body_at_the_pawn() {
+        let mut app = app_with_pawn_in_view();
+        let actors_before = app.entities.actors.len();
+
+        let fake = frame_of(&mut app);
+
+        assert!(
+            draws_the_pawn_body(&fake, body_centre(&app, FIRST_PAWN)),
+            "no pawn-sized box at the pawn among {} instances",
+            fake.drawn.len()
+        );
+        assert_eq!(
+            app.entities.actors.len(),
+            actors_before,
+            "the body is drawn, not spawned as an actor"
+        );
+    }
+
+    #[test]
+    fn first_person_view_draws_no_pawn_body() {
+        let mut app = app_with_pawn_in_view();
+        let strategy = frame_of(&mut app);
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.possessed = Some(FIRST_PAWN);
+
+        let first_person = frame_of(&mut app);
+
+        let at = body_centre(&app, FIRST_PAWN);
+        assert!(
+            draws_the_pawn_body(&strategy, at),
+            "the strategy view draws the body"
+        );
+        assert!(!draws_the_pawn_body(&first_person, at));
+    }
+
+    #[test]
+    fn strategy_click_on_the_pawn_selects_it() {
+        let mut app = app_with_pawn_in_view();
+        let centre = body_centre(&app, FIRST_PAWN);
+        click_world(&mut app, centre);
+
+        step_once(&mut app);
+
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
+    }
+
+    #[test]
+    fn strategy_click_on_empty_ground_clears_the_selection() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        let ground = floor_point(&app, 4.5, 5.5);
+        click_world(&mut app, ground);
+
+        step_once(&mut app);
+
+        assert_eq!(app.selection.selected(), None);
+    }
+
+    #[test]
+    fn strategy_click_on_the_sky_clears_the_selection() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        click_pixel(&mut app, 640.0, 2.0);
+
+        step_once(&mut app);
+
+        assert_eq!(app.selection.selected(), None);
+    }
+
+    #[test]
+    fn strategy_click_on_a_pawn_hidden_by_a_hill_does_not_select_it() {
+        let mut open = app_with_pawn_in_view();
+        let centre = body_centre(&open, FIRST_PAWN);
+        click_world(&mut open, centre);
+        step_once(&mut open);
+        let mut hidden = app_with_pawn_in_view();
+        raise_a_hill_in_front_of_the_pawn(&mut hidden);
+        click_world(&mut hidden, centre);
+
+        step_once(&mut hidden);
+
+        assert_eq!(
+            open.selection.selected(),
+            Some(FIRST_PAWN),
+            "without the hill the same click selects the pawn"
+        );
+        assert_eq!(hidden.selection.selected(), None);
+    }
+
+    #[test]
+    fn first_person_click_does_not_select() {
+        let mut app = app_with_pawn_in_view();
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.possessed = Some(FIRST_PAWN);
+        let centre = body_centre(&app, FIRST_PAWN);
+        click_world(&mut app, centre);
+
+        step_once(&mut app);
+
+        assert_eq!(app.selection.selected(), None);
+    }
+
+    #[test]
+    fn first_person_click_keeps_the_existing_selection() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.possessed = Some(FIRST_PAWN);
+        let ground = floor_point(&app, 4.5, 5.5);
+        click_world(&mut app, ground);
+
+        step_once(&mut app);
+
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
+    }
+
+    #[test]
+    fn possessing_with_a_selection_keeps_it_and_enters_first_person() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(3.0, 30.0, 3.0), 0.7, 0.2);
+        let body_before = crate::app::dig_site::pawn_state_of(&app, FIRST_PAWN);
+        tap_possess(&mut app);
+
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let body = crate::app::dig_site::pawn_state_of(&app, FIRST_PAWN);
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+        assert!(
+            app.simulation.position().distance(body.position) < 1e-3,
+            "first person starts at {:?}, the pawn stands at {:?}",
+            app.simulation.position(),
+            body.position
+        );
+        assert!(
+            body.position.distance(body_before.position) < 0.05,
+            "the pawn moved to meet the view"
+        );
+        assert!((yaw - body_before.yaw).abs() < 1e-4, "yaw {yaw}");
+        assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
+    }
+
+    #[test]
+    fn returning_from_possession_keeps_the_pawn_selected() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        tap_possess(&mut app);
+        step_once(&mut app);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        tap_possess(&mut app);
+
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
+    }
+
+    #[test]
+    fn the_click_selects_on_the_next_tick_not_on_the_event() {
+        let mut app = app_with_pawn_in_view();
+        let centre = body_centre(&app, FIRST_PAWN);
+
+        click_world(&mut app, centre);
+        let on_the_event = app.selection.selected();
+        let command = Game::command(&mut app);
+        let before_the_tick = app.selection.selected();
+        tick_app(&mut app, &command);
+
+        assert!(command.select.is_some(), "the click is in the command");
+        assert_eq!(on_the_event, None);
+        assert_eq!(before_the_tick, None);
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
+    }
+
+    #[test]
+    fn selecting_publishes_the_placeholder_cue() {
+        let mut app = app_with_pawn_in_view();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |event: &AudioEvent| {
+            let _ = tx.send(event.clone());
+        });
+        let centre = body_centre(&app, FIRST_PAWN);
+        click_world(&mut app, centre);
+
+        step_once(&mut app);
+        app.event_bus.process_deferred();
+        let published: Vec<AudioEvent> = rx.try_iter().collect();
+
+        let clicks = published
+            .iter()
+            .filter(|event| matches!(event, AudioEvent::ButtonClick))
+            .count();
+        assert_eq!(clicks, 1, "published: {published:?}");
+    }
+
+    #[test]
+    fn clicking_empty_ground_with_a_selection_publishes_no_button_click() {
+        let mut app = app_with_pawn_in_view();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |event: &AudioEvent| {
+            let _ = tx.send(event.clone());
+        });
+        select_the_pawn(&mut app);
+        app.event_bus.process_deferred();
+        rx.try_iter().for_each(drop);
+        let ground = floor_point(&app, 4.5, 5.5);
+        click_world(&mut app, ground);
+
+        step_once(&mut app);
+        app.event_bus.process_deferred();
+        let published: Vec<AudioEvent> = rx.try_iter().collect();
+
+        assert_eq!(app.selection.selected(), None, "setup: the click deselects");
+        assert!(
+            !published
+                .iter()
+                .any(|event| matches!(event, AudioEvent::ButtonClick)),
+            "published: {published:?}"
+        );
+    }
+
+    #[test]
+    fn selection_mark_outlines_the_pawn_in_strategy_view() {
+        let mut app = app_with_pawn_in_view();
+        frame_of(&mut app);
+        let unselected = outlined_markers(&mut app).len();
+        select_the_pawn(&mut app);
+
+        frame_of(&mut app);
+
+        assert_eq!(unselected, 0, "a mark with nothing selected");
+        assert_outlines_the_pawn(&mut app, "selected");
+    }
+
+    #[test]
+    fn selection_mark_follows_the_pawn_when_it_moves() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        frame_of(&mut app);
+        assert_outlines_the_pawn(&mut app, "before the move");
+
+        app.physics
+            .spawn_possessed(FIRST_PAWN, glam::Vec3::new(9.0, 7.0, 6.0));
+        frame_of(&mut app);
+
+        assert_outlines_the_pawn(&mut app, "after the move");
+    }
+
+    #[test]
+    fn selection_mark_is_hidden_in_first_person_and_returns_on_return() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        frame_of(&mut app);
+        assert_outlines_the_pawn(&mut app, "in strategy");
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        frame_of(&mut app);
+        let in_first_person = outlined_markers(&mut app).len();
+        tap_possess(&mut app);
+        step_once(&mut app);
+        frame_of(&mut app);
+
+        assert_eq!(in_first_person, 0, "a mark over the possessed pawn");
+        assert_outlines_the_pawn(&mut app, "after returning");
+    }
+
+    #[test]
+    fn selection_mark_is_restored_after_a_console_marker_clear() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        frame_of(&mut app);
+        assert_outlines_the_pawn(&mut app, "before the clear");
+        app.event_bus.publish(DebugEvent::ClearMarkers { id: None });
+        EventProcessor::new().process_debug_events(&mut app);
+        let after_clear = outlined_markers(&mut app).len();
+
+        frame_of(&mut app);
+
+        assert_eq!(after_clear, 0, "the console clear removed the mark");
+        assert_outlines_the_pawn(&mut app, "after the next frame");
+    }
+
+    #[test]
+    fn clearing_the_selection_removes_the_mark() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        frame_of(&mut app);
+        assert_outlines_the_pawn(&mut app, "while selected");
+        click_pixel(&mut app, 640.0, 2.0);
+        step_once(&mut app);
+
+        frame_of(&mut app);
+
+        assert!(outlined_markers(&mut app).is_empty());
+    }
+
+    type CrewInView = [(flagstone_game::pawn::PawnId, glam::Vec3); 3];
+
+    /// The strategy view over the floor with a crew of three, each pawn standing apart from the
+    /// others in view of the camera with a body of its own, each facing its own way. Nobody is
+    /// possessed; the first pawn's body is the one the character step moves, as in the running
+    /// app.
+    fn app_with_three_pawns_in_view() -> (App, CrewInView) {
+        const YAWS: [f32; 3] = [0.0, 1.1, -0.6];
+        let mut app = app_with_pawn_in_view();
+        app.crew = flagstone_game::crew::Crew::default();
+        let pawns = [(4.5, 7.5), (8.5, 5.5), (11.5, 7.5)].map(|(x, z)| {
+            let centre = floor_point(&app, x, z) + glam::Vec3::Y * PAWN_HALF_EXTENTS.y;
+            let id = app.crew.spawn(flagstone_game::pawn::Pawn::default());
+            (id, centre)
+        });
+        let spawn_at = |index: usize| moho_physics::CharacterSpawn {
+            yaw: YAWS[index],
+            ..moho_physics::CharacterSpawn::from(pawns[index].1)
+        };
+        app.possessed = None;
+        app.simulation.set_position_yaw_pitch(pawns[0].1, 0.7, 0.0);
+        app.physics.spawn_player(spawn_at(0));
+        let player = app.physics.player.expect("the player was just spawned");
+        app.physics.pawns.insert(pawns[0].0, player);
+        for (index, (id, _)) in pawns.iter().enumerate().skip(1) {
+            app.physics.spawn_pawn(*id, spawn_at(index));
+        }
+        (app, pawns)
+    }
+
+    fn body_centre(app: &App, id: flagstone_game::pawn::PawnId) -> glam::Vec3 {
+        crate::app::dig_site::pawn_state_of(app, id).position
+    }
+
+    fn select_pawn_by_click(app: &mut App, centre: glam::Vec3) {
+        click_world(app, centre);
+        step_once(app);
+    }
+
+    #[test]
+    fn strategy_view_draws_a_body_per_pawn() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+
+        let fake = frame_of(&mut app);
+
+        for (id, _) in pawns {
+            let body = body_centre(&app, id);
+            assert!(
+                draws_the_pawn_body(&fake, body),
+                "no pawn-sized box at the body of pawn {id:?} at {body} among {} instances",
+                fake.drawn.len()
+            );
+        }
+    }
+
+    #[test]
+    fn clicking_any_pawn_selects_it() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+
+        for (id, centre) in pawns.into_iter().rev().chain(pawns) {
+            select_pawn_by_click(&mut app, centre);
+            assert_eq!(app.selection.selected(), Some(id), "a click on pawn {id:?}");
+        }
+    }
+
+    /// Whether exactly one outline marker is drawn and it spans the pawn box around `centre`.
+    fn assert_outlines_the_box_at(app: &mut App, centre: glam::Vec3, case: &str) {
+        let outlines = outlined_markers(app);
+        assert_eq!(outlines.len(), 1, "{case}: one outline over the pawn");
+        let aabb = pawn_aabb(centre);
+        let grow = moho_renderer::MARKER_INFLATE;
+        for axis in 0..3 {
+            assert!(
+                (outlines[0].min[axis] - (aabb.min[axis] - grow)).abs() < 1e-4
+                    && (outlines[0].max[axis] - (aabb.max[axis] + grow)).abs() < 1e-4,
+                "{case}: outline {:?} to {:?} is not the box {:?} to {:?}",
+                outlines[0].min,
+                outlines[0].max,
+                aabb.min,
+                aabb.max
+            );
+        }
+    }
+
+    #[test]
+    fn the_selection_outline_follows_the_selected_pawn() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        frame_of(&mut app);
+        let unselected = outlined_markers(&mut app).len();
+
+        select_pawn_by_click(&mut app, pawns[2].1);
+        frame_of(&mut app);
+        let first_outline = outlined_markers(&mut app).len();
+        let third = body_centre(&app, pawns[2].0);
+        assert_outlines_the_box_at(&mut app, third, "the third pawn");
+        select_pawn_by_click(&mut app, pawns[0].1);
+        frame_of(&mut app);
+
+        assert_eq!(unselected, 0, "a mark with nothing selected");
+        assert_eq!(first_outline, 1);
+        let first = body_centre(&app, pawns[0].0);
+        assert_outlines_the_box_at(&mut app, first, "the first pawn");
+    }
+
+    use crate::app::dig_site::{
+        GROUND_TOP, block_exists, dig_site, dig_site_with_pawns, headless_loop, run_until,
+    };
+    use flagstone_game::jobs::Job;
+    use flagstone_game::pawn::PawnId;
+
+    const ORE: u32 = 7;
+    /// Seven metres east of the first pawn's cell, on flat ground.
+    const MARK_EAST: [i32; 3] = [20, GROUND_TOP + 1, 12];
+    const GIVE_UP: u32 = 900;
+    /// The capsule centre is this far above the feet.
+    const CENTRE_HEIGHT: f32 = 1.15;
+
+    fn claimant(app: &App, mark: [i32; 3]) -> Option<PawnId> {
+        app.colony
+            .marks
+            .iter()
+            .find(|(pos, _)| *pos == mark)
+            .and_then(|(_, m)| m.claimed_by)
+    }
+
+    fn is_mining(app: &App, id: PawnId) -> bool {
+        matches!(
+            app.crew.get(id).map(|pawn| &pawn.job),
+            Some(Job::Mine { .. })
+        )
+    }
+
+    fn feet_of(app: &App, id: PawnId) -> glam::Vec3 {
+        body_centre(app, id) - glam::Vec3::Y * CENTRE_HEIGHT
+    }
+
+    /// Presses the possess key and runs the tick that applies it.
+    fn press_possess(app: &mut App, sim: &mut HeadlessLoop<App>) {
+        tap_possess(app);
+        sim.step(app, 1);
+    }
+
+    fn release_key(app: &mut App, action: StrategyAction) {
+        let key = default_key(app, action);
+        app.input.actions.key(key, false);
+    }
+
+    /// A crew of three on the dig site, one in each of three rows, each row with a mark east
+    /// of its pawn.
+    fn crew_of_three_with_a_mark_each() -> (App, [[i32; 3]; 3]) {
+        let rows = [8, 12, 16];
+        let cells = rows.map(|z| [12, GROUND_TOP + 1, z]);
+        let marks = rows.map(|z| [20, GROUND_TOP + 1, z]);
+        let blocks: Vec<crate::app::dig_site::Block> =
+            marks.iter().map(|&mark| (mark, Some(ORE))).collect();
+        let mut app = dig_site_with_pawns(&blocks, &cells);
+        for mark in marks {
+            app.colony.marks.toggle(mark);
+        }
+        (app, marks)
+    }
+
+    #[test]
+    fn possessing_a_walking_pawn_moves_it_only_by_player_input() {
+        let mut app = dig_site(&[(MARK_EAST, Some(ORE))]);
+        app.colony.marks.toggle(MARK_EAST);
+        let mut sim = headless_loop();
+        sim.step(&mut app, 25);
+        assert_eq!(
+            claimant(&app, MARK_EAST),
+            Some(FIRST_PAWN),
+            "setup: the pawn holds the mark"
+        );
+        assert!(is_mining(&app, FIRST_PAWN), "setup: the pawn is on its way");
+        app.selection.click(Some(FIRST_PAWN));
+
+        press_possess(&mut app, &mut sim);
+        let at_possession = body_centre(&app, FIRST_PAWN);
+        sim.step(&mut app, 120);
+
+        let after = body_centre(&app, FIRST_PAWN);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert_eq!(app.possessed, Some(FIRST_PAWN));
+        assert!(
+            after.distance(at_possession) < 0.05,
+            "the pawn walked on by itself from {at_possession:?} to {after:?}"
+        );
+        assert!(app.colony.marks.contains(MARK_EAST), "the mark stays");
+        assert!(block_exists(&app, MARK_EAST), "nobody dug it");
+        assert_ne!(
+            claimant(&app, MARK_EAST),
+            Some(FIRST_PAWN),
+            "the possessed pawn still holds the mark"
+        );
+        assert!(!is_mining(&app, FIRST_PAWN), "the pawn's job goes on");
+    }
+
+    #[test]
+    fn after_stepping_out_the_pawn_walks_to_the_mark_and_digs_it() {
+        let mut app = dig_site(&[(MARK_EAST, Some(ORE))]);
+        let mut sim = headless_loop();
+        app.selection.click(Some(FIRST_PAWN));
+        press_possess(&mut app, &mut sim);
+        app.colony.marks.toggle(MARK_EAST);
+        sim.step(&mut app, 30);
+        assert_eq!(
+            app.simulation.camera_mode(),
+            CameraMode::FirstPerson,
+            "setup"
+        );
+        assert!(block_exists(&app, MARK_EAST), "setup: nothing is dug yet");
+        let left_at = body_centre(&app, FIRST_PAWN);
+
+        press_possess(&mut app, &mut sim);
+        sim.step(&mut app, 5);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert_eq!(
+            app.possessed, None,
+            "nobody is possessed in the colony view"
+        );
+        assert_eq!(
+            claimant(&app, MARK_EAST),
+            Some(FIRST_PAWN),
+            "the pawn is an ordinary idle pawn again and takes the mark"
+        );
+        let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, MARK_EAST));
+        assert!(dug, "the block is still standing after {GIVE_UP} ticks");
+        assert!(
+            body_centre(&app, FIRST_PAWN).distance(left_at) > 1.5,
+            "the pawn dug where the player left it"
+        );
+        assert!(!app.colony.marks.contains(MARK_EAST), "the marker is gone");
+        assert_eq!(app.colony.stock.count(ORE), 1);
+    }
+
+    #[test]
+    fn a_pawn_walked_elsewhere_while_possessed_resumes_from_where_it_was_left() {
+        let mut app = dig_site(&[(MARK_EAST, Some(ORE))]);
+        app.colony.marks.toggle(MARK_EAST);
+        let mut sim = headless_loop();
+        sim.step(&mut app, 12);
+        let Some(Job::Mine { route, .. }) = app.crew.get(FIRST_PAWN).map(|pawn| &pawn.job) else {
+            panic!("setup: the pawn is on its way to the mark");
+        };
+        let old_start = route[0];
+        app.selection.click(Some(FIRST_PAWN));
+        press_possess(&mut app, &mut sim);
+        hold(&mut app, StrategyAction::MoveBack);
+        sim.step(&mut app, 90);
+        release_key(&mut app, StrategyAction::MoveBack);
+        sim.step(&mut app, 10);
+        let left_at = feet_of(&app, FIRST_PAWN);
+        assert!(
+            (old_start.x as f32 + 0.5 - left_at.x).hypot(old_start.z as f32 + 0.5 - left_at.z)
+                > 3.0,
+            "setup: the player walked the pawn away from where its route began: {left_at:?}"
+        );
+
+        press_possess(&mut app, &mut sim);
+
+        let Some(Job::Mine { route, next, .. }) = app.crew.get(FIRST_PAWN).map(|pawn| &pawn.job)
+        else {
+            panic!("the pawn takes the mark again on the tick it is released");
+        };
+        let from = route[0];
+        let waypoint = route[*next];
+        assert_eq!(
+            (from.x, from.z),
+            (left_at.x.floor() as i32, left_at.z.floor() as i32),
+            "the new route starts where the player left the pawn, not at {old_start:?}"
+        );
+        assert!(
+            (waypoint.x - from.x).abs() <= 1 && (waypoint.z - from.z).abs() <= 1,
+            "the first waypoint {waypoint:?} is not beside the pawn's cell {from:?}"
+        );
+        let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, MARK_EAST));
+        assert!(dug, "the block is still standing after {GIVE_UP} ticks");
+    }
+
+    #[test]
+    fn possessing_with_a_pawn_selected_takes_that_pawn() {
+        let (mut app, marks) = crew_of_three_with_a_mark_each();
+        let middle = PawnId(1);
+        let mut sim = headless_loop();
+        sim.step(&mut app, 10);
+        assert!(
+            (0..3).all(|index| is_mining(&app, PawnId(index))),
+            "setup: all three are under way"
+        );
+        app.selection.click(Some(middle));
+
+        press_possess(&mut app, &mut sim);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert_eq!(app.possessed, Some(middle));
+        assert_eq!(
+            app.physics.player,
+            app.physics.pawns.get(&middle).copied(),
+            "the player's body is the selected pawn's"
+        );
+        assert!(
+            app.simulation
+                .position()
+                .distance(body_centre(&app, middle))
+                < 1e-3,
+            "the view stands at the selected pawn"
+        );
+        let before = body_centre(&app, middle);
+        hold(&mut app, StrategyAction::MoveForward);
+        sim.step(&mut app, 30);
+        release_key(&mut app, StrategyAction::MoveForward);
+        assert!(
+            body_centre(&app, middle).distance(before) > 1.0,
+            "the player's input did not move the selected pawn"
+        );
+        let middle_took_work = std::cell::Cell::new(false);
+
+        let others_dug = run_until(&mut app, GIVE_UP, |app| {
+            middle_took_work.set(middle_took_work.get() || is_mining(app, middle));
+            !block_exists(app, marks[0]) && !block_exists(app, marks[2])
+        });
+
+        assert!(others_dug, "the other two did not dig their blocks");
+        assert!(
+            !middle_took_work.get(),
+            "the possessed pawn went on working"
+        );
+    }
+
+    #[test]
+    fn possessing_with_nothing_selected_stays_in_the_colony_view() {
+        let rows = [8, 16];
+        let cells = rows.map(|z| [12, GROUND_TOP + 1, z]);
+        let marks = rows.map(|z| [20, GROUND_TOP + 1, z]);
+        let blocks: Vec<crate::app::dig_site::Block> =
+            marks.iter().map(|&mark| (mark, Some(ORE))).collect();
+        let mut app = dig_site_with_pawns(&blocks, &cells);
+        for mark in marks {
+            app.colony.marks.toggle(mark);
+        }
+        let mut sim = headless_loop();
+        sim.step(&mut app, 10);
+        assert_eq!(app.selection.selected(), None, "setup: nothing is selected");
+        assert!(
+            (0..2).all(|index| is_mining(&app, PawnId(index))),
+            "setup: both pawns are under way"
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |event: &AudioEvent| {
+            let _ = tx.send(event.clone());
+        });
+
+        press_possess(&mut app, &mut sim);
+        app.event_bus.process_deferred();
+
+        let cues: Vec<AudioEvent> = rx
+            .try_iter()
+            .filter(|event| matches!(event, AudioEvent::Cancel | AudioEvent::Confirm))
+            .collect();
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert!(
+            matches!(cues.as_slice(), [AudioEvent::Cancel]),
+            "the rejection cue: {cues:?}"
+        );
+        for (index, mark) in marks.into_iter().enumerate() {
+            let id = PawnId(index as u32);
+            assert!(is_mining(&app, id), "pawn {index} stopped its job");
+            assert_eq!(claimant(&app, mark), Some(id), "pawn {index} lost its mark");
+        }
+        let all_dug = run_until(&mut app, GIVE_UP, |app| {
+            marks.iter().all(|&mark| !block_exists(app, mark))
+        });
+        assert!(all_dug, "the pawns did not keep working");
+    }
+
+    #[test]
+    fn the_tick_possesses_the_pawn_in_the_command_not_the_selection() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        app.selection.click(Some(pawns[0].0));
+        let command = StrategyCommand {
+            toggle_view: true,
+            possess: Some(pawns[2].0),
+            ..StrategyCommand::default()
+        };
+
+        tick_app(&mut app, &command);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert_eq!(app.possessed, Some(pawns[2].0));
+        assert_eq!(
+            app.physics.player,
+            app.physics.pawns.get(&pawns[2].0).copied(),
+            "the player's body is the commanded pawn's"
+        );
+    }
+
+    #[test]
+    fn a_command_without_a_pawn_does_not_possess_whatever_is_selected() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        app.selection.click(Some(pawns[1].0));
+        let command = StrategyCommand {
+            toggle_view: true,
+            possess: None,
+            ..StrategyCommand::default()
+        };
+
+        tick_app(&mut app, &command);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+    }
+
+    #[test]
+    fn a_command_naming_a_pawn_outside_the_crew_does_not_possess_it() {
+        let (mut app, _) = app_with_three_pawns_in_view();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |event: &AudioEvent| {
+            let _ = tx.send(event.clone());
+        });
+        let command = StrategyCommand {
+            toggle_view: true,
+            possess: Some(PawnId(99)),
+            ..StrategyCommand::default()
+        };
+
+        tick_app(&mut app, &command);
+        app.event_bus.process_deferred();
+
+        let cues: Vec<AudioEvent> = rx
+            .try_iter()
+            .filter(|event| matches!(event, AudioEvent::Cancel | AudioEvent::Confirm))
+            .collect();
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert_eq!(app.possessed, None, "nobody is possessed");
+        assert!(
+            matches!(cues.as_slice(), [AudioEvent::Cancel]),
+            "the rejection cue: {cues:?}"
+        );
+    }
+
+    #[test]
+    fn a_possess_pawn_in_the_command_is_ignored_in_first_person() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        let command = StrategyCommand {
+            toggle_view: true,
+            possess: Some(pawns[0].0),
+            ..StrategyCommand::default()
+        };
+        tick_app(&mut app, &command);
+        assert_eq!(
+            app.simulation.camera_mode(),
+            CameraMode::FirstPerson,
+            "setup"
+        );
+        assert_eq!(app.possessed, Some(pawns[0].0), "setup: it is possessed");
+        let again = StrategyCommand {
+            toggle_view: true,
+            possess: Some(pawns[1].0),
+            ..StrategyCommand::default()
+        };
+
+        tick_app(&mut app, &again);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert_eq!(app.possessed, None, "the pawn is released");
+    }
+
+    /// Feeds `events` to the input handling, as the window would.
+    fn send_input(app: &mut App, events: impl IntoIterator<Item = crate::input_event::InputEvent>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.input.unconsumed_rx = Some(rx);
+        for event in events {
+            tx.send(event).expect("the receiver is held by the app");
+        }
+        EventProcessor::new().process_input_events(app);
+    }
+
+    /// A wall of ore blocks in front of a first-person camera standing at (4.5, 70.5, 6.5),
+    /// and that camera.
+    fn aim_at_an_ore_wall(app: &mut App) {
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, Some(7));
+                }
+            }
+        }
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+    }
+
+    fn pawn_of(app: &App, id: PawnId) -> &flagstone_game::pawn::Pawn {
+        app.crew.get(id).expect("the pawn is in the crew")
+    }
+
+    #[test]
+    fn a_pickup_feed_expires_while_its_pawn_is_not_possessed() {
+        use crate::input_event::InputEvent;
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        let id = pawns[0].0;
+        app.selection.click(Some(id));
+        tap_possess(&mut app);
+        step_once(&mut app);
+        aim_at_an_ore_wall(&mut app);
+        send_input(
+            &mut app,
+            [
+                InputEvent::SlotSelected {
+                    slot: flagstone_game::pawn::TOOL_SLOT,
+                },
+                InputEvent::MineRequested,
+            ],
+        );
+        assert_eq!(
+            pawn_of(&app, id).pickups.entries().len(),
+            1,
+            "setup: the hand-mined block shows in the feed"
+        );
+        tap_possess(&mut app);
+        step_once(&mut app);
+        assert_eq!(app.possessed, None, "setup: stepped out");
+        for _ in 0..300 {
+            step_once(&mut app);
+        }
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.possessed, Some(id), "setup: possessed again");
+        assert!(
+            pawn_of(&app, id).pickups.entries().is_empty(),
+            "a popup from before the player stepped out is still shown"
+        );
+    }
+
+    #[test]
+    fn possessing_a_second_pawn_hands_it_the_players_tools() {
+        use crate::input_event::InputEvent;
+        use flagstone_game::pawn::TOOL_SLOT;
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        let (first, second) = (pawns[0].0, pawns[1].0);
+        app.crew
+            .get_mut(second)
+            .expect("the pawn is in the crew")
+            .deposit(flagstone_game::inventory::ResourceYield {
+                resource_id: 3,
+                amount: 5,
+            });
+        app.selection.click(Some(second));
+        tap_possess(&mut app);
+        step_once(&mut app);
+        assert_eq!(
+            app.possessed,
+            Some(second),
+            "setup: the second is possessed"
+        );
+
+        send_input(&mut app, [InputEvent::SlotSelected { slot: 3 }]);
+
+        assert_eq!(pawn_of(&app, second).selected_slot, 3);
+        assert_eq!(
+            pawn_of(&app, first).selected_slot,
+            TOOL_SLOT,
+            "the slot select went to the other pawn"
+        );
+
+        aim_at_an_ore_wall(&mut app);
+        send_input(
+            &mut app,
+            [
+                InputEvent::SlotSelected { slot: TOOL_SLOT },
+                InputEvent::MineRequested,
+            ],
+        );
+
+        assert_eq!(pawn_of(&app, second).inventory.count(7), 1);
+        assert_eq!(pawn_of(&app, second).inventory.count(3), 5);
+        assert!(
+            pawn_of(&app, first).inventory.is_empty(),
+            "the first pawn's pockets took the ore"
+        );
+    }
+
+    #[test]
+    fn a_possessed_pawn_with_collision_off_stays_put_and_resumes_from_its_body() {
+        let cells = [[12, GROUND_TOP + 1, 8], [12, GROUND_TOP + 1, 16]];
+        let first_mark = [20, GROUND_TOP + 1, 8];
+        let mut app = dig_site_with_pawns(&[(first_mark, Some(ORE))], &cells);
+        app.colony.marks.toggle(first_mark);
+        let possessed = PawnId(1);
+        let mut sim = headless_loop();
+        app.selection.click(Some(possessed));
+        press_possess(&mut app, &mut sim);
+        assert_eq!(app.possessed, Some(possessed), "setup: possessed");
+        app.physics.noclip = true;
+        let body_before = body_centre(&app, possessed);
+        let view_before = app.simulation.position();
+
+        hold(&mut app, StrategyAction::MoveForward);
+        sim.step(&mut app, 60);
+        release_key(&mut app, StrategyAction::MoveForward);
+
+        assert!(
+            app.simulation.position().distance(view_before) > 2.0,
+            "setup: the view did not fly"
+        );
+        assert!(
+            body_centre(&app, possessed).distance(body_before) < 1e-3,
+            "the body moved with the view"
+        );
+        assert!(!is_mining(&app, possessed));
+        assert_ne!(claimant(&app, first_mark), Some(possessed));
+        let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, first_mark));
+        assert!(dug, "the other pawn never dug the mark");
+        assert_eq!(app.colony.stock.count(ORE), 1);
+        assert!(
+            body_centre(&app, possessed).distance(body_before) < 1e-3,
+            "a job moved the possessed body"
+        );
+
+        press_possess(&mut app, &mut sim);
+        assert_eq!(app.possessed, None, "setup: stepped out");
+        let second_mark = [20, GROUND_TOP + 1, 18];
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for mark in [first_mark, second_mark] {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::from_array(mark), 0, None);
+            app.colony.marks.toggle(mark);
+        }
+        let left_at = feet_of(&app, possessed);
+        sim.step(&mut app, 1);
+
+        assert_eq!(
+            claimant(&app, second_mark),
+            Some(possessed),
+            "the stepped-out pawn takes the mark the other pawn leaves"
+        );
+        let Some(Job::Mine { route, .. }) = app.crew.get(possessed).map(|pawn| &pawn.job) else {
+            panic!("the stepped-out pawn takes the free mark");
+        };
+        assert_eq!(
+            (route[0].x, route[0].z),
+            (left_at.x.floor() as i32, left_at.z.floor() as i32),
+            "the walk starts away from the pawn's body, at {:?} (the view is at {:?})",
+            route[0],
+            app.simulation.position()
+        );
+    }
+
+    #[test]
+    fn possess_on_the_tick_a_dig_would_finish_digs_nothing() {
+        let mark = [16, GROUND_TOP + 1, 12];
+        let cells = [[12, GROUND_TOP + 1, 12], [12, GROUND_TOP + 1, 24]];
+        let site = || {
+            let mut app = dig_site_with_pawns(&[(mark, Some(ORE))], &cells);
+            app.colony.marks.toggle(mark);
+            app
+        };
+        let (digger, other) = (PawnId(0), PawnId(1));
+        let mut probe = site();
+        let mut probe_loop = headless_loop();
+        let mut dig_tick = 0;
+        while block_exists(&probe, mark) {
+            probe_loop.step(&mut probe, 1);
+            dig_tick += 1;
+            assert!(dig_tick < GIVE_UP, "setup: the pawn never digs");
+        }
+        let mut app = site();
+        let mut sim = headless_loop();
+        sim.step(&mut app, dig_tick - 1);
+        assert!(block_exists(&app, mark), "setup: the dig is still to come");
+        assert_eq!(
+            claimant(&app, mark),
+            Some(digger),
+            "setup: it holds the mark"
+        );
+        app.selection.click(Some(digger));
+
+        press_possess(&mut app, &mut sim);
+
+        assert_eq!(app.possessed, Some(digger));
+        assert!(block_exists(&app, mark), "the possessed pawn dug");
+        assert!(
+            app.colony.marks.contains(mark),
+            "the mark went with the dig"
+        );
+        assert_ne!(claimant(&app, mark), Some(digger));
+        assert!(!is_mining(&app, digger));
+        assert!(app.colony.stock.is_empty(), "the dig was applied");
+        assert!(pawn_of(&app, digger).inventory.is_empty());
+        let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, mark));
+        assert!(dug, "nobody dug the mark afterwards");
+        assert_eq!(
+            app.colony.stock.count(ORE),
+            1,
+            "dug once, by the other pawn"
+        );
+        assert!(
+            pawn_state_of_pawn_walked(&app, other),
+            "the other pawn did not do the digging"
+        );
+    }
+
+    fn pawn_of_walked_from(app: &App, id: PawnId, from: [i32; 3]) -> f32 {
+        let start = glam::Vec3::new(from[0] as f32 + 0.5, from[1] as f32, from[2] as f32 + 0.5);
+        feet_of(app, id).distance(start)
+    }
+
+    fn pawn_state_of_pawn_walked(app: &App, id: PawnId) -> bool {
+        pawn_of_walked_from(app, id, [12, GROUND_TOP + 1, 24]) > 1.5
+    }
+}

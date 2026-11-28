@@ -1,0 +1,285 @@
+#!/usr/bin/env bash
+# Production run records: what each `claude.yml` orchestrate run used and which steps
+# yielded anything, computed in the job from the action's execution log and printed as
+# one `RUN-RECORD {json}` line. The log itself is never uploaded: Actions masks secrets in
+# job logs but not in artifacts, and the repository is public. Tokens are four counts per
+# model, never summed across models or kinds, except per-step output, which is an estimate
+# (`output_est`); cost is the API-rate equivalent, last.
+#
+# A step is the subagent or skill the main loop called (`devflow:builder (tests)`,
+# `skill devflow:wiki`); `orchestrator` is the main loop itself. Subagent messages carry a
+# parent_tool_use_id that leads to the call that started them. Per-step input and cache counts
+# are exact per message; per-step output is the result's per-model output shared across that
+# model's steps by the size of what each step wrote, since the log's own per-message output
+# counts are partial. Yield is what a step left
+# behind that the log shows: files it edited (and how many were test files), the size of the
+# report it handed back (`report_bytes`), and the mutation counts the main loop read. The meter
+# (`meter` per step, claude-skills D0040) says where context and cache writes come from: peak
+# context per call, cache write by TTL when the log splits it, cache misses (a call after the
+# step's first that wrote over 20k tokens), and tool-result bytes by tool name, MCP tools
+# included. It reads only the log; no hook and no model call. Inline unit tests in a source
+# file count as source.
+#
+#   run-record.sh record <execution-file>   one JSON record on stdout. Context from the
+#                                           environment: ISSUE, GATE_CLASS, HEAD_SHA,
+#                                           DEVFLOW_SHA (default: read from the plugin
+#                                           install), RUN_URL (any may be empty)
+#   run-record.sh limit-reset <file>        the time a usage-limit cut-off says the limit resets
+#                                           ("3:50am"), or nothing when the run was not cut off
+#   run-record.sh gate-class                issue body on stdin -> its gate class, or nothing
+#   run-record.sh table                     records on stdin -> markdown, for the job summary
+#   run-record.sh digest                    records on stdin -> markdown: per gate class,
+#                                           runs and tokens per model, and per step the runs
+#                                           that used it and the runs where it left nothing
+#   run-record.sh collect                   RUN-RECORD lines of recent `claude.yml` runs
+#                                           (RUN_RECORD_RUNS, default 50) -> JSONL. Logs are
+#                                           cached in RUN_RECORD_CACHE.
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+
+repo() {
+    if [[ -n ${GITHUB_REPOSITORY:-} ]]; then echo "$GITHUB_REPOSITORY"
+    else gh repo view --json nameWithOwner --jq .nameWithOwner; fi
+}
+
+# The commit of the devflow plugin the run loaded: the install record names it, and the
+# versioned cache directory is the fallback.
+devflow_sha() {
+    local f="$HOME/.claude/plugins/installed_plugins.json" sha=""
+    if [[ -f $f ]]; then
+        sha=$(jq -r '[.plugins["devflow@claude-skills"][0] | .gitCommitSha, .version] | map(select(. != null)) | first // empty' "$f" 2>/dev/null || true)
+    fi
+    if [[ -z $sha ]]; then
+        sha=$(find "$HOME/.claude/plugins/cache/claude-skills/devflow" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n1 || true)
+    fi
+    echo "$sha"
+}
+
+# Per-step tokens and yield from the message log (an array, or JSONL slurped).
+steps_of() {
+    jq -c '
+        def msgs: if type == "array" then .[] else . end;
+        [msgs] as $all
+        # Every tool call, keyed by id, with the call that started the message it sits in.
+        | ([ $all[] | select(.type == "assistant") | .parent_tool_use_id as $p
+             | .message.content[]? | select(.type == "tool_use")
+             | {key: .id, value: {name, input, parent: $p}} ] | from_entries) as $calls
+        | def lbl($c):
+            if $c.name == "Agent" or $c.name == "Task" then
+              ($c.input.subagent_type // "general")
+              + (($c.input.prompt // "" | capture("(?m)^\\s*Mode:\\s*(?<m>[A-Za-z-]+)") | " (\(.m | ascii_downcase))") // "")
+            elif $c.name == "Skill" then "skill \($c.input.skill // $c.input.command // "?")"
+            else $c.name end;
+          def root($p): if $p == null then "orchestrator"
+            elif ($calls[$p] // null) == null then "unknown"
+            elif $calls[$p].parent == null then lbl($calls[$p])
+            else root($calls[$p].parent) end;
+        # A message split over several log entries repeats its usage: count each message once.
+        # Input and cache counts are complete in every entry; the output count is only what the
+        # stream held when the entry was written, a few tokens (about 1/25 of the real total on
+        # run 45474158961), and the log carries no later correction per message. The `result`
+        # entry has the true output per model, so that total is shared across the steps of that model
+        # in proportion to the size of what each step wrote (text, thinking, tool input).
+        def size: [.[]? | (.text // .thinking // (.input | tojson) // "") | length / 4 + 10] | add // 0;
+        def alloc($t): (add // 0) as $w
+            | if $w == 0 then null else
+              map(. * $t / $w) as $x | ($x | map(floor)) as $f | ($t - ($f | add)) as $r
+              | ([range(0; length)] | sort_by(-($x[.] - $f[.]), .) | .[:$r]) as $up
+              | [range(0; length) | . as $i | $f[$i] + (if $up | index($i) then 1 else 0 end)] end;
+        ([ $all[] | select(.type == "result") ] | last // {} | .modelUsage // {}
+         | with_entries(.value |= (.outputTokens // .output_tokens))) as $truth
+        | ([ $all[] | select(.type == "assistant" and .message.usage != null)
+          | {id: (.message.id // ""), step: root(.parent_tool_use_id), model: (.message.model // "unknown"),
+             u: .message.usage, w: (.message.content | size)}
+        ] | to_entries | map(.value + {i: .key})) as $turns
+        | ($turns | map(select(.id != "")) | group_by(.id)
+           | map(.[0] + {u: (max_by(.u.output_tokens // 0) | .u), w: (map(.w) | add), i: (map(.i) | min)})) as $counted
+        | def edits($step): [ $all[] | select(.type == "assistant")
+              | select(root(.parent_tool_use_id) == $step)
+              | .message.content[]? | select(.type == "tool_use" and (.name | IN("Edit", "Write", "MultiEdit", "NotebookEdit")))
+              | {path: (.input.file_path // .input.notebook_path // ""),
+                 text: ([.input.new_string, .input.content, (.input.edits[]?.new_string)] | map(select(. != null)) | join("\n"))} ]
+            | map(select(.path != "")) | group_by(.path) | map({path: .[0].path, text: (map(.text) | join("\n"))});
+          # A test file by path, or any file an edit added a Rust test to (tests are inline modules).
+          def is_test: (.path | test("(^|/)tests?/|_tests?\\.rs$|(^|/)tests?\\.rs$"))
+            or (.text | test("#\\[(cfg\\(test\\)|test|tokio::test)\\]"));
+          # One row per step and model, then the true output of each model shared across its rows.
+          ($counted | group_by([.step, .model]) | map({
+              step: .[0].step, model: .[0].model, calls: length, w: (map(.w) | add),
+              input: (map(.u.input_tokens // 0) | add),
+              output: (map(.u.output_tokens // 0) | add),
+              cache_read: (map(.u.cache_read_input_tokens // 0) | add),
+              cache_write: (map(.u.cache_creation_input_tokens // 0) | add)})) as $rows
+        | ($rows | group_by(.model) | map(
+              (.[0].model) as $m
+              | (if $truth[$m] == null then null else (map(.w) | alloc($truth[$m])) end) as $out
+              | to_entries | map(.value + (if $out == null then {} else {output: $out[.key]} end)))
+              | add // []) as $shared
+        # The meter (claude-skills D0040): where context and cache writes come from, per step. A
+        # cache miss is a call after the first of its step whose cache write exceeds `$miss` tokens: the
+        # context was rewritten instead of read, as when the 5-minute cache of a resumed subagent expired.
+        # Tool bytes are the size of each result as it entered context, by tool name.
+        | 20000 as $miss
+        | def ttl($f): if all(.[]; .u.cache_creation == null) then null else map(.u.cache_creation[$f] // 0) | add end;
+          def wr: .u.cache_creation_input_tokens // 0;
+          ($counted | group_by(.step) | map(sort_by(.i) as $c | {key: $c[0].step, value: {
+              context_peak: ($c | map((.u.input_tokens // 0) + (.u.cache_read_input_tokens // 0) + wr) | max),
+              cache_write_5m: ($c | ttl("ephemeral_5m_input_tokens")),
+              cache_write_1h: ($c | ttl("ephemeral_1h_input_tokens")),
+              cache_misses: ($c[1:] | map(select(wr > $miss)) | length),
+              cache_miss_tokens: ($c[1:] | map(select(wr > $miss) | wr) | add // 0)}}) | from_entries) as $cache
+        | def rbytes: (.content | if type == "string" then . elif type == "array" then map(if type == "object" then .text // "" else tostring end) | join("") else "" end | utf8bytelength);
+          ([ $all[] | select(.type == "user") | .message.content[]? | select(type == "object" and .type == "tool_result")
+             | ($calls[.tool_use_id] // null) as $c | select($c != null)
+             | {step: root($c.parent), tool: $c.name, bytes: rbytes}]
+           | group_by(.step) | map({key: .[0].step, value: (group_by(.tool)
+               | map({key: .[0].tool, value: {calls: length, bytes: (map(.bytes) | add)}}) | from_entries)}) | from_entries) as $tools
+        # What a subagent or skill handed back to the main loop: the size of its report.
+        | ([ $all[] | select(.type == "user") | .message.content[]? | select(type == "object" and .type == "tool_result")
+             | ($calls[.tool_use_id] // null) as $c | select($c != null and ($c.name | IN("Agent", "Task", "Skill")))
+             | {step: lbl($c), bytes: rbytes}]
+           | group_by(.step) | map({key: .[0].step, value: (map(.bytes) | add)}) | from_entries) as $reports
+        | ($shared | group_by(.step) | map({
+              step: .[0].step,
+              calls: (map(.calls) | add),
+              models: (map({key: .model, value: {input, output_est: .output, cache_read, cache_write}}) | from_entries)
+            })) as $steps
+        | ([ $all[] | select(.type == "assistant" and .parent_tool_use_id == null)
+             | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
+             | {key: .id, value: (.input.command // "")} ] | from_entries) as $cmds
+        # The last mutation run the main loop read.
+        | ([ $all[] | select(.type == "user" and .parent_tool_use_id == null)
+             | .message.content[]? | select(type == "object" and .type == "tool_result")
+             | select(($cmds[.tool_use_id] // "") | test("(^|[ /;&|])(just mutants|cargo mutants)"))
+             | (.content | if type == "string" then . else (map(.text // "") | join("\n")) end) ]
+           | map(select(test("[0-9]+ (caught|missed)"))) | last // null) as $mut
+        | {
+            steps: ($steps | map(. + {edits: (edits(.step) as $e | {files: ($e | length), tests: ($e | map(select(is_test)) | length)}),
+                                      meter: (($cache[.step] // {}) + {tools: ($tools[.step] // {}), report_bytes: ($reports[.step] // null)})})
+                    | sort_by(.step)),
+            mutants: (if $mut == null then null else
+                {caught: (($mut | capture("(?<n>[0-9]+) caught").n // "0") | tonumber),
+                 missed: (($mut | capture("(?<n>[0-9]+) missed").n // "0") | tonumber),
+                 unviable: (($mut | capture("(?<n>[0-9]+) unviable").n // "0") | tonumber),
+                 timeout: (($mut | capture("(?<n>[0-9]+) timeout").n // "0") | tonumber)} end)
+          }' "$1"
+}
+
+# The gate class an issue body declares: a `gate=` board header, a `Gate class:` line, or the
+# value under a `### Gate class` heading (backticks and a full stop allowed).
+gate_class() {
+    awk '
+        match($0, /gate=[a-z]+/) { print substr($0, RSTART + 5, RLENGTH - 5); exit }
+        match(tolower($0), /^gate class: *[a-z]+/) { v = substr(tolower($0), RSTART, RLENGTH); sub(/^gate class: */, "", v); print v; exit }
+        tolower($0) ~ /^#+ *gate class *$/ { want = 1; next }
+        want && /[^[:space:]]/ { if (match(tolower($0), /[a-z]+/)) { print substr(tolower($0), RSTART, RLENGTH); exit } want = 0 }
+    '
+}
+
+record() {
+    local file=$1 usage steps err=false
+    is_error "$file" && err=true
+    usage=$(STEP=orchestrate PR="" "$here/review-usage.sh" record "$file")
+    steps=$(steps_of "$file")
+    jq -c --arg issue "${ISSUE:-}" --arg gate_class "${GATE_CLASS:-}" --arg head "${HEAD_SHA:-}" \
+        --arg devflow "${DEVFLOW_SHA:-$(devflow_sha)}" --arg run "${RUN_URL:-}" --argjson err "$err" --argjson extra "$steps" '
+        {v: 1, at, issue: ($issue | if . == "" then null else tonumber end),
+         gate_class: (if $gate_class == "" then null else $gate_class end),
+         head: (if $head == "" then null else $head end),
+         devflow: (if $devflow == "" then null else $devflow end),
+         run: (if $run == "" then null else $run end),
+         subtype, turns, duration_ms, models, cost_usd}
+        + (if .unsplit then {unsplit} else {} end)
+        + $extra
+        | if $err then .subtype = "error" else . end' <<<"$usage"
+}
+
+# A result the action reports as is_error carries subtype "success"; the record says "error".
+is_error() {
+    jq -e '[.[] | select(.type == "result")] | last | .is_error == true' "$1" >/dev/null 2>&1
+}
+
+limit_reset() {
+    jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$1" |
+        grep -oiE "hit your .*limit.*resets [^(]+\(UTC\)" | head -n1 | sed -E 's/.*resets +//; s/ *\(UTC\)//' || true
+}
+
+table() {
+    jq -rs '
+        def fmt: if . == null then "?" else tostring end;
+        def secs: if . == null then "?" else "\(. / 1000 | floor)s" end;
+        def usd: if . == null then "?" else "$\(. * 100 | round / 100)" end;
+        .[] as $r
+        | "#### Run record: #\($r.issue | fmt) (\($r.gate_class // "?")), devflow \($r.devflow // "?")", "",
+          "\($r.subtype // "?"), \($r.turns | fmt) turns, \($r.duration_ms | secs), cost \($r.cost_usd | usd) at API rates. Tokens per model, never summed. Step output is an estimate (the run total shared by size of what each step wrote); other counts are exact:", "",
+          "| Step | Calls | Model | Input | Output (est.) | Cache read | Cache write | Files edited | Test files |",
+          "|---|--:|---|--:|--:|--:|--:|--:|--:|",
+          ($r.steps[] as $s | ($s.models | to_entries) as $m
+           | $m | to_entries[] | .key as $i | .value as $e
+           | "| \(if $i == 0 then $s.step else "" end) | \(if $i == 0 then $s.calls else "" end) | \($e.key) | \($e.value.input) | \($e.value.output_est) | \($e.value.cache_read) | \($e.value.cache_write) | \(if $i == 0 then $s.edits.files else "" end) | \(if $i == 0 then $s.edits.tests else "" end) |"),
+          "",
+          (if ([$r.steps[] | select(.meter != null)] | length) == 0 then empty else
+          "Context and cache per step (tokens), and tool results as they entered context (calls, bytes). A miss is a call after the first of its step that wrote more than 20k tokens to the cache:", "",
+          "| Step | Context peak | Cache write 5m | Cache write 1h | Misses | Miss write | Tool results |",
+          "|---|--:|--:|--:|--:|--:|---|",
+          ($r.steps[] | select(.meter != null)
+           | "| \(.step) | \(.meter.context_peak | fmt) | \(.meter.cache_write_5m | fmt) | \(.meter.cache_write_1h | fmt) | \(.meter.cache_misses | fmt) | \(.meter.cache_miss_tokens | fmt) | \(.meter.tools | to_entries | map("\(.key) \(.value.calls)x \(.value.bytes)B") | join(", ")) |")
+          end),
+          "",
+          (if $r.mutants then "Mutants: \($r.mutants.caught) caught, \($r.mutants.missed) missed, \($r.mutants.unviable) unviable, \($r.mutants.timeout) timeout." else "Mutants: no mutation run read." end)'
+}
+
+digest() {
+    jq -rs '
+        def k: if . == null then "-" elif . >= 1000000 then "\(. / 100000 | round / 10)M"
+               elif . >= 1000 then "\(. / 1000 | round)k" else tostring end;
+        def median: sort | if length == 0 then null else .[(length - 1) / 2 | floor] end;
+        # A run that did no model work (cut off before its first call) says nothing about a step.
+        map(select((.models | length) > 0)) |
+        if length == 0 then "No run records." else
+        group_by(.gate_class // "unknown")[] as $g
+        | "### \($g[0].gate_class // "unknown"): \($g | length) runs", "",
+          "Median tokens per run and model (never summed across models or kinds):", "",
+          "| Model | Input | Output | Cache read | Cache write |", "|---|--:|--:|--:|--:|",
+          ([$g[] | .models | to_entries[]] | group_by(.key)[]
+           | "| \(.[0].key) | \(map(.value.input) | median | k) | \(map(.value.output) | median | k) | \(map(.value.cache_read) | median | k) | \(map(.value.cache_write) | median | k) |"),
+          "", "Steps: runs that called the step, and of those the runs where it edited no file.", "",
+          "A cache miss is a call after the first of its step that wrote over 20k tokens to the cache; records from before the meter show `-`.", "",
+          "| Step | Runs | Left nothing | Median calls | Median context peak | Runs with a cache miss |", "|---|--:|--:|--:|--:|--:|",
+          ([$g[] | .steps[]] | group_by(.step)[]
+           | "| \(.[0].step) | \(length) | \(if .[0].step == "orchestrator" then "-" else map(select(.edits.files == 0)) | length end) | \(map(.calls) | median) | \(map(.meter.context_peak // empty) | median | k) | \(if any(.[]; .meter != null) then map(select((.meter.cache_misses // 0) > 0)) | length else "-" end) |"),
+          "", "Mutation: \([$g[] | select(.mutants != null)] | length) of \($g | length) runs read a result; survivors in \([$g[] | select(.mutants != null and .mutants.missed > 0)] | length).", ""
+        end'
+}
+
+gha() {
+    local n
+    for n in 1 2 3 4; do gh api "$@" && return 0; sleep $((n * 5)); done
+    return 1
+}
+
+collect() {
+    local cache=${RUN_RECORD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/run-record} job
+    mkdir -p "$cache"
+    gha "repos/$(repo)/actions/workflows/claude.yml/runs?per_page=${RUN_RECORD_RUNS:-50}" \
+        --jq '.workflow_runs[] | select(.status == "completed") | .id' |
+    while read -r r; do
+        [[ -n $r ]] || continue
+        gha "repos/$(repo)/actions/runs/$r/jobs?per_page=100" --jq '.jobs[] | select(.name == "Orchestrate") | .id' |
+        while read -r job; do
+            [[ -s $cache/$job.log ]] || gha "repos/$(repo)/actions/jobs/$job/logs" > "$cache/$job.log"
+            sed -E 's/^[0-9]{4}-[0-9-]+T[0-9:.]+Z ?//' "$cache/$job.log" | sed -n 's/^RUN-RECORD //p'
+        done
+    done
+}
+
+case "${1:-}" in
+    record) record "${2:?execution file}" ;;
+    limit-reset) limit_reset "${2:?execution file}" ;;
+    gate-class) gate_class ;;
+    table) table ;;
+    digest) digest ;;
+    collect) collect ;;
+    *) sed -n '2,28p' "$0" >&2; exit 2 ;;
+esac

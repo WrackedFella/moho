@@ -1,0 +1,27 @@
+//! Application initialization modules.
+//!
+//! This module contains sub-modules for different aspects of application initialization,
+//! making the main App::new() function more modular and testable.
+
+pub mod autosave;
+pub mod camera;
+pub mod chunk_streamer;
+pub mod config;
+pub mod console;
+pub mod cut_caps;
+pub mod designation_markers;
+#[cfg(test)]
+pub(crate) mod dig_site;
+pub mod event_loop;
+pub mod event_setup;
+pub mod game;
+pub mod generation_job;
+pub mod initializer;
+pub mod input_state;
+pub mod physics_controller;
+pub mod renderer_setup;
+pub mod scene_loader;
+pub mod sounds;
+pub mod view_level;
+pub mod world_generator;
+pub mod world_geometry;

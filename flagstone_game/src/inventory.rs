@@ -1,0 +1,128 @@
+use std::collections::HashMap;
+
+/// A resource amount produced by a mining action — the currency between "a
+/// mine happened" and "inventory grew." `amount` stays a data field even
+/// though every caller passes `1` today: the long-term sub-grid mining pivot
+/// will yield fractional/variable amounts, and deposit code must not assume
+/// "1 hit = 1 unit."
+#[derive(Debug, Clone, Copy)]
+pub struct ResourceYield {
+    pub resource_id: u32,
+    pub amount: u32,
+}
+
+/// The player-facing name of a resource.
+pub fn resource_name(resource_id: u32) -> String {
+    match resource_id {
+        1 => "Iron ore".to_owned(),
+        other => format!("Resource {other}"),
+    }
+}
+
+/// Per-resource integer counters. Keyed on raw `resource_id`, matching the
+/// existing per-block resource data — no separate item-id model yet.
+#[derive(Debug, Default)]
+pub struct Inventory {
+    counts: HashMap<u32, u32>,
+}
+
+impl Inventory {
+    pub fn add(&mut self, resource_id: u32, amount: u32) {
+        *self.counts.entry(resource_id).or_insert(0) += amount;
+    }
+
+    pub fn count(&self, resource_id: u32) -> u32 {
+        self.counts.get(&resource_id).copied().unwrap_or(0)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.counts.iter().map(|(&id, &amount)| (id, amount))
+    }
+
+    /// The `(resource_id, count)` pairs in ascending resource id order.
+    pub fn sorted(&self) -> Vec<(u32, u32)> {
+        let mut counts: Vec<(u32, u32)> = self.iter().collect();
+        counts.sort_unstable_by_key(|&(resource_id, _)| resource_id);
+        counts
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.counts.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_name_names_iron_ore_and_falls_back_for_unknown_ids() {
+        assert_eq!(resource_name(1), "Iron ore");
+        assert_eq!(resource_name(0), "Resource 0");
+        assert_eq!(resource_name(7), "Resource 7");
+        assert_eq!(resource_name(4000), "Resource 4000");
+    }
+
+    #[test]
+    fn sorted_lists_every_resource_in_ascending_id_order() {
+        let mut inventory = Inventory::default();
+        inventory.add(7, 3);
+        inventory.add(2, 5);
+        inventory.add(7, 1);
+        inventory.add(4, 9);
+
+        assert_eq!(inventory.sorted(), [(2, 5), (4, 9), (7, 4)]);
+        assert!(Inventory::default().sorted().is_empty());
+    }
+
+    #[test]
+    fn count_when_resource_never_added_returns_zero() {
+        let inventory = Inventory::default();
+
+        assert_eq!(inventory.count(42), 0);
+    }
+
+    #[test]
+    fn add_accumulates_across_multiple_calls() {
+        let mut inventory = Inventory::default();
+        inventory.add(1, 3);
+
+        inventory.add(1, 2);
+
+        assert_eq!(inventory.count(1), 5);
+    }
+
+    #[test]
+    fn add_keeps_different_resources_independent() {
+        let mut inventory = Inventory::default();
+
+        inventory.add(1, 5);
+        inventory.add(2, 10);
+
+        assert_eq!(inventory.count(1), 5);
+        assert_eq!(inventory.count(2), 10);
+    }
+
+    #[test]
+    fn is_empty_true_until_first_add() {
+        let mut inventory = Inventory::default();
+        assert!(inventory.is_empty());
+
+        inventory.add(1, 1);
+
+        assert!(!inventory.is_empty());
+    }
+
+    #[test]
+    fn iter_yields_each_resource_and_count() {
+        let mut inventory = Inventory::default();
+        inventory.add(7, 2);
+        inventory.add(3, 5);
+        inventory.add(7, 1);
+
+        let mut pairs: Vec<(u32, u32)> = inventory.iter().collect();
+        pairs.sort_unstable();
+
+        assert_eq!(pairs, vec![(3, 5), (7, 3)]);
+    }
+}

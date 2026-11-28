@@ -1,0 +1,30 @@
+[package]
+name = "moho_ui_shell"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+egui = { workspace = true }
+egui-winit = { workspace = true }
+moho_render_api = { path = "../moho_render_api" }
+moho_input = { path = "../moho_input" }
+moho_app = { path = "../moho_app" }
+moho_audio = { path = "../moho_audio" }
+moho_core = { path = "../moho_core" }
+moho_renderer = { path = "../moho_renderer" }
+glam = { workspace = true }
+winit = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+egui-wgpu = { workspace = true }
+egui_kittest = { workspace = true, features = ["wgpu"] }
+image = { workspace = true, features = ["png"] }
+sha2 = { workspace = true }
+wgpu = { workspace = true }
+
+[lints]
+workspace = true

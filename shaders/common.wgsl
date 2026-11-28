@@ -4,7 +4,7 @@ struct Camera {
     vp1: vec4<f32>,
     vp2: vec4<f32>,
     vp3: vec4<f32>,
-    cam_pos: vec4<f32>,
+    cam_pos: vec4<f32>,  // xyz = camera position, w = view-height cut (world y above it is discarded)
 }
 
 struct Lighting {
@@ -12,35 +12,26 @@ struct Lighting {
     sun_color: vec4<f32>,      // xyz = color, w = unused
     moon_direction: vec4<f32>, // xyz = direction (normalized), w = intensity
     moon_color: vec4<f32>,     // xyz = color, w = unused
-    ambient: vec4<f32>,        // xyz = color, w = intensity
+    ambient: vec4<f32>,        // w = sky-ambient strength, xyz = unused
     params: vec4<f32>,         // x = time of day, y = debug mode, zw = unused
+    sky_zenith: vec4<f32>,     // xyz = colour, w = unused
+    sky_horizon: vec4<f32>,    // xyz = colour, w = unused
+    sky_ground: vec4<f32>,     // xyz = colour, w = unused
 }
 
-// Multi-light shadow matrix buffer (288 bytes total for 4 lights)
-struct MultiLightShadowMatrix {
-    // Light 0 matrix (Sun)
-    light0_m0: vec4<f32>,
-    light0_m1: vec4<f32>,
-    light0_m2: vec4<f32>,
-    light0_m3: vec4<f32>,
-    // Light 1 matrix (Moon)
-    light1_m0: vec4<f32>,
-    light1_m1: vec4<f32>,
-    light1_m2: vec4<f32>,
-    light1_m3: vec4<f32>,
-    // Light 2 matrix (Dynamic 1)
-    light2_m0: vec4<f32>,
-    light2_m1: vec4<f32>,
-    light2_m2: vec4<f32>,
-    light2_m3: vec4<f32>,
-    // Light 3 matrix (Dynamic 2)
-    light3_m0: vec4<f32>,
-    light3_m1: vec4<f32>,
-    light3_m2: vec4<f32>,
-    light3_m3: vec4<f32>,
-    // Light intensities (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
+// Cascaded shadow block (496 bytes): sun layers 0-3, moon layers 4-5. Mirrors `ShadowGpu`.
+struct Shadow {
+    // Light view-projection per layer
+    matrices: array<mat4x4<f32>, 6>,
+    // Far end of each cascade by view depth: sun in [0], moon in [1].xy
+    split_far: array<vec4<f32>, 2>,
+    // World size of one texel per cascade, packed like split_far
+    texel_world: array<vec4<f32>, 2>,
+    // xyz = camera forward, w = cascade blend fraction
+    camera_forward: vec4<f32>,
+    // x = sun, y = moon
     light_intensities: vec4<f32>,
-    // Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=unused
+    // x = effective shadow distance (0 = shadows off), y = unused (0), z = filter radius in texels (0..3), w = view-height cut
     metadata: vec4<f32>,
 }
 
@@ -76,16 +67,20 @@ var<storage, read> dynamic_lights: DynamicLights;
 
 // Shadow mapping resources (group 1)
 @group(1) @binding(0)
-var<uniform> shadow_matrices: MultiLightShadowMatrix;
+var<uniform> shadow_data: Shadow;
 
 @group(1) @binding(1)
-var shadow_map: texture_depth_2d_array; // Array texture for all 4 lights
+var shadow_map: texture_depth_2d_array;
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;
 
-@group(1) @binding(3)
-var shadow_sampler_nearest: sampler; // For PCSS blocker search (depth reads)
+// Base-colour texture of the draw (group 2); untextured draws bind a 1x1 white texture.
+@group(2) @binding(0)
+var base_colour_texture: texture_2d<f32>;
+
+@group(2) @binding(1)
+var base_colour_sampler: sampler;
 
 struct VertexIn {
     @location(0) position: vec3<f32>,
@@ -95,6 +90,8 @@ struct VertexIn {
     @location(10) light_level: f32,
     @location(11) block_light_rgb: vec3<f32>,
     @location(12) sky_exposed: f32,
+    @location(13) material: u32,
+    @location(14) uv: vec2<f32>,
 }
 
 struct InstanceIn {
@@ -118,11 +115,11 @@ struct VsOut {
     @location(0) @interpolate(flat) material: u32,
     @location(1) normal: vec3<f32>,
     @location(2) world_pos: vec3<f32>,
-    @location(3) light_space_pos: vec4<f32>,
     @location(4) ao: f32,
     @location(5) @interpolate(flat) geometry_type: u32,
     @location(6) light_level: f32,
     @location(7) @interpolate(flat) object_type: u32,
     @location(8) block_light_rgb: vec3<f32>,
     @location(9) sky_exposed: f32,
+    @location(10) uv: vec2<f32>,
 }

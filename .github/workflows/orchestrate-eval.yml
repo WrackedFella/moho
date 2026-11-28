@@ -1,0 +1,382 @@
+name: Orchestrate eval
+
+# Replays closed work items through /devflow:orchestrate from the commit their merged PR
+# started at, to measure the workflow before and after a change to it. Each replay pushes
+# only to eval/<label>/<ID>-r<n> and never touches the issue, the board or a PR: the
+# allow-list leaves out every tracker write, and the job token can only read them. The set is .github/eval/orchestrate-set.json;
+# each entry's reference commit is the merged result, kept for comparison.
+#
+# Per replay the job log carries one `EVAL-RECORD {json}` line: outcome, gate, held-out
+# tests, commits, mandatory steps the orchestrator never called (devflow's step-check),
+# turns, wall time and tokens per model (scripts/review-usage.sh record), the main loop's
+# peak context, and how many of the reference's new test names the replay has.
+# `scripts/eval-score.sh collect <label> | scripts/eval-score.sh report` scores a set.
+# With review on, the replay's range is dispatched to pr-review.yml as a dry run, whose
+# log carries the verdict. With rereview on, nothing is replayed: each existing
+# eval/<label>/ branch gets one more dry run, which measures how often the review's
+# verdict flips on the same head. Delete eval/ branches once a set is scored.
+#
+# With intake_only on, each replay stops after step 1's conformance check, which measures
+# intake pauses alone. devflow_ref loads devflow from a claude-skills branch or SHA instead
+# of main, so an unmerged change can be measured.
+#
+# A replay the subscription's usage limit cuts off is recorded with `limited: true`, gets
+# no review, and is not scored. The Resume job waits for the limit to reset and dispatches
+# those replays again under `<label>-a<attempt>`, at most twice.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Run label, used in branch names (letters, digits, dashes), for example baseline
+        required: true
+      cards:
+        description: Comma-separated card IDs from the set (empty for all)
+        required: false
+      runs:
+        description: Replays per card
+        default: "2"
+      model:
+        description: Orchestrator model
+        type: choice
+        options: [default, sonnet, opus]
+        default: default
+      review:
+        description: Dispatch a pr-review dry run on each replay
+        type: boolean
+        default: true
+      replays:
+        description: Comma-separated replays as ID-rN (overrides cards and runs; used by Resume)
+        required: false
+      attempt:
+        description: Resume attempt (set by Resume)
+        default: "1"
+      rereview:
+        description: Replay nothing; dispatch one more review dry run on each eval/<label>/ branch
+        type: boolean
+        default: false
+      intake_only:
+        description: Stop each replay after step 1's conformance check (measures intake pauses; no branch, gate or review)
+        type: boolean
+        default: false
+      devflow_ref:
+        description: claude-skills branch or SHA to load devflow from (empty for the marketplace's main)
+        required: false
+      bash_output_max_chars:
+        description: Claude Code `bashOutputMaxChars` setting for the replay (empty for the default)
+        required: false
+      exclude_dynamic:
+        description: Pass --exclude-dynamic-system-prompt-sections to the replay
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          LABEL: ${{ inputs.label }}
+          CARDS: ${{ inputs.cards }}
+          RUNS: ${{ inputs.runs }}
+          REPLAYS: ${{ inputs.replays }}
+        run: |
+          [[ $LABEL =~ ^[a-z0-9-]+$ && $RUNS =~ ^[1-9]$ ]] || { echo "::error::label must be [a-z0-9-]+ and runs 1-9"; exit 1; }
+          matrix=$(jq -c --arg cards "$CARDS" --argjson runs "$RUNS" --arg replays "$REPLAYS" '
+            def list: split(",") | map(gsub("^ +| +$"; "")) | map(select(. != ""));
+            ($cards | list) as $want | ($replays | list) as $only
+            | if ($only | length) > 0 then
+                [ .[] | . as $c | $only[] | select(startswith($c.id + "-r"))
+                  | $c + {run: (ltrimstr($c.id + "-r") | tonumber)} ]
+              else
+                [ .[] | select(($want | length) == 0 or (.id as $id | $want | index($id)))
+                  | . as $c | range(1; $runs + 1) | $c + {run: .} ]
+              end' .github/eval/orchestrate-set.json)
+          [ "$(jq length <<<"$matrix")" -gt 0 ] || { echo "::error::no card in the set matches"; exit 1; }
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  rereview:
+    name: Re-review
+    needs: plan
+    if: inputs.rereview
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LABEL: ${{ inputs.label }}
+      MATRIX: ${{ needs.plan.outputs.matrix }}
+    steps:
+      - name: Dispatch a dry run on each replay branch
+        run: |
+          jq -r '.[] | "\(.id) \(.run) \(.issue)"' <<<"$MATRIX" | while read -r id run issue; do
+            head=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/eval/$LABEL/$id-r$run" | cut -f1)
+            base=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/eval-base/$id" | cut -f1)
+            if [ -z "$head" ] || [ -z "$base" ]; then echo "::warning::no eval/$LABEL/$id-r$run or eval-base/$id"; continue; fi
+            gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
+              --ref "${{ github.event.repository.default_branch }}" \
+              -f dry_run_range="$base..$head" -f dry_run_issue="$issue"
+            echo "Dispatched $id r$run: $base..$head"
+          done
+
+  replay:
+    name: ${{ matrix.card.id }} r${{ matrix.card.run }}
+    needs: plan
+    if: ${{ !inputs.rereview }}
+    runs-on: ubuntu-latest
+    # About 165 minutes for the agent after setup; with step 11 running the full review, two domain replays passed 135.
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        card: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ID: ${{ matrix.card.id }}
+      ISSUE: ${{ matrix.card.issue }}
+      BASE_SHA: ${{ matrix.card.base }}
+      BRANCH: eval/${{ inputs.label }}/${{ matrix.card.id }}-r${{ matrix.card.run }}
+      MOHO_BASE: origin/eval-base/${{ matrix.card.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.card.base }}
+          fetch-depth: 0
+      # The skill branches from "the base branch"; a branch at the replay's start commit
+      # gives it one, and MOHO_BASE points the gate and mutation diff at it. The job token
+      # may not push a commit that edits a workflow, so such a start commit is replaced by
+      # one with the same code and its parent's workflows, built with fixed dates so both
+      # replays of a card build the same commit. Later steps use that commit as BASE_SHA.
+      - name: Base branch
+        run: |
+          base=$BASE_SHA
+          if git diff --quiet "$BASE_SHA^" "$BASE_SHA" -- .github/workflows; then :; else
+            export GIT_INDEX_FILE="$RUNNER_TEMP/eval-base.index"
+            git read-tree "$BASE_SHA"
+            git rm -r --cached -f -q .github/workflows
+            git read-tree --prefix=.github/workflows/ "$BASE_SHA^:.github/workflows"
+            tree=$(git write-tree)
+            unset GIT_INDEX_FILE
+            date=$(git show -s --format=%cI "$BASE_SHA")
+            base=$(GIT_AUTHOR_NAME=eval GIT_AUTHOR_EMAIL=eval@localhost GIT_AUTHOR_DATE="$date" \
+              GIT_COMMITTER_NAME=eval GIT_COMMITTER_EMAIL=eval@localhost GIT_COMMITTER_DATE="$date" \
+              git commit-tree "$tree" -p "$BASE_SHA^" -m "eval base for $ID: $BASE_SHA without its workflow edits")
+            git checkout --force --detach "$base"
+            echo "BASE_SHA=$base" >> "$GITHUB_ENV"
+          fi
+          git push origin "$base:refs/heads/eval-base/$ID" || git ls-remote --exit-code origin "refs/heads/eval-base/$ID"
+          git fetch origin "eval-base/$ID:refs/remotes/origin/eval-base/$ID"
+          echo "MODEL_ARG=$([ '${{ inputs.model }}' = default ] || echo '--model ${{ inputs.model }}')" >> "$GITHUB_ENV"
+          echo "BASE_DATE=$(git show -s --format=%cI "$BASE_SHA")" >> "$GITHUB_ENV"
+      # Context-cut candidates (D0041): settings only, no devflow change.
+      - name: Context settings
+        env:
+          MAX_CHARS: ${{ inputs.bash_output_max_chars }}
+        run: |
+          [[ -z $MAX_CHARS || $MAX_CHARS =~ ^[0-9]+$ ]] || { echo "::error::bash_output_max_chars must be a number"; exit 1; }
+          [ -z "$MAX_CHARS" ] || echo "SETTINGS_ARG=--settings '{\"bashOutputMaxChars\":$MAX_CHARS}'" >> "$GITHUB_ENV"
+          [ '${{ inputs.exclude_dynamic }}' != true ] || echo "EXCLUDE_DYNAMIC_ARG=--exclude-dynamic-system-prompt-sections" >> "$GITHUB_ENV"
+      # An unmerged devflow change is measured from a clone loaded with --plugin-dir, so a
+      # set never needs a merge into claude-skills main before it is scored.
+      - name: Devflow source
+        env:
+          DEVFLOW_REF: ${{ inputs.devflow_ref }}
+        run: |
+          if [ -z "$DEVFLOW_REF" ]; then
+            echo "DEVFLOW_MARKETPLACE=https://github.com/WrackedFella/claude-skills.git" >> "$GITHUB_ENV"
+            echo "DEVFLOW_PLUGIN=devflow@claude-skills" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          [[ $DEVFLOW_REF =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::bad devflow_ref"; exit 1; }
+          git clone -q https://github.com/WrackedFella/claude-skills.git "$RUNNER_TEMP/claude-skills"
+          git -C "$RUNNER_TEMP/claude-skills" checkout -q "$DEVFLOW_REF"
+          echo "PLUGIN_ARG=--plugin-dir $RUNNER_TEMP/claude-skills/plugins/devflow" >> "$GITHUB_ENV"
+      - name: Install toolchain
+        run: |
+          bash scripts/cloud-tools.sh --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          CARGO_TERM_COLOR: always
+          CARGO_INCREMENTAL: 0
+          RUST_BACKTRACE: 1
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
+      - uses: anthropics/claude-code-action@v1
+        id: claude
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job's own token, not the Claude App's: it can push branches but has read-only
+          # issues and pull requests, so no tracker write is possible whatever the agent runs.
+          github_token: ${{ github.token }}
+          plugin_marketplaces: ${{ env.DEVFLOW_MARKETPLACE }}
+          plugins: ${{ env.DEVFLOW_PLUGIN }}
+          display_report: true
+          # The Resume job redispatches cut-off replays as github-actions[bot]; only a
+          # workflow in this repository or a writer can dispatch, so allow that bot.
+          allowed_bots: github-actions
+          prompt: /devflow:orchestrate ${{ matrix.card.issue }}
+          # Tracker writes are left out of the allow-list, so the overrides below are
+          # enforced, not only requested.
+          claude_args: |
+            ${{ env.MODEL_ARG }}
+            ${{ env.PLUGIN_ARG }}
+            ${{ env.SETTINGS_ARG }}
+            ${{ env.EXCLUDE_DYNAMIC_ARG }}
+            --max-turns 200
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The replay starts at ${{ env.BASE_DATE }}: issues, pull requests and comments created after that did not exist yet, so ignore them wherever you or a subagent read the tracker, and put this sentence in every subagent brief. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, start the final report with the line 'Paused: needs a human answer', then the numbered questions, and stop.${{ inputs.intake_only && ' INTAKE ONLY: this replay measures step 1 alone. Skip the claim and the environment setup command, run step 1 through its conformance check, then end the run without starting step 2 and without pushing. If the check pauses, end as a pause above; otherwise start the final report with the line Intake: proceed, then the unconfirmed findings it reported, if any. The Stop hook will name steps 2 to 11 as missing: this override exempts them, so say so and stop.' || '' }}"
+            --add-dir /home/runner/.claude/plugins/cache /home/runner/work/_temp/claude-skills /tmp
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/e2e-guard *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/test-guard *),Bash(/home/runner/work/_temp/claude-skills/plugins/devflow/scripts/test-guard *),Bash(/home/runner/work/_temp/claude-skills/plugins/devflow/scripts/e2e-guard *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/intake-agree *),Bash(/home/runner/work/_temp/claude-skills/plugins/devflow/scripts/pr-facts *),Bash(/home/runner/work/_temp/claude-skills/plugins/devflow/scripts/intake-agree *),Edit,Write,Task,SendMessage,Skill"
+      - name: Score
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          REFERENCE: ${{ matrix.card.reference }}
+          GATE_CLASS: ${{ matrix.card.gate }}
+          RUN_NO: ${{ matrix.card.run }}
+          LABEL: ${{ inputs.label }}
+          REVIEW: ${{ inputs.review }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The checkout is the replay's base, which may predate the scoring scripts.
+          for s in review-usage.sh eval-score.sh; do
+            git show "$GITHUB_SHA:scripts/$s" > "$RUNNER_TEMP/$s"
+            chmod +x "$RUNNER_TEMP/$s"
+          done
+          head="" commits=0 gate=none heldout=n/a limited=false resets="" reftests=null context=null marked=false
+          # A replay cut off by the subscription's usage limit says so in its last result.
+          if [ -f "$EXECUTION_FILE" ]; then
+            resets=$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" \
+              | grep -oiE "hit your .*limit.*resets [^(]+\(UTC\)" | head -n1 | sed -E 's/.*resets +//; s/ *\(UTC\)//' || true)
+            [ -n "$resets" ] && limited=true
+            # A run that would pause opens its final report with the pause comment's first line.
+            jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" | grep -qE '^[[:space:]*]*Paused: needs a human answer' && marked=true
+            context=$("$RUNNER_TEMP/eval-score.sh" context "$EXECUTION_FILE" || echo null)
+          fi
+          if git fetch origin "$BRANCH" 2>/dev/null; then
+            head=$(git rev-parse FETCH_HEAD)
+            commits=$(git rev-list --count "$BASE_SHA..$head")
+            git checkout --force --detach "$head"
+            git clean -fdq
+            if just check > "$RUNNER_TEMP/gate.log" 2>&1; then gate=pass; else gate=fail; fi
+            tail -n 40 "$RUNNER_TEMP/gate.log"
+            # The reference's new test names present in the replay: spec coverage that
+            # doesn't depend on the review. Needs the gate's build.
+            if [ "$gate" = pass ]; then
+              reftests=$("$RUNNER_TEMP/eval-score.sh" reftests "$BASE_SHA" "$REFERENCE" || echo null)
+            fi
+            # Held-out tests: the reference's integration-test files, laid over the replay.
+            # Inline unit tests can't be laid over without the reference's code, so a card
+            # whose reference adds none reports n/a.
+            mapfile -t held < <(git diff --name-only --diff-filter=AM "$BASE_SHA" "$REFERENCE" -- '*/tests/*.rs')
+            if [ "${#held[@]}" -gt 0 ]; then
+              git checkout "$REFERENCE" -- "${held[@]}"
+              if just test > "$RUNNER_TEMP/heldout.log" 2>&1; then heldout=pass; else heldout=fail; fi
+              tail -n 40 "$RUNNER_TEMP/heldout.log"
+              git checkout --force --detach "$head"
+            fi
+            if [ "$REVIEW" = true ] && [ "$commits" -gt 0 ] && [ "$limited" = false ]; then
+              gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
+                --ref "${{ github.event.repository.default_branch }}" \
+                -f dry_run_range="$BASE_SHA..$head" -f dry_run_issue="$ISSUE"
+            fi
+          fi
+          usage='{}' steps='null'
+          if [ -f "$EXECUTION_FILE" ]; then
+            usage=$(STEP=orchestrate-eval HEAD_SHA="$head" "$RUNNER_TEMP/review-usage.sh" record "$EXECUTION_FILE")
+            # The plugin's own copy, so the score matches the Stop hook the run had.
+            step_check=$(find "$HOME/.claude/plugins" "$RUNNER_TEMP/claude-skills/plugins" -path '*devflow*/scripts/step-check' -type f 2>/dev/null | head -n1)
+            if [ -n "$step_check" ]; then
+              steps=$(git show "$GITHUB_SHA:CLAUDE.md" > "$RUNNER_TEMP/CLAUDE.md" \
+                && bash "$step_check" --claude-md "$RUNNER_TEMP/CLAUDE.md" "$EXECUTION_FILE" || true)
+              jq -e . >/dev/null 2>&1 <<<"$steps" || steps='null'
+            fi
+          fi
+          record=$(jq -c --arg label "$LABEL" --arg id "$ID" --argjson issue "$ISSUE" --arg gate_class "$GATE_CLASS" \
+            --argjson run "$RUN_NO" --arg branch "$BRANCH" --arg head "$head" --argjson commits "$commits" \
+            --arg gate "$gate" --arg heldout "$heldout" --argjson steps "$steps" \
+            --argjson limited "$limited" --arg resets "$resets" \
+            --argjson reftests "$reftests" --argjson context "$context" --argjson marked "$marked" \
+            '{label: $label, id: $id, issue: $issue, gate_class: $gate_class, run: $run, branch: $branch,
+              head: $head, commits: $commits, gate: $gate, heldout: $heldout,
+              limited: $limited, resets: (if $resets == "" then null else $resets end),
+              steps_missing: ($steps | if . == null then null else .missing end),
+              paused: ($marked or ($steps | if . == null then false else .paused end)),
+              reftests: $reftests, context: $context} + {usage: .}' <<<"$usage")
+          echo "EVAL-RECORD $record"
+          mkdir -p "$RUNNER_TEMP/limited"
+          if [ "$limited" = true ]; then echo "$resets" > "$RUNNER_TEMP/limited/$ID-r$RUN_NO"; fi
+          {
+            echo "### $ID r$RUN_NO ($LABEL)"
+            echo
+            echo '```json'
+            jq . <<<"$record"
+            echo '```'
+            if [ -f "$EXECUTION_FILE" ]; then
+              echo
+              echo "Final report:"
+              echo
+              jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Mark a replay the usage limit cut off
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: limited-${{ matrix.card.id }}-r${{ matrix.card.run }}
+          path: ${{ runner.temp }}/limited
+          if-no-files-found: ignore
+          retention-days: 2
+
+  # Replays the usage limit cut off run again once it resets. The job sleeps on the runner
+  # (minutes are free on a public repository) and gives up after two resumes.
+  resume:
+    name: Resume
+    needs: replay
+    if: always() && !cancelled() && !inputs.rereview
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LABEL: ${{ inputs.label }}
+      ATTEMPT: ${{ inputs.attempt }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: limited-*
+          path: limited
+          merge-multiple: true
+      - name: Dispatch the cut-off replays after the reset
+        run: |
+          shopt -s nullglob
+          files=(limited/*)
+          [ "${#files[@]}" -gt 0 ] || { echo "No replay hit the usage limit."; exit 0; }
+          replays=$(for f in "${files[@]}"; do basename "$f"; done | paste -sd, -)
+          [[ $ATTEMPT =~ ^[0-9]+$ ]] || ATTEMPT=1
+          if [ "$ATTEMPT" -ge 3 ]; then echo "::warning::still limited after $ATTEMPT attempts: $replays"; exit 0; fi
+          # "3:50am": the next such time, plus a 5-minute margin.
+          reset=$(cat "${files[@]}" | sort -u | head -n1)
+          target=$(date -u -d "$reset" +%s 2>/dev/null || date -u -d "+5 hours" +%s)
+          now=$(date -u +%s)
+          [ "$target" -le "$now" ] && target=$((target + 86400))
+          wait=$((target - now + 300))
+          [ "$wait" -gt 18900 ] && wait=18900
+          echo "Waiting $((wait / 60)) minutes for the limit to reset, then replaying: $replays"
+          sleep "$wait"
+          gh workflow run orchestrate-eval.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f label="${LABEL%-a[0-9]*}-a$((ATTEMPT + 1))" -f replays="$replays" \
+            -f model='${{ inputs.model }}' -f review='${{ inputs.review }}' -f attempt="$((ATTEMPT + 1))" \
+            -f intake_only='${{ inputs.intake_only }}' -f devflow_ref='${{ inputs.devflow_ref }}' \
+            -f bash_output_max_chars='${{ inputs.bash_output_max_chars }}' -f exclude_dynamic='${{ inputs.exclude_dynamic }}'

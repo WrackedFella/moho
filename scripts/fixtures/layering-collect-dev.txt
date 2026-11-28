@@ -1,0 +1,7 @@
+# Table for the collect_graph self-test with flagstone_ui in the gpu-dev row.
+engine: moho_renderer
+flagstone: flagstone flagstone_ui
+searchlight:
+domain:
+gpu: moho_renderer
+gpu-dev: flagstone_ui

@@ -1,0 +1,554 @@
+//! Shared builders for the crate's tests: small hand-made worlds and tuning values.
+
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+
+use glam::{Quat, Vec3};
+use moho_core::assets::AssetRoots;
+use moho_input::Action;
+use moho_input::action_map::ActionMap;
+use moho_input::bindings::Input;
+use moho_level::{LevelMarker, NavMesh};
+use moho_physics::{MoveSettings, PhysicsWorld};
+use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::{
+    AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, Item, ItemClass,
+    ItemDef, ItemId, ItemKind, LeanTuning, Lifecycle, LoadThresholds, Loadout, Magazine,
+    MagazineSpec, MagazineWell, PlayerDef, Remains, Rifle, Rig, RigSpec, RoundStats, Size,
+    SlotKind, VelocityFactor,
+};
+
+use crate::arena::{Arena, ArenaControl, nav_profile};
+use crate::assets_root;
+use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
+use crate::mode::ArenaMode;
+use crate::sim::{CarryConfig, Feedback, SearchlightSim, SimConfig};
+use crate::tag::SurfaceTag;
+use crate::tuning::SHIPPED_BODY;
+use crate::wave::WaveTuning;
+
+pub(crate) const DT: f32 = 1.0 / 60.0;
+
+/// What `test_round` flies with: the shipped 5.56 mm ball.
+pub(crate) const TEST_BALLISTICS: Ballistics = Ballistics {
+    muzzle_velocity: 940.0,
+    drag: 1.0,
+};
+
+/// Ticks a helper waits for a round to land or end before giving up; a round in the shipped
+/// arena lives well under a second.
+const FLIGHT_TICK_CAP: usize = 600;
+
+/// A closed axis-aligned box with outward-facing triangles.
+pub(crate) fn box_mesh(min: Vec3, max: Vec3) -> WorldMesh {
+    let positions = vec![
+        [min.x, min.y, min.z],
+        [max.x, min.y, min.z],
+        [max.x, max.y, min.z],
+        [min.x, max.y, min.z],
+        [min.x, min.y, max.z],
+        [max.x, min.y, max.z],
+        [max.x, max.y, max.z],
+        [min.x, max.y, max.z],
+    ];
+    let indices = vec![
+        0, 3, 2, 0, 2, 1, // -z
+        4, 5, 6, 4, 6, 7, // +z
+        0, 4, 7, 0, 7, 3, // -x
+        1, 2, 6, 1, 6, 5, // +x
+        0, 1, 5, 0, 5, 4, // -y
+        3, 7, 6, 3, 6, 2, // +y
+    ];
+    WorldMesh::new(
+        positions,
+        vec![[0.0, 1.0, 0.0]; 8],
+        vec![1.0; 8],
+        vec![[0.0; 3]; 8],
+        vec![1.0; 8],
+        vec![0; 8],
+        indices,
+    )
+    .expect("a box has matching channels and whole triangles")
+}
+
+/// A world holding one `World`-tagged box per `(min, max)` pair, stepped once.
+pub(crate) fn world_with(boxes: &[(Vec3, Vec3)]) -> PhysicsWorld {
+    let mut world = PhysicsWorld::new();
+    for (id, &(min, max)) in boxes.iter().enumerate() {
+        world.set_world_mesh(
+            WorldMeshId(id as u64),
+            &box_mesh(min, max),
+            SurfaceTag::World.into(),
+        );
+    }
+    world.step(DT);
+    world
+}
+
+/// A floor whose top is at y = 0, spanning x and z in [-10, 10], walled in 4 m high.
+pub(crate) fn room() -> PhysicsWorld {
+    world_with(&[
+        (Vec3::new(-12.0, -1.0, -12.0), Vec3::new(12.0, 0.0, 12.0)),
+        (Vec3::new(-11.0, 0.0, -11.0), Vec3::new(-10.0, 4.0, 11.0)),
+        (Vec3::new(10.0, 0.0, -11.0), Vec3::new(11.0, 4.0, 11.0)),
+        (Vec3::new(-11.0, 0.0, -11.0), Vec3::new(11.0, 4.0, -10.0)),
+        (Vec3::new(-11.0, 0.0, 10.0), Vec3::new(11.0, 4.0, 11.0)),
+    ])
+}
+
+/// A floor only, top at y = 0.
+pub(crate) fn flat_floor() -> PhysicsWorld {
+    world_with(&[(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0))])
+}
+
+/// A rig section with `slots` magazine slots of the `test` kind, the kind of every test magazine.
+pub(crate) fn rig_spec(slots: u32) -> RigSpec {
+    RigSpec {
+        magazine_slots: BTreeMap::from([(SlotKind::new("test"), slots)]),
+    }
+}
+
+/// A magazine of the `test` well holding `rounds` of `test_round`.
+pub(crate) fn mag(capacity: u32, rounds: u32) -> Magazine {
+    let spec = MagazineSpec {
+        well: MagazineWell::new("test"),
+        caliber: Caliber::new("test"),
+        slot: SlotKind::new("test"),
+        capacity,
+    };
+    Magazine::filled(
+        ItemId::new("test_mag"),
+        &spec,
+        &ItemId::new("test_round"),
+        rounds,
+    )
+    .expect("test rounds fit the capacity")
+}
+
+/// A magazine of a well the `test` rifle does not take.
+pub(crate) fn foreign_mag(capacity: u32, rounds: u32) -> Magazine {
+    let spec = MagazineSpec {
+        well: MagazineWell::new("foreign"),
+        caliber: Caliber::new("test"),
+        slot: SlotKind::new("test"),
+        capacity,
+    };
+    Magazine::filled(
+        ItemId::new("foreign_mag"),
+        &spec,
+        &ItemId::new("test_round"),
+        rounds,
+    )
+    .expect("test rounds fit the capacity")
+}
+
+/// A rifle taking the `test` well, loaded from `magazine`.
+pub(crate) fn rifle_from(magazine: Magazine) -> Rifle {
+    Rifle::loaded(MagazineWell::new("test"), magazine).expect("test magazines fit the test well")
+}
+
+pub(crate) fn test_move_settings() -> MoveSettings {
+    MoveSettings {
+        max_speed: 4.0,
+        ground_accel: 40.0,
+        friction: 4.0,
+        stop_speed: 1.0,
+        air_accel: 10.0,
+        air_speed_cap: 0.8,
+        gravity: None,
+        jump_speed: 8.0,
+        max_velocity: 90.0,
+        autohop: false,
+        crouch_ticks: 0,
+        prone_ticks: 0,
+        lean_ticks: 0,
+    }
+}
+
+pub(crate) fn test_profile() -> BodyProfile {
+    BodyProfile {
+        max_health: 100,
+        head_status: 50,
+        arm_status: 60,
+        leg_status: 60,
+    }
+}
+
+/// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
+/// `spares` stowed in order on a rig that has one slot per spare.
+pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
+    let slots = u32::try_from(spares.len()).expect("a handful of test spares");
+    let mut rig = Rig::new(ItemId::new("test_rig"), &rig_spec(slots));
+    for spare in spares {
+        rig.stow(spare).expect("the rig has a slot per spare");
+    }
+    SimConfig {
+        move_settings: test_move_settings(),
+        gravity: 18.0,
+        character_body: SHIPPED_BODY,
+        rounds: BTreeMap::from([(
+            ItemId::new("test_round"),
+            RoundStats {
+                ballistics: TEST_BALLISTICS,
+                damage: 30,
+            },
+        )]),
+        cooldown_ticks: 3,
+        reload_ticks: 10,
+        charge_ticks: 0,
+        muzzle_velocity_factor: VelocityFactor::default(),
+        body: test_profile(),
+        loadout: Loadout::new(rifle, rig),
+        enemy: enemy_tuning(),
+        enemy_aim_at: BodyPart::Torso,
+        lean: LeanTuning {
+            shift: 0.35,
+            roll: 12.0_f32.to_radians(),
+            blend_seconds: 0.25,
+            speed_factor: 0.5,
+        },
+        accuracy: AccuracyTuning {
+            walk_spread: 0.03,
+            settle_seconds: 0.35,
+        },
+        search_ticks: SEARCH_TICKS,
+        search_reach: SEARCH_REACH,
+        body_radius: BODY_RADIUS,
+        enemy_remains: Remains::default(),
+        grade_remains: BTreeMap::new(),
+        carry: CarryConfig {
+            player: test_player(),
+            items: test_items(),
+            weapon: ItemId::new("test_rifle"),
+        },
+    }
+}
+
+/// The test player: 30 kg of carry capacity (10 strength at 3 kg each), slowed to 0.7 of walking
+/// speed from 60% of capacity, unable to sprint from 80% and to move at 100%.
+pub(crate) fn test_player() -> PlayerDef {
+    PlayerDef {
+        strength: 10.0,
+        carry_capacity_per_strength: 3.0,
+        movement_speed: 1.0,
+        stamina_pool: 5.0,
+        slowed_scale: 0.7,
+        thresholds: LoadThresholds {
+            slowed: 0.6,
+            no_sprint: 0.8,
+            cannot_move: 1.0,
+        },
+    }
+}
+
+/// A plain item weighing `kg`.
+pub(crate) fn weighing(kg: f32) -> ItemDef {
+    ItemDef {
+        class: ItemClass::Tool,
+        size: Size {
+            width: 1,
+            height: 1,
+        },
+        lifecycle: Lifecycle::Unchanging,
+        weight: kg,
+        kind: ItemKind::Plain,
+        stats: Vec::new(),
+    }
+}
+
+/// Weightless definitions of every item id the tests carry, plus `ballast`, which `carrying`
+/// weighs.
+pub(crate) fn test_items() -> BTreeMap<ItemId, ItemDef> {
+    [
+        "test_rifle",
+        "test_mag",
+        "foreign_mag",
+        "test_round",
+        "test_rig",
+        "body_rig",
+        "backpack_small",
+        "bandage",
+        "rag",
+        "ballast",
+    ]
+    .into_iter()
+    .map(|name| (ItemId::new(name), weighing(0.0)))
+    .collect()
+}
+
+/// `config` with the player carrying `kg` of ballast in the inventory, against 30 kg of capacity.
+pub(crate) fn carrying(mut config: SimConfig, kg: f32) -> SimConfig {
+    config
+        .carry
+        .items
+        .insert(ItemId::new("ballast"), weighing(kg));
+    config.loadout = config
+        .loadout
+        .with_inventory(vec![Item::Other(ItemId::new("ballast"))]);
+    config
+}
+
+/// Ticks a search takes in the test config.
+pub(crate) const SEARCH_TICKS: u32 = 6;
+/// How far from the eye a body can be searched in the test config, in metres: the eye is 1.63 m
+/// over the floor, so a body lying 1.5 m away is 2.2 m from it.
+pub(crate) const SEARCH_REACH: f32 = 3.0;
+/// How close to the use ray a body must lie in the test config, in metres.
+pub(crate) const BODY_RADIUS: f32 = 0.8;
+
+/// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
+pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
+    let standing = &mut config.character_body.standing;
+    standing.eye_height = height + standing.hull.length / 2.0;
+}
+
+pub(crate) fn set_round_damage(config: &mut SimConfig, damage: u32) {
+    config
+        .rounds
+        .get_mut(&ItemId::new("test_round"))
+        .expect("the test config has the test round")
+        .damage = damage;
+}
+
+/// Enemy tuning with a 3-tick reaction (so the first shot is on tick 2), a 4-tick cooldown,
+/// 10 damage, no aim error and a fast turn.
+pub(crate) fn enemy_tuning() -> EnemyTuning {
+    EnemyTuning {
+        sight_range: 30.0,
+        view_half_angle: 60.0_f32.to_radians(),
+        reaction_ticks: 3,
+        cooldown_ticks: 4,
+        damage: 10,
+        aim_error: 0.0,
+        turn_rate: 6.0,
+        patrol_speed: 0.5,
+        arrive_radius: 0.5,
+        fire_cone: 0.1,
+        cover_range: 15.0,
+        cover_ticks: 240,
+        chase_ticks: 600,
+        cover_hide_height: 0.9,
+        near_miss_radius: 1.5,
+        seed: 7,
+    }
+}
+
+/// A floor 60 m wide and from 30 m behind the origin to 400 m ahead of it, top at y = 0: room
+/// for a dummy hundreds of metres down the range.
+pub(crate) fn long_floor() -> PhysicsWorld {
+    world_with(&[(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 400.0))])
+}
+
+/// An arena of a 60 m square floor (top at y = 0) plus one `World` box per `(min, max)` pair,
+/// with the given spawns and patrol route and no dummies.
+pub(crate) fn arena_with(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+) -> Arc<Arena> {
+    arena_on(60.0, boxes, player, enemies, route)
+}
+
+/// [`arena_with`] on a square floor `floor_size` metres across, centred on the origin.
+pub(crate) fn arena_on(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+) -> Arc<Arena> {
+    build_arena(floor_size, boxes, player, enemies, route, &[])
+}
+
+/// Like [`arena_with`], plus one next-wave control per `(min, max)` box in `controls`, in
+/// order, so control `i` is the `i`th box.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    build_arena(60.0, boxes, player, enemies, route, controls)
+}
+
+fn build_arena(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    let half = floor_size / 2.0;
+    let floor = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 0.0, half));
+    let meshes: Vec<WorldMesh> = std::iter::once(&floor)
+        .chain(boxes)
+        .map(|&(min, max)| box_mesh(min, max))
+        .collect();
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&(min, max)| ArenaControl {
+            action: ControlAction::NextWave,
+            mesh: box_mesh(min, max),
+        })
+        .collect();
+    let solids: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&solids, nav_profile()).expect("box worlds build a navmesh"));
+    Arc::new(Arena {
+        controls,
+        material_names: vec![None; meshes.len()],
+        meshes,
+        nav,
+        nav_fallback: false,
+        player_spawn: player,
+        dummy_spawns: Vec::new(),
+        enemy_spawns: enemies.to_vec(),
+        route: route.to_vec(),
+        covers: Vec::new(),
+        menu_cameras: Vec::new(),
+    })
+}
+
+/// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100
+/// a kill.
+pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
+    WaveTuning::new(first_size, 1, 100)
+        .expect("a positive first wave and growth are valid")
+        .with_mix(GradeMix::only(Grade::Experienced))
+}
+
+/// The command for every tick after `first`: nothing pressed, `first`'s host levels kept.
+fn follow_up(first: &SearchlightCommand) -> SearchlightCommand {
+    SearchlightCommand {
+        god_mode: first.god_mode,
+        forced_grade: first.forced_grade,
+        simple: first.simple,
+        round_gravity: first.round_gravity,
+        ..SearchlightCommand::default()
+    }
+}
+
+/// Ticks `sim` once with `first`, then on with nothing pressed until a tick reports a
+/// [`Feedback::Hit`] or the cap runs out. Returns all feedback in order, drained.
+pub(crate) fn run_until_hit(sim: &mut SearchlightSim, first: &SearchlightCommand) -> Vec<Feedback> {
+    let rest = follow_up(first);
+    let mut all = Vec::new();
+    let mut command = first;
+    for _ in 0..FLIGHT_TICK_CAP {
+        sim.tick(command, DT);
+        let tick = sim.drain_feedback();
+        let hit = tick.iter().any(|fb| matches!(fb, Feedback::Hit { .. }));
+        all.extend(tick);
+        if hit {
+            break;
+        }
+        command = &rest;
+    }
+    all
+}
+
+/// Ticks `sim` once with `first`, then on with nothing pressed until no round is in flight, so
+/// a later hit or miss cannot pass unseen. Returns all feedback in order, drained.
+///
+/// # Panics
+/// If a round is still in flight when the cap runs out.
+pub(crate) fn run_until_settled(
+    sim: &mut SearchlightSim,
+    first: &SearchlightCommand,
+) -> Vec<Feedback> {
+    let rest = follow_up(first);
+    let mut all = Vec::new();
+    let mut command = first;
+    for _ in 0..FLIGHT_TICK_CAP {
+        sim.tick(command, DT);
+        all.extend(sim.drain_feedback());
+        if sim.rounds_in_flight().is_empty() {
+            return all;
+        }
+        command = &rest;
+    }
+    panic!("a round was still in flight after {FLIGHT_TICK_CAP} ticks");
+}
+
+/// The asset roots every test uses: the committed placeholders alone, never a named folder.
+pub(crate) fn placeholder_assets() -> AssetRoots {
+    AssetRoots::placeholders(&assets_root()).expect("the committed placeholder folder exists")
+}
+
+/// Collects what `tracing` writes while `run` executes.
+pub(crate) fn logged(run: impl FnOnce()) -> String {
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log sink").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&buffer);
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || Sink(Arc::clone(&writer)))
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    let bytes = buffer.lock().expect("log sink").clone();
+    String::from_utf8(bytes).expect("log output is utf-8")
+}
+
+/// A level marker named `name` at `position`, with no properties.
+pub(crate) fn level_marker(name: &str, position: Vec3) -> LevelMarker {
+    LevelMarker {
+        name: name.to_owned(),
+        position,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+        properties: BTreeMap::new(),
+    }
+}
+
+/// A `searchlight_level` node with a `mode` extra of `value`, which levels ignore.
+pub(crate) fn mode_marker(value: &str) -> LevelMarker {
+    let mut marker = level_marker("searchlight_level", Vec3::ZERO);
+    marker
+        .properties
+        .insert("mode".to_owned(), value.to_owned());
+    marker
+}
+
+/// The wave and score of a mode that runs waves.
+pub(crate) trait WaveScore {
+    fn wave(&self) -> u32;
+    fn score(&self) -> u32;
+}
+
+impl WaveScore for ArenaMode {
+    fn wave(&self) -> u32 {
+        self.tally().expect("this mode runs waves").wave
+    }
+
+    fn score(&self) -> u32 {
+        self.tally().expect("this mode runs waves").score
+    }
+}
+
+/// Presses the first default binding of `action` on `map`.
+pub(crate) fn press(map: &mut ActionMap<SearchlightAction>, action: SearchlightAction) {
+    match action.default_bindings()[0].input {
+        Input::Key(key) => map.key(key, true),
+        Input::Mouse(button) => map.mouse_button(button, true),
+        Input::Pad(_) => panic!("the first default binding of {action:?} is a pad input"),
+    }
+}

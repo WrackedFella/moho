@@ -1,0 +1,29 @@
+# <jq edit of eligible.json> <TAB> <expected output, lines joined by " | ">
+.	eligible glue
+.files += ["moho_core/src/events.rs"]	ineligible: domain change; PR_AUTOMERGE=glue merges glue only
+.files += ["moho_core/src/events.rs"] | .scope = "all"	eligible domain
+.files += ["moho_physics/src/movement.rs"] | .scope = "all"	eligible domain
+.scope = "off"	ineligible: merging is off (PR_AUTOMERGE=off)
+.files += ["scripts/ci.sh", "crates/x/CLAUDE.md", "deny.toml"]	ineligible: changes crates/x/CLAUDE.md, which needs a person | ineligible: changes deny.toml, which needs a person | ineligible: changes scripts/ci.sh, which needs a person
+.files += ["flagstone/Cargo.toml"]	eligible glue
+.pr.head_sha = "ddd"	ineligible: latest review is on bbb, head is ddd
+.reviews[1].head |= sub("Sign-off: agent"; "Sign-off: human")	ineligible: sign-off is human
+.reviews[1].head |= sub("Verdict: approve"; "Verdict: reject")	ineligible: verdict is reject
+.reviews = []	ineligible: no review from moho-reviewer[bot]
+.reviews[1].login = "mallory"	ineligible: comment from mallory (NONE), not a repository member | ineligible: latest review is on aaa, head is bbb
+.comments += [{"login": "mallory", "assoc": "CONTRIBUTOR"}]	ineligible: comment from mallory (CONTRIBUTOR), not a repository member
+.reviews += [{"login": "WrackedFella", "assoc": "OWNER", "state": "CHANGES_REQUESTED", "commit_id": "bbb", "submitted_at": "2026-11-21T12:00:00Z", "head": "Please rename"}]	ineligible: WrackedFella requested changes
+.issue.labels += ["agent-paused"]	ineligible: labelled agent-paused
+.pr.labels += ["needs-human"]	ineligible: labelled needs-human
+.issue = null	ineligible: no single closing issue reference in the PR body
+.base_ci.conclusion = "failure"	ineligible: last CI on dev is failure
+.base_ci = {}	ineligible: last CI on dev is missing
+.pr.author = "WrackedFella"	ineligible: opened by WrackedFella, not an agent run
+.pr.head_repo = "mallory/moho"	ineligible: head is in mallory/moho, not WrackedFella/moho
+.pr.base = "main"	ineligible: base is main, not dev
+.pr.draft = true	ineligible: PR is open, draft
+.files = []	ineligible: no changed files listed
+.reviews += [{"login": "copilot-pull-request-reviewer[bot]", "assoc": "NONE", "state": "COMMENTED", "commit_id": "aaa", "submitted_at": "2026-11-21T09:00:00Z", "head": "Pull request overview"}] | .comments += [{"login": "Copilot", "assoc": "NONE", "created_at": "2026-11-21T09:00:00Z"}]	eligible glue
+.comments += [{"login": "Copilot", "assoc": "NONE", "created_at": "2026-11-21T12:00:00Z"}]	ineligible: advisory comment from Copilot after the review
+.comments += [{"login": "Copilot", "assoc": "NONE", "created_at": "2026-11-21T09:00:00Z"}] | .advisory = []	ineligible: comment from Copilot (NONE), not a repository member
+.comments += [{"login": "Copilot", "assoc": "NONE"}]	ineligible: advisory comment from Copilot after the review

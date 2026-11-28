@@ -25,6 +25,12 @@ pub mod audio_source;
 /// with the existing Moho engine architecture.
 pub mod audio_system;
 pub mod error;
+mod output;
+mod rodio_output;
+pub mod spatial;
+mod stereo_gain_source;
+#[cfg(test)]
+mod test_support;
 
 // Re-export main types for convenience
 pub use audio_cache::AudioCache;
@@ -33,3 +39,5 @@ pub use audio_settings::AudioSettings;
 pub use audio_source::{AudioCategory, AudioSource};
 pub use audio_system::AudioSystem;
 pub use error::{AudioError, AudioResult};
+pub use output::{AudioOutput, Playback};
+pub use spatial::Listener;

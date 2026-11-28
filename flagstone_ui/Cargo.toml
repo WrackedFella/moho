@@ -1,0 +1,34 @@
+[package]
+name = "flagstone_ui"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+glam = { workspace = true }
+moho_render_api = { path = "../moho_render_api" }
+winit = { workspace = true }
+egui = { workspace = true }
+egui-winit = { workspace = true }
+tracing = { workspace = true }
+moho_input = { path = "../moho_input" }
+moho_ui_shell = { path = "../moho_ui_shell" }
+moho_app = { path = "../moho_app" }
+moho_core = { path = "../moho_core" }
+flagstone_game = { path = "../flagstone_game" }
+rand = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[features]
+default = []
+# Test-only helpers for the egui adapter. Enable when running integration
+# tests that require internal adapter control (for example to simulate
+# press/release without an actual window). This is intentionally optional
+# so library consumers won't accidentally depend on test utilities.
+ui-egui-test = []
+
+[lints]
+workspace = true

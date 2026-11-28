@@ -34,6 +34,23 @@ pub enum DebugEvent {
 
     /// Set SSAO quality
     SetSsaoQuality { quality: u32 },
+
+    /// Set bloom quality: 0=Off, 1=Low, 2=High
+    SetBloomQuality { quality: u32 },
+
+    /// Show or replace a box marker; `min` and `max` are world positions in metres
+    ShowMarker {
+        id: u64,
+        min: glam::Vec3,
+        max: glam::Vec3,
+        style: moho_render_api::MarkerStyle,
+    },
+
+    /// Remove the marker with `id`, or every marker when `None`
+    ClearMarkers { id: Option<u64> },
+
+    /// Draw nothing in the world above `height` metres; `None` clears the cut
+    SetViewHeight { height: Option<f32> },
 }
 
 #[derive(Clone, Debug)]

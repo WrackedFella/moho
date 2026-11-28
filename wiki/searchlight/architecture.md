@@ -1,0 +1,338 @@
+# Searchlight
+
+**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `searchlight_rules/src/accuracy.rs`, `searchlight_rules/src/stats.rs`, `searchlight_rules/src/load.rs`, `searchlight_rules/src/carried.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
+[ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
+[ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
+
+`searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Item`, `Remains`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `PartOffset`, `Accuracy`, `AccuracyTuning`, `Stat`, `PlayerDef`, `LoadState`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+physics, level loading, input, audio and rendering come from engine crates. It depends on no
+strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
+
+## 1 Layers
+
+```mermaid
+flowchart LR
+    main["main.rs<br/>content load, wiring"] --> tuning["tuning.rs<br/>SimConfig"]
+    main --> game["game.rs<br/>SearchlightGame: Game impl"]
+    game --> mode["mode.rs<br/>ArenaMode"]
+    mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
+    mode --> sim["sim.rs<br/>SearchlightSim"]
+    mode --> control["control.rs<br/>ControlAction"]
+    game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
+    game --> lean["lean.rs<br/>eye offset, rolled view"]
+    game --> bob["head_bob.rs<br/>HeadBobLevel, Bob"]
+    game --> aim["aim.rs<br/>Magnification, aimed_fov_y"]
+    game --> hud["hud.rs<br/>status wording"]
+    game --> menu["menu.rs<br/>Menu, MenuAction"]
+    game --> controls["controls.rs<br/>ControlsDraft"]
+    game --> inventory["inventory.rs<br/>screen lists"]
+    game --> feed["menu_feed.rs<br/>MenuFeed, MenuCamera"]
+    sim --> brain["brain.rs<br/>enemy Brain"]
+    sim --> cover["cover.rs<br/>cover choice"]
+    sim --> shot["shot.rs<br/>resolve_shot"]
+    shot --> tag["tag.rs<br/>SurfaceTag"]
+    main --> arena["arena.rs<br/>markers, Arena"]
+    sim --> arena
+```
+
+| Module | Role |
+|---|---|
+| `levels` | `LEVELS`, the shipped levels by launch name (`arena`, the default, `proving_ground` and `parkour`); `choose` maps the launch argument to a `LevelChoice` (a name, or a `.glb`/`.gltf` path) and fails with `UnknownLevel` listing the names; `load_notices` gives the console lines a loaded level earns (no walkable area) |
+| `arena` | Loads a level file (`assets/arena.glb` by default) through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes and their glTF material names, spawns, route, cover points, controls, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) from the level meshes and the control posts, and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left. A level with no enemy spawn skips both failures: a navmesh error leaves an empty `NavMesh` and sets `nav_fallback`, and the route check does not run. `control_NN` markers become `ArenaControl`s (action plus a post mesh), and a marker with a missing or unlisted `action` fails with `ArenaError::BadControl`; optional `menu_camera_NN` markers become `Arena::menu_cameras` (`MenuCamera`: the marker's position as the eye, its rotation of +Z as the view direction, roll ignored), in numeric order of `NN`, and a non-numeric or repeated `NN` fails with `ArenaError::BadMenuCamera` |
+| `control` | `ControlAction` (`NextWave`): what a placed control does when used. `parse` maps a marker's `action` value to one; `honored_from(slot)` allows a host action only from slot 0 |
+| `kit` | `kit::load(roots, START_KIT_ID)`: loads `items` and `kits` through the content roots and resolves the `start` kit into a `searchlight_rules::Kit` (weapon numbers plus a ready `Loadout`, with its backpack and carried items); `kit::load_enemy(roots, ENEMY_KIT_ID)` resolves the `enemy` kit into the `Remains` an enemy leaves and the ballistics of its rounds; `kit::load_enemy_for_grade` and `EnemyKits::resolve_for_grade` pick the kit `enemy_<grade>` (the grade's lower-case name) when the kits define one, else `enemy`; `EnemyKits` loads `items` and `kits` once for any number of resolutions; `KitLoadError` separates content errors from an invalid kit |
+| `tuning` | `shipped` and `shipped_with_enemy`: build the `SimConfig` from the content roots, taking the rifle's numbers from the kit's weapon, the rounds' ballistics and damage from the kit, the player's `Loadout` from the kit, and `CarryConfig` (the `PlayerDef` from `player.toml`, the catalogue's definitions of every item the start and enemy kits carry, the rifle's item id); `shipped_with_enemy` adds the enemy kit's `Remains` as `enemy_remains`, and for each grade whose kit resolves to different remains a `SimConfig::grade_remains` entry, joining every kit's rounds' ballistics to the sim's so a looted round still flies. Tests build configs with `tuning(Kit)` and `with_enemy_kit`, which fill weightless placeholder definitions. The search numbers (`SEARCH_TICKS`, `SEARCH_REACH`, `BODY_RADIUS`) are set here ([looting](#10-looting)) |
+| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `CheckMagazine` defaults to hold R only, and no action binds C by default; `Use` (default F) sets `SearchlightCommand::use_pressed` on the tick it goes down; `Character` (default K) opens and closes the character screen ([load and stats](#11-load-and-stats)); `Inventory` (default Tab or I) opens and closes the inventory screen, and `SearchlightCommand::inventory` carries the screen's one `InventoryCommand` (`Move { from, to }`, `Wear { from }` or `Close`) per tick; `LeanLeft` and `LeanRight` are the toggleable actions (`SearchlightAction::toggleable`): in `ActionMode::Toggle` one press holds the lean and the next ends it; `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide`; `Aim` (right mouse by default) is held for the zoomed view, and `scale_look` divides a look by the zoom factor so the turn matches the drawn view |
+| `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure maths the game and sim share, with `lean_offset` taking its trig from `moho_core::sim_math` ([posture](#8-posture)) |
+| `player` | `player::load(roots)`: the `player` table of `content/player.toml` as a `searchlight_rules::PlayerDef` |
+| `character` | `character_lists(sim)`: the character screen as `moho_ui_shell::ItemLists`, one list per `Stat` led by its resolved value, then one row per contribution in resolution order; it shows what the stat layer resolved and never recomputes a stat |
+| `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
+| `round` | `RoundInFlight` and `step_round`: one step of a player's round, cast as a segment through `resolve_shot` |
+| `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
+| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
+| `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays (level geometry and placed controls count as world) against the player (`Threat`) |
+| `body` | `check(assets, eye_height)`: validates the three character files (`BODY`, `PLAYER_BODY`, `HEAD` under `characters/mannequin/`), returning a `BodyReport` or a `BodyError` naming the file. Each full body must load as a humanoid (all `Bone::ALL` joints, every clip in `CLIPS`, finite poses, no mesh on no bone); the player body carries no mesh on `head` or `neck_01`; the head model has an `attach` node; the full body's standing head sits within 0.05 m of `eye_height`. Run it with `cargo run -p searchlight --example check_body -- <art folder>` (no folder checks the shipped placeholders); the files come from `just assets` ([assets README](../../searchlight/assets/README.md)) |
+| `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle, `Rig` of spare magazines, backpack and inventory), dummies and enemies; a dead enemy leaves a body holding `SimConfig::remains_for` its grade, which the player searches and loots ([looting](#10-looting)); emits `Feedback`; counts player kills |
+| `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics; `step` scores and spawns, `call_next` begins the next wave |
+| `mode` | `ArenaMode`: the wave layer over a loaded level. Owns a `SearchlightSim` started empty; on a level that places an enemy spawn it scores kills, applies the use of a control and spawns each wave's enemies, graded by the wave's mix, at free enemy markers; on any other level (`ArenaMode::without_waves`) it has no waves, a use does nothing and `tally()` is `None`. `ArenaMode::for_level` picks by whether the arena has enemy spawns; `has_waves` reports which |
+| `hud` | Text for rifle state, hits, health, death and the wave and score line (omitted without a `Tally`), the use prompt (`use_prompt`) and the body prompt (`search_prompt`: `Search`, or `Searching` while under way); the rig strip (`rig_strip`: one `SlotMark`, `Present` or `Empty`, per rig slot and never a round count; shown for `tuning::STRIP_FADE_TICKS` after a finished reload); the hit-edge direction; the death overlay |
+| `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) settings categories (`settings_categories_screen`: a button for each `SettingsPage` (Controls, Mouse, Audio, Graphics, Display, Game), then Back), settings pages (`settings_page(page, EngineSettings, &GameRows)`: the engine rows `page_of` places on the page, then its game rows, Apply, Back; `page_of` has no wildcard arm, so a new engine row must be given a page; Display carries the `Field of view` slider, 50 to 90 degrees; Game carries `Crosshair opacity`, 0 to 100 %, and `Head bob`) and Controls (`controls_screen`: one `MenuItem::Control` row per action with its two slots, Apply, Reset, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_page`); `conflict_screen(input_label, by_label)` is the dialog pushed over Controls when a captured input is in use ("<input> is used by <action>", Replace and Cancel, Escape is Cancel); `MenuAction` is what choosing an item asks the game to do (`MenuAction::Item(id)` names a row of the item lists; `MenuAction::Replace` and `MenuAction::Cancel` answer the conflict dialog). Focus, hit-testing and drawing belong to the shell's `MenuStack` |
+| `controls` | `ControlsDraft`: the bindings the Controls page edits, as two positional slots per action plus any beyond them, seeded from the live `ActionBindings`. `capture` puts the plain press of an input in the requested slot (`Slot::Primary` or `Slot::Secondary`) of an action, refusing a protected input (`Capture::Reserved`) and reporting `Capture::Unchanged` when the action already holds the input in any position; an input another action holds gives `Capture::Conflict { by, slot }` and stays pending, changing nothing, until `replace` (the capturing action takes it in the requested slot and the input leaves every other position, in both actions) or `cancel`, and any later capture drops it; `clear` empties one slot of an action, leaving the other slot and any bindings beyond two; `mode` and `set_mode` read and stage an action's hold/toggle choice (a non-toggleable action stays `Hold`); `reset_all` puts every action back on its `default_bindings` and `Hold`; `is_unbound` tells an action with every slot empty; `bindings` folds the draft back into `ActionBindings`, keeping toggle modes; `label` is an action's player-facing name |
+| `aim` | `Magnification` (a finite factor 1 to 12, 10 by default; `new` and `parse` refuse anything else), `aimed_fov_y` (the vertical field of view showing objects `m` times larger: the tangent of the half angle divides by `m`) and `look_scale` (`1 / m`, so a count of mouse look turns the same on-screen distance at the crosshair as unzoomed). View-only: the sim, aim ray and hit volumes do not change |
+| `head_bob` | `HeadBobLevel` (the setting: 0 to 100 % on a grid of 5, 50 % by default, stored under `[game]` as `head_bob`) and `Bob`, the view-only footstep state: the phase advances by distance walked (`STEP_LENGTH`), each footstep swings the eye to its own side (`SWAY`) and rises then falls (`RISE`), tracing a figure-8 per stride, scaled by walking speed (capped at `MAX_AMPLITUDE`) and the level. The game steps it after the sim, so it never moves the aim ray or the player's hit volumes |
+| `menu_feed` | `MenuFeed`: the level's `MenuCamera` views the main menu cuts between, advancing by frame time (the sim is paused) and wrapping after the last every `CUT_INTERVAL` (5 s); `view()` gives the view matrix and eye of the camera showing, `None` without cameras. A vertical camera takes any horizontal up axis |
+| `inventory` | The inventory screen's data as `moho_ui_shell::ItemLists`: `gear_lists(loadout, lookup)` builds the gear screen (Equipment, Magazine slots titled with the worn rig and its slot count, Inventory), where an Inventory row that `Worn::of` says is a rig or backpack offers a `Wear` row action; `loot_lists(loadout, container)` builds the loot screen (Inventory beside one container's flat rows, today a dead body's, the shape later containers reuse), whose rows offer no `Wear`; the id constants are `EQUIPMENT`, `MAGAZINE_SLOTS`, `INVENTORY`, `BODY`; `source_of` maps a row to the `Source` of a move, `place_of` maps a drop target to a `Place`. The screen only shows and asks; the sim owns the items and applies every move. `ItemAction` has the one variant `Wear` |
+| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen`, `grade`, `head_bob`, `zoom`, `hitvolumes`, `simple` and `round_gravity`, parsed into `ConsoleCommand`); `console_for` takes whether the level has waves, and without them `grade` replies "No waves on this level" |
+| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`, `simple`, `zoom`; an absent or invalid `zoom` reads as 10) and the `[game]` rows as `GameRows` (`game_rows`, `set_game_rows`: `fov` default 75, `crosshair_opacity` default 100, and `head_bob`; an absent or unparsable value reads as its default, an out-of-range one is clamped, and an off-grid head bob snaps to the nearest step); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value; `set_bindings` writes the game's `[bindings]` and saves, keeping the reserved `console` and `fullscreen` entries |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, while `Aim` is held draws the play view at `aimed_fov_y` of the configured field of view and scales look by `look_scale` (the held state is read from each tick's frame and drops when input is not sampled), ticks the `ArenaMode`, turns `Feedback` into sound (the player's shot plays from no position; `Feedback::EnemyFired { from, .. }` plays from the enemy's eye, panned and attenuated against the `moho_audio::Listener` that each frame sets from the view it draws), title status line, hit flash, damage-direction edge, death tint and crosshair; while the `hitvolumes` toggle is on (session state), places one scene marker outline per hit volume of the player (`SearchlightSim::player_hit_volumes`) and of each living enemy and dummy, as the axis-aligned bounds of the oriented box; asks the loop to pause while the shell captures input (console open) or a menu shows (main, pause or settings), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost. `Screen::Inventory` takes input like a menu but does not pause the loop: the world keeps moving behind it, and `command()` sends only the host levels and the queued inventory command |
+
+`SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
+`Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (cooldown, reload, charge, magazine size) and its rounds' muzzle velocity, drag and damage, and the barrel's muzzle velocity factor (scaling the rounds' speed at launch), load from
+`content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
+exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
+profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
+
+## 2 Console
+
+`SearchlightGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
+crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
+shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
+and while it is open input does not reach the game. Escape closes the console and does not
+pause. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow_quality`,
+`r_ssao_quality`, `r_bloom`, `r_tonemap`, `audio_cue`) return as `EngineCommand` values and apply on the next
+frame through `apply_engine_command`, which reaches the renderer (`RendererBackend`) and audio
+through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
+([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
+
+The shell can also draw game text (the main menu is drawn this way, see below): `UiShell::set_texts(Vec<ScreenText>)`
+replaces the anchored lines the next `ui_frame` paints under the console, and that frame clears them, so a
+game sets its full text every `Game::frame`. A frame the renderer skips leaves no stale text. Use a few
+fixed sizes; each new size grows the font atlas.
+
+Images work the same way (`moho_ui_shell/src/image.rs`): `UiShell::add_image(ScreenImageId, &Rgba8Image)`
+uploads once (replacing any image under that id), `remove_image` frees it, and
+`set_images(Vec<ScreenImage>)` replaces the anchored, sized images the next `ui_frame` paints. A
+`ScreenImage` naming an unknown id or a non-finite or non-positive size is a `ScreenImageError`.
+
+The binary starts on the main menu (`SearchlightGame::with_main_menu`); a game built without it starts
+in play. `SearchlightGame` holds a `Screen` (`MainMenu`, `Playing` or `Paused`). On either menu screen the loop is paused
+like an open console, the action map is fed nothing and the cursor stays free; the window opens with the
+cursor captured only when it starts in play. The menu screens live in the shell's `MenuStack` (`UiShell::menu_mut`), which
+takes every key and button while one is open (`Routing::Menu`) and tracks the cursor itself. While one is open the shell dims the whole window and paints a panel under the rows and texts (`moho_ui_shell/src/backdrop.rs`), so every menu screen is readable over the scene. Up and Down move the focus (wrapping, scrolling the screen when its rows do not fit the window), Enter or a left click on a
+row chooses it, hovering focuses, and the wheel scrolls. A choice becomes a `MenuEvent::Chosen` that the game drains in `answer_menu`: `Play` and `Resume` switch to `Playing` (clearing the stack), drop any held input, pending edges and
+look, and capture the cursor; `Quit` exits; `Settings` pushes the settings categories screen; choosing a category opens that page (`MenuAction::Page`), built when it opens (engine rows from the saved prefs, game rows from the game's current values), and `Back` pops it, discarding the page's unapplied changes. Apply on a page sends the whole `EngineSettings` the page was pushed with, so other pages' engine values are written back unchanged, and a game page overlays only the game rows it carries onto the current ones; the game rows (`GameRows`) go live at once: the field of view sets the projection of every scene drawn and the crosshair's gap, the opacity sets the crosshair bars' alpha (none drawn at 0). Apply arrives as `MenuEvent::SettingsApplied`: `settings_applied` saves the prefs (a failed save is logged; the values stay for the session), sets the mouse look from them and queues them in `pending_settings`; the next `frame()` runs `apply_engine_settings` (renderer qualities, audio volumes) and switches the window mode through `window_mode_applied` if it differs. The saved settings are queued the same way at construction, so they apply on the first frame. Each main-menu frame hides the HUD and
+title status and draws the level from the current `MenuFeed` camera (`SearchlightGame::with_menu_cameras`, fed from `Arena::menu_cameras`), cutting to the next view every five seconds; a level without menu cameras draws the stage backdrop instead. The dormant sim is untouched, and Play starts at the player spawn.
+
+Controls (from the Settings categories screen) pushes the Controls page over a `ControlsDraft` of the live bindings; a draft is dropped on Back. Choosing an action's row captures the next input into the focused slot, primary or secondary (`captured`); an input another action holds pushes a dialog (`conflict_screen`, Replace or Cancel; Escape cancels) naming the input and the holding action, and both stay unchanged until it is answered (`answer_conflict`); Cancel returns to the same row. A toggleable action's row carries a hold/toggle checkbox after its secondary slot; ticking it (`MenuEvent::ModeChosen`) stages the mode in the draft. Clearing a slot (`MenuEvent::Cleared`) and `ResetControls` (the Reset button, every action back on its defaults) change only the draft; nothing is live or saved until Apply. `ApplyControls` (`apply_controls`) saves the draft's bindings and modes (`[bindings]` and `[action_modes]`) through `DebugSettings::set_bindings` (a failed save is logged; the bindings stay live for the session) and rebuilds the `ActionMap` with `build_action_map`, so they apply without a restart. Escape and the console key never reach capture.
+
+Escape in play (when the console did not take it) switches to `Paused`: it swaps in the pause menu, drops held
+input, pending edges and look, and frees the cursor. The paused frame keeps the arena scene, hides the HUD and
+draws the menu rows over it. Escape on the
+pause menu resumes (its `back` action). Console routing still comes first.
+
+Window mode: `main.rs` passes the `fullscreen` binding (default F11) as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change. The mode persists: `window_mode_changed` saves it to the prefs file through `DebugSettings` (skipped when it already matches), and `main.rs` reads it at startup through `start_window_mode` into `AppConfig::window_mode`; a saved `Fullscreen` opens borderless ([prefs format](../reference/prefs-format.md)). The `fullscreen` console command queues a flag in `command()` (no context there); the next `frame()` requests the toggled mode from the runner, prints it, and runs the same `window_mode_applied` step (the runner does not call `window_mode_changed` for a mode the game asked for).
+
+Game commands (`tgm [0|1]`, `grade <name|off>`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
+at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
+a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
+toggle's result to the console. God mode is loaded from `[debug]` at start (`with_debug_settings`)
+and carried on every tick as `SearchlightCommand::god_mode`. While on, enemy hits still emit
+`Feedback::PlayerHit` but do not damage the player's `Body`; it does not revive a dead player.
+The title status line appends `GOD MODE` (`hud::god_mode_text`).
+
+`grade` sets `SearchlightGame`'s forced grade, carried on every tick as `SearchlightCommand::forced_grade`. It is not saved to prefs ([enemies](#5-enemies)).
+
+## 3 Tick
+
+`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character
+(slower while a lean is held), steps the physics world, blends the player's lean ([posture](#8-posture)),
+steps the player's rounds in flight ([shot path](#6-shot-path)), applies weapon actions (a pull adds a round that first steps next
+tick), then resolves the shots the enemies decided on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
+after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
+`charge_ticks` when the chamber is empty. It swaps in the next fitting magazine from the `Rig`
+(scanning from a cursor, wrapping); the ejected magazine takes the freed slot.
+
+`SearchlightSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
+enemies. `SearchlightSim::new` builds one with dummies only. A sim started from an arena keeps the
+`Arena` and `SimConfig`; once the player is dead, `tick` reads only `SearchlightCommand::restart` and
+rebuilds the sim from them.
+
+## 4 Waves
+
+`ArenaMode::new(arena, config, waves)` builds the sim with `Start::Empty` (`SearchlightSim::with_start`):
+dummies and the player stand, enemy markers are remembered but unoccupied. Each
+`ArenaMode::tick` runs the sim, then `WaveState::step` with the sim's new kills and the number of
+free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
+spawns that many enemies through `SearchlightSim::spawn_enemy`. An enemy's grade is the command's `forced_grade` when set, else the wave's mix grade for its place in the wave (`WaveGrades::grade_of`, lowest grade first); the force applies to enemies spawned after it, including the wave a restart brings. Wave 1 holds `first_size` enemies and each
+later wave `growth` more. A cleared wave (nothing left to spawn, none alive) does not advance on its own: the player uses a `next_wave` control ([controls](#9-controls)) and `WaveState::call_next` begins the next wave; used earlier it changes nothing. Spawned enemies take the next target number after the dummies; the dead keep theirs.
+Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
+with no score. `SearchlightGame` reads `ArenaMode::tally()` (`Tally { wave, score }`) for the HUD.
+
+A level with no enemy spawn has no `WaveState`: `ArenaMode::without_waves` spawns no enemy, scores nothing and `tally()` is `None`, so the title line shows health only. A dead player still restarts the sim.
+
+The wave's grades come from `searchlight_rules::GradeMix` (`WaveTuning::mix`, default `GradeMix::default`): one row of five weights per wave in `Grade::LADDER` order, the last row holding past the end. `GradeMix::grades(wave, size, previous)` gives the wave's `WaveGrades` (a count per grade): the experienced-and-above count is the row's share of `size`, rounded half up and raised to carry the previous wave's share over, then each half is split among its grades by weight (largest remainder). `GradeMix::new` refuses an empty mix, an all-zero row and a row whose experienced-and-above share falls below the row before. `WaveState` draws its `WaveGrades` when a wave begins and `spawned()` gives the place of the next enemy in it.
+
+## 5 Enemies
+
+Each tick an enemy casts sight rays from its eye toward the player's leaned eye, head centre and
+torso centre ([posture](#8-posture)) and sets `Percept::target` to the player's aim point (the
+leaned centre of the part chosen by `SimConfig::enemy_aim_at`) only when one of those rays strikes a
+`SurfaceTag::Player`, so walls block sight. `Brain::think` returns an `Intent` (forward
+fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping, heading for the next corner of the navmesh path to the waypoint (the same `steer` as `Chase`; straight at the waypoint when there is no path), with arrival measured to the waypoint; a target inside
+`sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
+stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
+bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
+`EnemyTuning::seed`, so runs repeat and a restart replays a fresh start.
+
+An enemy is put under fire by a non-lethal hit, or by near misses. Every player round that
+passes within `EnemyTuning::near_miss_radius` of a living enemy's capsule centre
+(`shot::passes_within`, on the segment a step of the round covers, from where it was to the strike point or where it got)
+counts a near miss on that enemy on the tick it passes, once per round, except the enemy the step hit. Under Simple the segment runs from the eye to the strike point or the edge of the flight bounds. When the count reaches
+`Grade::near_misses_to_cover` (`None` for a rookie, so only a hit moves it) the count resets and
+the enemy is under fire. The sim then records the player's position on
+that enemy (`Target::under_fire`) and, from the `Arena` cover points, asks `cover::offer` for a
+point within `cover_range` that no other enemy holds (`Brain::claim`), that the player cannot
+see at `cover_hide_height`, and from which a standing enemy can still shoot the player.
+The next `Percept` carries `under_fire` and `offer`. With an offer a `Patrol`, `Chase` or unheld
+`Engage` brain enters `Cover`: it runs at full speed to the point, then `Engage`s there
+holding the claim. After `cover_ticks` without arriving it fights where it stands. Without an
+offer it turns to `Engage` on the shooter's position. An `Engage` that loses sight falls to
+`Chase`, walking to the last seen position until it arrives or `chase_ticks` pass, then
+resumes `Patrol`; sight during `Chase` re-engages. `Chase` heads for the next corner (the one after
+its own position) of the `moho_level::NavMesh` path from the enemy to the last seen position (`SearchlightSim` supplies
+this as `steer`, with the goal first dropped onto the floor below it, so a player lost mid-jump is still chased), so enemies walk around obstacles; arrival is still measured to the last seen
+position. With no path (the position is off the mesh or unreachable) the enemy resumes `Patrol`
+at once. Sight and shot rays are not affected by the navmesh. Enemy shots use the shot path below; a hit on the player emits
+`Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
+
+Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, `Veteran`, `Professional`), fixed at `spawn_enemy` and readable with `SearchlightSim::enemy_grade`. `Grade::dials` gives three scales over the base `SimConfig` enemy tuning; `EnemyTuning::graded` applies them to `reaction_ticks`, `cooldown_ticks` and `aim_error` and leaves every other field. Experienced is 1.0 on all three, so it is the base tuning. A grade changes behaviour only: health, damage and hit volumes are the same for every grade ([GDD 4.11](game-design-document.md)). Marker-start enemies are experienced.
+
+## 6 Shot path
+
+A player's shot is a round in flight ([ADR-0033](../../_todo/adr/0033-rounds-fly-as-stepped-segments.md)).
+Pulling the trigger on `Shot::Fired(round)` pushes a `round::RoundInFlight` (a `searchlight_rules::Flight`
+from the leaned eye along the view, the round's `Ballistics` and `damage`, the shooter and where it stood). Each later tick
+`round::step_round` steps it once (`Flight::step`: semi-implicit Euler, linear drag, gravity from
+`GravityScale::gravity`, only correctly rounded IEEE operations) and casts the segment from the old
+position to the new one through the route below. A round ends on a strike, at or below `MIN_SPEED`, or
+outside the `FlightBounds` (the arena's mesh box plus `FLIGHT_MARGIN`). Nothing is hit on the firing tick.
+`SearchlightCommand::simple` (console `simple`, saved under `[debug]`) brings back one ray per shot cast to
+the edge of the bounds; `round_gravity` (console, session only, 1 at launch) scales round gravity and
+never the world's. Rounds in flight are not saved, and a restart clears them. Enemy shots stay one ray on
+the firing tick until FPS-F15-03.
+
+Each round is drawn as a tracer, a streak from the engine's effects ([section 10 of the rendering
+page](../architecture/rendering.md)). `SearchlightSim` rebuilds `round_traces` every tick, one
+`RoundTrace` per round stepped or fired (id, `from`, `to`, `heading`, `ended`); it is a read-out and is never
+saved. A round fired this tick is traced at the muzzle with `from == to`. Each `SearchlightGame::tick`
+hands the traces to `Stage::absorb_traces`, which merges the ticks no frame has drawn yet by round id (the
+later tick wins, so a round that stopped between two frames keeps its end). Each `SearchlightGame::frame`
+calls `show_tracers` with the interpolation alpha, which places one streak per held trace `alpha` of the
+way along its step and ends the streak of a round that stopped or is no longer traced, then advances the
+effects by the frame time. While the player is dead, and on the restart tick, every tracer is ended and the
+held traces are dropped, because rounds are frozen and ids restart from 0. The simple ray draws no tracer,
+nor does an effects quality of off.
+
+A round that strikes level geometry or a control leaves a bullet mark. `resolve_shot` returns the surface
+normal with the strike point, and `SearchlightSim` queues `Feedback::Impact { point, normal }` for a strike
+tagged `SurfaceTag::World` or `SurfaceTag::Control`; a strike on a player queues none. The stage turns each
+impact into an engine `mark` effect ([section 10 of the rendering page](../architecture/rendering.md)) in the
+`Paint::ImpactMark` material: 0.05 m across, 20 s lifetime, fading over the last 2 s. Successive marks
+roll by the golden angle so a row of them does not line up. An effects quality of off places no mark.
+
+The player's shot leaves in a cone, not exactly along the view. `searchlight_rules::accuracy` owns the rules:
+`AccuracyTuning` (`walk_spread` radians at walking speed, `settle_seconds`; set in `tuning::tuning`) and
+`Accuracy`, stepped once per tick by `SearchlightSim::step_accuracy` from the ground speed over `max_speed`
+(capped at 1.5; an airborne player reads at least 1.0). The spread is `walk_spread * ratio`, rising at once and
+falling linearly, so it closes from `walk_spread` to nothing in `settle_seconds`. `SearchlightSim::player_spread`
+gives the half-angle. On a pull, `SearchlightSim::scattered` draws two values from the `searchlight.player_spread`
+`SimRng` stream and `disc_offset` turns them into a point uniform in a disc of radius `tan(spread)`, applied along
+the right and up of `aim_basis` (shared with enemy aim error); a spread of zero leaves along the view and draws
+nothing. Both the round and the `simple` ray use the scattered direction.
+
+`SearchlightGame::frame` hands `player_spread` to the crosshair, whose gap is the resting gap plus the cone's
+circle on screen by a pinhole projection (`Crosshair::gap`), so a settled crosshair is unchanged and the gap
+opens with spread.
+
+Each ray or step segment goes through one route:
+
+1. `ShotRay` from the eye (or the step's start) with range and the shooter's `CharacterHandle` as `ignore`.
+2. `PhysicsWorld::cast_ray` returns the first collider hit and its `HitTag`.
+3. `SurfaceTag::try_from` decodes the tag; an unknown tag is logged and counts as a miss.
+4. A `Part` strike (dummy or enemy) or a `Player` strike applies damage through `Body` in `searchlight_rules`. A player's round does the round's `damage` scaled by `arrival_damage` to the speed it arrives at (never above its damage, never below 1); under Simple the full `damage`.
+
+Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, with
+`part_index` the position in `PARTS`; `Player(part)` is `PLAYER_BASE + part_index`, with
+`PLAYER_BASE` above every `Part` tag, and `Control(index)` is `CONTROL_BASE + index`, above every player tag (`tag.rs`). Dummies and enemies carry six hit volumes
+(`dummy_hit_volumes`), one per `BodyPart`, tagged with the target number; the player carries the
+same boxes tagged `Player` (`player_hit_volumes`), moved by the lean ([posture](#8-posture)). The leg volumes reach the feet of the configured
+hull, and the game draws dummies and enemies from the sim's own `character_body()`.
+
+## 7 Arena contract
+
+Markers are node names in the glTF file. Waves run only on a level that places an `enemy_spawn_NN`. Every level needs exactly one `player_spawn` (`ArenaError::MissingMarker` or `DuplicateMarker`); a node named `searchlight_level` is ignored. If a level with no enemy spawn cannot build its navmesh, `Arena::nav_fallback` is set and `nav` is empty instead of failing. `dummy_NN`, `enemy_spawn_NN`, `cover_NN` and `control_NN` are optional (cover points feed `Arena::covers`; without them enemies under fire stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
+unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
+the patrol route follows the waypoint numbers, not file order. A waypoint that no enemy spawn can walk to is dropped from the route with a warning; if enemy spawns exist and no waypoint is reachable, loading fails with `ArenaError::NoReachableWaypoint`. Waypoints are not checked when there are no enemy spawns. Each `control_NN` carries an `action` extra ([controls](#9-controls)). Each
+`cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). A mesh whose glTF material is named `floor` draws glossy (`SearchlightGame::with_named_arena`); a mesh whose material is named `mark` draws in a distinct marking paint (`Paint::ArenaMark`); a mesh whose material is named `mark_run` draws in `Paint::ArenaMarkRun`; every other mesh draws matte. Spawns are floor points;
+`SearchlightSim::new` lifts capsule centres by half the configured hull length (`STAND_HEIGHT` is the same figure for the shipped body). Errors surface as `ArenaError`.
+
+`assets/arena.glb`, `assets/proving_ground.glb` (a test range with no enemy spawn), `assets/parkour.glb` (a ladder of ten gaps and a course of steps, slopes and ledges, no enemy spawn; its `gap_NN` and `course_NN` markers carry extras the headless jump and climb tests read) and `assets/rifle_shot.wav` are generated by
+`assets/tools/make_arena.py`; see [`assets/README.md`](../../searchlight/assets/README.md) for
+licence; `just assets` regenerates them and `just check` fails when they are stale. A replacement arena must keep the marker names. The binary takes an optional level name or path (`cargo run -p searchlight -- proving_ground`); borrowed maps go in the git-ignored `assets/local/`.
+
+Shipped files resolve one at a time through `moho_core::assets::AssetRoots` (`moho_core/src/assets.rs`): the placeholders folder (`assets/`) is the lowest layer, and `--assets <folder>` (parsed by `launch::parse`, turned into roots by `launch::asset_roots`) adds a layer above it. The highest layer holding a file supplies it, so a folder can replace `arena.glb` or `rifle_shot.wav` alone. A missing folder, a repeated `--assets` or a file no layer holds stops the start with an error; a level given as a path is loaded as given. Content definitions are not layered. Rationale: [ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md).
+
+The folder that holds `assets` and `content` is found by `moho_core::install::Install::locate` (`moho_core/src/install.rs`), called from `launch` at start: the executable's own folder when it holds either shipped folder (then it must hold both, else `InstallError::Incomplete`), otherwise the source checkout (`Origin::SourceCheckout`, the `cargo run` case); neither holding both is `InstallError::NotFound`. The chosen origin is logged. `just package searchlight` (`scripts/package.sh`) lays out a release executable with the git-tracked `assets` and `content` files, minus `tools/` and `*.md`, in `target/package/searchlight/`; `just package-test` self-tests it inside `just check`. Details: [`assets/README.md`](../../searchlight/assets/README.md).
+
+## 8 Posture
+
+Lean is the one posture so far. `searchlight_rules::posture` owns the rules: `LeanSide`, `LeanTuning`
+(`shift` metres, `roll` radians, `blend_seconds`, `speed_factor`; set in `tuning::tuning`), `LeanReach`
+(room for a full lean on each side, each in `[0, 1]`) and `Lean`, the signed amount in `[-1, 1]` (negative
+left). `Lean::step` blends the amount toward the wanted side by `dt / blend_seconds`, held within the reach;
+a `blend_seconds` not above zero snaps.
+
+Flow per tick:
+
+1. `SearchlightGame::command` resolves the held side with `input::resolve_lean`: a side pressed this tick wins
+   (right on a same-tick tie), else the previous side while still held, else whichever side is held. It is
+   carried as `SearchlightCommand::lean`, `None` while the console or a menu captures input.
+2. `SearchlightSim::tick` scales walking speed by the resolved `MovementSpeed`, where a held `lean` is a
+   `Stance` scale of `speed_factor` in the stat layer ([load and stats](#11-load-and-stats)), then `step_lean`
+   blends `player_lean`. Reach comes from one level ray per side from the upright eye, so a wall beside
+   the player stops the lean short; with no lean wanted and none held it is `LeanReach::FULL`.
+3. The player's eye (`SearchlightSim::player_eye`) is the upright eye shifted along the player's right by
+   `lean * shift`. The player's shots leave from it, after the lean has stepped that tick.
+4. The hit volumes follow the lean. `leaned_parts` returns one `PartOffset` per part in `BodyPart::ALL`
+   order: head, torso and arms roll rigidly by `lean * roll` about the hip pivot, then slide sideways so the
+   head centre sits `lean * shift` to the player's right (`BODY_RIGHT`, `-X` in the body frame, which faces
+   +Z at yaw 0); the legs stay. The sim keeps the upright volumes and a leaned copy, and when the lean
+   changes lays the offsets over the upright set (`lean_volumes`) and replaces the player's hit volumes in
+   the physics world, so shots from enemies hit the leaned body. While the lean is not upright a seventh
+   volume (`hip_piece`), tagged torso, spans the hip band that the shifted torso and arms leave open above
+   the legs, so a shot cannot pass through the gap.
+5. Enemy aim and sight use the leaned body: the aim point is the centre of the configured aim part
+   (`leaned_centre`), and an enemy sees the player when a ray from its eye toward the player's leaned eye,
+   leaned head centre or leaned torso centre first strikes the player.
+
+The lean is blended between the last two ticks at draw time like the player's position; `SearchlightGame::frame`
+shifts the eye with `lean_offset` and rolls the view by `lean * roll` through `rolled_view_matrix`. A restart
+resets the previous lean so the first frame is upright.
+
+## 9 Controls
+
+A control is a post the player uses. The arena marks one with `control_NN`, a floor point whose `action` extra names a `ControlAction` (`next_wave`). `Arena::from_level` builds a post mesh per control; the physics world carries it tagged `SurfaceTag::Control(index)`, where the index is the control's place in `Arena::controls`, and `SearchlightGame::with_controls` draws the same meshes.
+
+Flow:
+
+1. `SearchlightSim::control_in_reach` casts a ray along the player's view, `USE_REACH` long, and returns the index only when the first surface is a control; a wall or body in front, or a dead player, gives `None`.
+2. `SearchlightGame` shows `hud::use_prompt` (key plus action, such as `[F] Next wave`) below the crosshair while playing and alive with a control in reach.
+3. `ArenaMode::tick`, on `use_pressed`, resolves the control in reach to its action and applies it if `honored_from(HOST_SLOT)` allows; until slots exist the one player is the host (slot 0).
+
+## 10 Looting
+
+A dead enemy leaves a body in `SearchlightSim` (one per target number, at the floor point it fell on) holding a copy of `SimConfig::remains_for(grade)`, the grade's entry in `SimConfig::grade_remains` else `SimConfig::enemy_remains` (a target with no grade, a dummy, leaves the latter): a `Remains` with the rig and its magazines, a backpack and carried items, resolved from the `enemy_<grade>` kit in `content/kits.toml` when one exists for the enemy's grade, else from `enemy`.
+
+1. `SearchlightSim::body_in_view` returns the nearest body within `search_reach` of the eye whose point passes within `body_radius` of the view ray, unless a wall or control is nearer. `SearchlightGame` shows `hud::search_prompt` for it.
+2. A use press on a body starts a search of `search_ticks` ticks (`LootState::Searching`). Losing the body from view or reach ends it with `Feedback::SearchCancelled`. A finished search marks the body searched and opens it (`LootState::Open`, `Feedback::SearchOpened`); using a searched body again opens it at once. The game answers by switching to `Screen::Inventory` showing the loot screen.
+3. The inventory key opens the gear screen (Equipment, Magazine slots, Inventory); equipping and slotting magazines happen there. While a body is open the screen is the loot screen instead: only the player's flat Inventory beside the body's flat list (its rig, the magazines in the rig, its backpack, then its carried items), and moves go between those two lists. If the gear screen is open when a search finishes, it becomes the loot screen; it stays one screen and one Escape returns to play. The loot screen is the shape every container will use later (crates, living NPCs, vendors): the player's inventory plus one container's flat rows.
+4. While the screen is open the sim keeps running. The screen's moves reach it as `SearchlightCommand::inventory`; `Loadout::move_item(body, from, to)` applies one between the player's inventory, the rig's magazine slots and the body, refusing with `MoveRefused` (nothing there, no body, a non-magazine bound for a slot, no free slot of the magazine's `SlotKind`) and changing nothing then. A rig holds magazines only while worn: taking a body's rig moves the rig's id to the destination as a plain `Item::Rig(id)` and leaves its magazines on the body as carried items, listed as separate rows. Nothing limits a move by weight or room. A move touching the body is dropped once it is out of reach.
+5. `InventoryCommand::Wear { from }` (the `Wear` row action) reaches `SearchlightSim::wear`, which applies `Loadout::wear` unless a search is under way or a body is open; the game sends it only from the gear screen. The worn rig or backpack of that kind goes to index `from`; a replaced rig's magazines leave its slots, in slot order, for the end of the inventory, and the new rig starts empty. With no backpack worn the inventory entry is removed. A new rig ends a reload under way that has not taken its magazine; a new backpack lets it finish. `WearRefused` (not wearable, nothing at the index) changes nothing. `Worn::of` names what an item would swap and is the test the screen offers `Wear` by.
+6. `InventoryCommand::Close` (Escape or the inventory key) ends the looting.
+
+## 11 Load and stats
+
+`searchlight_rules` resolves the player's capability through one stat layer (`stats.rs`); `searchlight` only supplies the data and shows the result.
+
+1. A `Stat` (`CarryCapacity`, `MovementSpeed`, `Stamina`) starts from `PlayerDef::baseline` (`content/player.toml`: capacity is `strength` times `carry_capacity_per_strength`).
+2. Sources declare `Contribution`s (`SourceLabel` and `Verb`: `Add`, `Scale` or `Cap`): `equipment_contributions` from the `stats` of the worn rig and backpack, `load_contributions` from the `LoadState`, and a `Stance` scale while a lean is held (`SearchlightSim::carry_sheet`).
+3. `resolve` applies every add, then every scale, then the lowest cap, then the floor; input order never changes the result. `explain` lists one stat's contributions in that order; the character screen shows them.
+4. `load` sums the `weight` of everything carried (rifle, chambered round, magazines and their rounds, rig, backpack, inventory), walked once by `loadout_items` and `remains_items` (`carried.rs`). `load_state` compares it with the resolved capacity against `LoadThresholds` (fractions of capacity, reached at exactly that load): `Slowed` scales movement speed by `slowed_scale`, `NoSprint` also caps stamina at 0, `CannotMove` also caps movement speed at 0.
+5. `SearchlightSim::carry_sheet` returns a `CarrySheet` (load, capacity, state, contributions) from the loadout and `SimConfig::carry` (`CarryConfig`: the `PlayerDef`, the item definitions by id, the rifle's item id). The sim scales its walking speed by the resolved `MovementSpeed` each tick.
+6. `tuning::shipped` and `shipped_with_enemy` build the `SimConfig` from the content roots with the catalogue's real definitions; `tuning::tuning` (test-only) builds a config with weightless placeholder definitions (load 0) and `SHIPPED_PLAYER`.
+7. The game shows the state as the HUD load icon (`hud::load_icon`, colour per `LoadState`, drawn in play while the player is alive, white at 0 kg), a load header on the inventory screen and the character screen (`Screen::Character`, `SearchlightAction::Character`, `K` by default). Like the inventory, the character screen takes input and leaves the world running.
+
+Item and player files: [content format](../reference/content-format.md).

@@ -1,0 +1,706 @@
+//! Draw ordering, opaque/transparent routing and material upload of `Scene::render`,
+//! observed through a recording `RendererBackend`.
+
+use glam::Vec3;
+use moho_render_api::{
+    InstanceGpu, Marker, MarkerGpu, MarkerId, MarkerStyle, MaterialGpu, MaterialKey,
+    RenderMaterial, Renderable, Rgba8Image, TextureId, WorldMesh, WorldMeshId,
+};
+use moho_renderer::{FrameError, LightingGpu, RendererBackend, Scene};
+
+const SPHERE_MESH: u32 = 1;
+const CUBE_MESH: u32 = 2;
+/// The handle the recording renderer hands out for uploaded world meshes.
+const WORLD_MESH: u32 = 7;
+
+#[derive(Copy, Clone, Debug)]
+struct TestMaterial {
+    id: u8,
+    transparent: bool,
+}
+
+const OPAQUE: TestMaterial = TestMaterial {
+    id: 0,
+    transparent: false,
+};
+const GLASS: TestMaterial = TestMaterial {
+    id: 1,
+    transparent: true,
+};
+const OTHER_OPAQUE: TestMaterial = TestMaterial {
+    id: 2,
+    transparent: false,
+};
+
+impl RenderMaterial for TestMaterial {
+    fn to_gpu(&self) -> MaterialGpu {
+        MaterialGpu {
+            albedo: [1.0; 4],
+            params: [0.0, 0.0, if self.transparent { 0.5 } else { 0.0 }, 0.0],
+        }
+    }
+
+    fn dedup_key(&self) -> MaterialKey {
+        MaterialKey {
+            variant: self.id,
+            albedo_bits: [0; 3],
+            fuzz_bits: 0,
+            ref_idx_bits: 0,
+            extra_bits: [0; 3],
+        }
+    }
+}
+
+/// Renderable placed on the x axis. `forced_index` overrides the material index
+/// the table handed out, to model an index outside the table.
+#[derive(Copy, Clone, Debug)]
+struct Prop {
+    x: f32,
+    material: TestMaterial,
+    forced_index: Option<u32>,
+}
+
+fn prop(x: f32, material: TestMaterial) -> Prop {
+    Prop {
+        x,
+        material,
+        forced_index: None,
+    }
+}
+
+impl Renderable for Prop {
+    type Material = TestMaterial;
+
+    fn material(&self) -> &TestMaterial {
+        &self.material
+    }
+
+    fn to_instance_with_material(&self, material_index: u32) -> InstanceGpu {
+        InstanceGpu {
+            model: glam::Mat4::from_translation(Vec3::new(self.x, 0.0, 0.0)).to_cols_array_2d(),
+            material: self.forced_index.unwrap_or(material_index),
+            object_type: 0,
+            padding: [0, 0],
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct Draw {
+    mesh: u32,
+    xs: Vec<f32>,
+}
+
+/// One backend call that shapes the frame, in the order it was made.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Call {
+    Draw,
+    SkinnedDraw,
+    Markers,
+    Submit,
+}
+
+/// One `enqueue_skinned_draw` call.
+#[derive(Debug, PartialEq)]
+struct SkinnedCall {
+    mesh: u32,
+    texture: u32,
+    palette: Vec<[[f32; 4]; 3]>,
+    x: f32,
+    material: u32,
+}
+
+#[derive(Default)]
+struct RecordingRenderer {
+    draws: Vec<Draw>,
+    material_uploads: Vec<usize>,
+    marker_batches: Vec<Vec<MarkerGpu>>,
+    outline_batches: Vec<Vec<MarkerGpu>>,
+    calls: Vec<Call>,
+    fail_begin_frame: bool,
+    /// `enqueue_textured_draw` calls, which also count as draws like the default does.
+    textured_draws: Vec<TexturedDraw>,
+    /// Each `register_texture` call as `(handle, image)`.
+    textures: Vec<(u32, Rgba8Image)>,
+    skinned: Vec<SkinnedCall>,
+    /// Each `register_skin` call as `(mesh handle, joint sets, weight sets)`.
+    skins: Vec<(u32, usize, usize)>,
+    mesh_uploads: usize,
+}
+
+#[derive(Debug, PartialEq)]
+struct TexturedDraw {
+    mesh: u32,
+    texture: u32,
+    xs: Vec<f32>,
+}
+
+/// The handle the recording renderer hands out for the first uploaded texture; later
+/// ones count up from it.
+const FIRST_TEXTURE: u32 = 50;
+
+impl RecordingRenderer {
+    /// Draw calls that carried at least one instance, in submission order.
+    fn non_empty_draws(&self) -> Vec<&Draw> {
+        self.draws.iter().filter(|d| !d.xs.is_empty()).collect()
+    }
+
+    /// The handle `image` was registered under, whatever the upload order.
+    fn texture_handle(&self, image: &Rgba8Image) -> u32 {
+        let Some((handle, _)) = self.textures.iter().find(|(_, i)| i == image) else {
+            panic!("no texture registered with image {image:?}");
+        };
+        *handle
+    }
+}
+
+impl RendererBackend for RecordingRenderer {
+    fn update_lighting(&mut self, _lighting: LightingGpu) {}
+    fn resize(&mut self, _width: u32, _height: u32) {}
+    fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+        0
+    }
+    fn register_indexed_mesh(
+        &mut self,
+        _vertices: &[[f32; 3]],
+        _normals: &[[f32; 3]],
+        _ao: &[f32],
+        _geometry_type: &[u32],
+        _light_level: &[f32],
+        _block_light_rgb: &[[f32; 3]],
+        _sky_exposed: &[f32],
+        _material: &[u32],
+        _indices: &[u32],
+    ) -> u32 {
+        self.mesh_uploads += 1;
+        WORLD_MESH
+    }
+    fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        self.skins.push((mesh, joints.len(), weights.len()));
+    }
+    fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: InstanceGpu,
+    ) {
+        self.skinned.push(SkinnedCall {
+            mesh,
+            texture,
+            palette: palette.to_vec(),
+            x: instance.model[3][0],
+            material: instance.material,
+        });
+        self.calls.push(Call::SkinnedDraw);
+    }
+    fn unregister_mesh(&mut self, _mesh: u32) {}
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        let handle = FIRST_TEXTURE + u32::try_from(self.textures.len()).expect("few textures");
+        self.textures.push((handle, image.clone()));
+        handle
+    }
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        self.textured_draws.push(TexturedDraw {
+            mesh,
+            texture,
+            xs: instances.iter().map(|i| i.model[3][0]).collect(),
+        });
+        self.enqueue_draw(mesh, instances);
+    }
+    fn add_point_light(
+        &mut self,
+        _position: Vec3,
+        _color: Vec3,
+        _intensity: f32,
+        _range: f32,
+    ) -> u32 {
+        0
+    }
+    fn remove_light(&mut self, _id: u32) -> bool {
+        true
+    }
+    fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+    fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+    fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        quality
+    }
+    fn set_ssao_quality(&mut self, _quality: u8) {}
+    fn begin_frame(&mut self, _camera: (glam::Mat4, glam::Mat4, Vec3)) -> Result<(), FrameError> {
+        if self.fail_begin_frame {
+            Err(FrameError::SurfaceUnavailable)
+        } else {
+            Ok(())
+        }
+    }
+    fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.draws.push(Draw {
+            mesh,
+            xs: instances.iter().map(|i| i.model[3][0]).collect(),
+        });
+        self.calls.push(Call::Draw);
+    }
+    fn enqueue_markers(&mut self, fills: &[MarkerGpu], outlines: &[MarkerGpu]) {
+        self.marker_batches.push(fills.to_vec());
+        self.outline_batches.push(outlines.to_vec());
+        self.calls.push(Call::Markers);
+    }
+    fn submit_frame(&mut self) {
+        self.calls.push(Call::Submit);
+    }
+    fn set_materials(&mut self, materials: &[MaterialGpu]) {
+        self.material_uploads.push(materials.len());
+    }
+}
+
+fn render_frame(
+    scene: &mut Scene,
+    renderer: &mut RecordingRenderer,
+    spheres: &[Prop],
+    cubes: &[Prop],
+) {
+    render_frame_from(scene, renderer, spheres, cubes, Vec3::ZERO);
+}
+
+fn render_frame_from(
+    scene: &mut Scene,
+    renderer: &mut RecordingRenderer,
+    spheres: &[Prop],
+    cubes: &[Prop],
+    eye: Vec3,
+) {
+    let camera = (glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, eye);
+    scene
+        .render::<Prop, Prop>(renderer, spheres, cubes, SPHERE_MESH, CUBE_MESH, camera)
+        .expect("render_frame_from is only used with a recording renderer that is not set to fail begin_frame");
+}
+
+fn draw(mesh: u32, xs: &[f32]) -> Draw {
+    Draw {
+        mesh,
+        xs: xs.to_vec(),
+    }
+}
+
+#[test]
+fn transparent_instances_draw_back_to_front_grouped_by_mesh() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let spheres = [prop(5.0, GLASS), prop(1.0, GLASS)];
+    let cubes = [prop(4.0, GLASS), prop(3.0, GLASS)];
+
+    render_frame(&mut scene, &mut renderer, &spheres, &cubes);
+
+    let calls = renderer.non_empty_draws();
+    assert_eq!(
+        calls,
+        vec![
+            &draw(SPHERE_MESH, &[5.0]),
+            &draw(CUBE_MESH, &[4.0, 3.0]),
+            &draw(SPHERE_MESH, &[1.0]),
+        ]
+    );
+
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+
+    render_frame_from(
+        &mut scene,
+        &mut renderer,
+        &spheres,
+        &cubes,
+        Vec3::new(6.0, 0.0, 0.0),
+    );
+
+    let calls = renderer.non_empty_draws();
+    assert_eq!(
+        calls,
+        vec![
+            &draw(SPHERE_MESH, &[1.0]),
+            &draw(CUBE_MESH, &[3.0, 4.0]),
+            &draw(SPHERE_MESH, &[5.0]),
+        ],
+        "distance is measured from the camera eye, not the world origin"
+    );
+}
+
+#[test]
+fn transparent_material_routes_to_transparent_pass() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let spheres = [prop(1.0, OPAQUE), prop(4.0, GLASS)];
+    let cubes = [prop(3.0, OPAQUE), prop(2.0, GLASS)];
+
+    render_frame(&mut scene, &mut renderer, &spheres, &cubes);
+
+    let calls = renderer.non_empty_draws();
+    let (opaque, transparent) = calls.split_at(2);
+    assert!(
+        opaque.contains(&&draw(CUBE_MESH, &[3.0])) && opaque.contains(&&draw(SPHERE_MESH, &[1.0])),
+        "opaque calls come first, in either order: {calls:?}"
+    );
+    assert_eq!(
+        transparent,
+        [&draw(SPHERE_MESH, &[4.0]), &draw(CUBE_MESH, &[2.0])]
+    );
+}
+
+#[test]
+fn out_of_range_material_index_draws_opaque() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    // The table holds OPAQUE and GLASS, so index 2 is the first one past its end.
+    let stray = |x| Prop {
+        x,
+        material: OPAQUE,
+        forced_index: Some(2),
+    };
+    let spheres = [stray(3.0), prop(7.0, GLASS)];
+    let cubes = [stray(5.0)];
+
+    render_frame(&mut scene, &mut renderer, &spheres, &cubes);
+
+    let calls = renderer.non_empty_draws();
+    let (opaque, transparent) = calls.split_at(2);
+    assert!(
+        opaque.contains(&&draw(CUBE_MESH, &[5.0])) && opaque.contains(&&draw(SPHERE_MESH, &[3.0])),
+        "the stray instances are opaque calls ahead of the transparent one: {calls:?}"
+    );
+    assert_eq!(transparent, [&draw(SPHERE_MESH, &[7.0])]);
+}
+
+#[test]
+fn materials_upload_only_when_table_changed() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let spheres = [prop(1.0, OPAQUE)];
+
+    render_frame(&mut scene, &mut renderer, &spheres, &[]);
+    render_frame(&mut scene, &mut renderer, &spheres, &[]);
+
+    assert_eq!(renderer.material_uploads, vec![1]);
+
+    let with_new_material = [prop(1.0, OPAQUE), prop(2.0, OTHER_OPAQUE)];
+    render_frame(&mut scene, &mut renderer, &with_new_material, &[]);
+
+    assert_eq!(renderer.material_uploads, vec![1, 2]);
+}
+
+fn triangle() -> WorldMesh {
+    WorldMesh::new(
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        vec![[0.0, 1.0, 0.0]; 3],
+        vec![1.0; 3],
+        vec![[1.0; 3]; 3],
+        vec![1.0; 3],
+        vec![0; 3],
+        vec![0, 1, 2],
+    )
+    .expect("well-formed test mesh")
+}
+
+fn at(x: f32) -> glam::Affine3A {
+    glam::Affine3A::from_translation(Vec3::new(x, 0.0, 0.0))
+}
+
+#[test]
+fn placements_of_one_mesh_are_one_draw_in_placement_order() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), triangle());
+    world.place(WorldMeshId(1), at(3.0), 0);
+    world.place(WorldMeshId(1), at(1.0), 0);
+    world.place(WorldMeshId(1), at(2.0), 0);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert_eq!(
+        renderer.non_empty_draws(),
+        vec![&draw(WORLD_MESH, &[3.0, 1.0, 2.0])]
+    );
+}
+
+#[test]
+fn placements_of_one_mesh_split_into_one_draw_per_texture() {
+    let (skin, fur) = (TextureId(1), TextureId(2));
+    let image = |red: u8| Rgba8Image::new([1, 1], vec![[red, 0, 0, 255]]).expect("one pixel");
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), triangle());
+    world.upsert_texture(skin, image(10));
+    world.upsert_texture(fur, image(20));
+    world.place_textured(WorldMeshId(1), at(1.0), 0, skin);
+    world.place_textured(WorldMeshId(1), at(2.0), 0, skin);
+    world.place_textured(WorldMeshId(1), at(3.0), 0, fur);
+    world.place_textured(WorldMeshId(1), at(4.0), 0, skin);
+    world.place(WorldMeshId(1), at(5.0), 0);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    let skin_handle = renderer.texture_handle(&image(10));
+    let fur_handle = renderer.texture_handle(&image(20));
+    assert_ne!(skin_handle, fur_handle);
+    let textured = |texture: u32, xs: &[f32]| TexturedDraw {
+        mesh: WORLD_MESH,
+        texture,
+        xs: xs.to_vec(),
+    };
+    assert_eq!(
+        renderer.textured_draws,
+        vec![
+            textured(skin_handle, &[1.0, 2.0]),
+            textured(fur_handle, &[3.0]),
+            textured(skin_handle, &[4.0]),
+            textured(0, &[5.0]),
+        ],
+        "consecutive placements with one texture share a draw; the white handle is 0"
+    );
+    assert_eq!(renderer.textures.len(), 2);
+    assert_eq!(renderer.non_empty_draws().len(), 4);
+}
+
+/// Palette rows as the GPU buffer holds them for a translation: `[m_r0, m_r1, m_r2, t_r]`.
+fn translation_rows(t: Vec3) -> [[f32; 4]; 3] {
+    [
+        [1.0, 0.0, 0.0, t.x],
+        [0.0, 1.0, 0.0, t.y],
+        [0.0, 0.0, 1.0, t.z],
+    ]
+}
+
+#[test]
+fn each_skinned_placement_is_its_own_draw_with_its_palette() {
+    let skin = TextureId(1);
+    let image = Rgba8Image::new([1, 1], vec![[10, 0, 0, 255]]).expect("one pixel");
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let skinned_triangle = triangle()
+        .with_skin(vec![[0, 1, 0, 0]; 3], vec![[0.5, 0.5, 0.0, 0.0]; 3])
+        .expect("one joint set and weight set per vertex");
+    let rest = [
+        glam::Affine3A::IDENTITY,
+        glam::Affine3A::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+    ];
+    let raised = [
+        glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0)),
+        glam::Affine3A::from_translation(Vec3::new(3.0, 1.0, 0.0)),
+    ];
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), skinned_triangle);
+    world.upsert_texture(skin, image.clone());
+    world.place_skinned(WorldMeshId(1), at(1.0), 2, Some(skin), &rest);
+    world.place_skinned(WorldMeshId(1), at(5.0), 3, None, &raised);
+
+    render_frame(&mut scene, &mut renderer, &[prop(9.0, OPAQUE)], &[]);
+
+    assert_eq!(
+        renderer.skinned,
+        vec![
+            SkinnedCall {
+                mesh: WORLD_MESH,
+                texture: renderer.texture_handle(&image),
+                palette: vec![
+                    translation_rows(Vec3::ZERO),
+                    translation_rows(Vec3::new(0.0, 1.0, 0.0)),
+                ],
+                x: 1.0,
+                material: 2,
+            },
+            SkinnedCall {
+                mesh: WORLD_MESH,
+                texture: 0,
+                palette: vec![
+                    translation_rows(Vec3::new(0.0, 0.0, 2.0)),
+                    translation_rows(Vec3::new(3.0, 1.0, 0.0)),
+                ],
+                x: 5.0,
+                material: 3,
+            },
+        ],
+        "one draw per placement, each with its own palette"
+    );
+    assert_eq!(renderer.mesh_uploads, 1, "the mesh uploads once");
+    assert_eq!(
+        renderer.skins,
+        vec![(WORLD_MESH, 3, 3)],
+        "the skin registers once, one joint set and weight set per vertex"
+    );
+    assert_eq!(
+        renderer.non_empty_draws(),
+        vec![&draw(SPHERE_MESH, &[9.0])],
+        "skinned placements are not plain draws"
+    );
+    let last_draw = renderer.calls.iter().rposition(|c| *c == Call::Draw);
+    let first_skinned = renderer.calls.iter().position(|c| *c == Call::SkinnedDraw);
+    let last_skinned = renderer.calls.iter().rposition(|c| *c == Call::SkinnedDraw);
+    let submit = renderer.calls.iter().position(|c| *c == Call::Submit);
+    assert!(
+        last_draw < first_skinned && last_skinned < submit,
+        "skinned draws follow the world draws and precede submit: {:?}",
+        renderer.calls
+    );
+}
+
+#[test]
+fn failed_begin_frame_still_consumes_placements() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let camera = (glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, Vec3::ZERO);
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), triangle());
+    world.place(WorldMeshId(1), at(1.0), 0);
+    renderer.fail_begin_frame = true;
+
+    let skipped =
+        scene.render::<Prop, Prop>(&mut renderer, &[], &[], SPHERE_MESH, CUBE_MESH, camera);
+
+    assert!(skipped.is_err(), "the frame is skipped");
+    renderer.fail_begin_frame = false;
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert!(
+        renderer.non_empty_draws().is_empty(),
+        "the skipped frame's placement must not carry over: {:?}",
+        renderer.draws
+    );
+
+    scene.world_meshes_mut().place(WorldMeshId(1), at(2.0), 0);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert_eq!(
+        renderer.non_empty_draws(),
+        vec![&draw(WORLD_MESH, &[2.0])],
+        "the mesh is still uploaded and draws when placed again"
+    );
+}
+
+const AMBER: [f32; 4] = [1.0, 0.75, 0.0, 0.4];
+
+#[test]
+fn markers_enqueue_once_after_transparent_draws() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    scene
+        .markers_mut()
+        .upsert(MarkerId(1), Marker::new([0.0; 3], [1.0; 3], AMBER));
+    let spheres = [prop(1.0, OPAQUE), prop(4.0, GLASS)];
+    let cubes = [prop(3.0, GLASS)];
+
+    render_frame(&mut scene, &mut renderer, &spheres, &cubes);
+
+    let marker_calls = renderer
+        .calls
+        .iter()
+        .filter(|c| **c == Call::Markers)
+        .count();
+    assert_eq!(marker_calls, 1, "{:?}", renderer.calls);
+    let (last, before) = renderer
+        .calls
+        .split_last()
+        .expect("the frame made backend calls");
+    assert_eq!(*last, Call::Submit);
+    assert_eq!(
+        before.last(),
+        Some(&Call::Markers),
+        "markers come after every draw, transparent ones included: {:?}",
+        renderer.calls
+    );
+    assert!(
+        before.contains(&Call::Draw),
+        "the actors were drawn: {:?}",
+        renderer.calls
+    );
+    assert_eq!(renderer.marker_batches.len(), 1);
+    assert_eq!(renderer.marker_batches[0].len(), 1);
+    assert_eq!(renderer.marker_batches[0][0].color, AMBER);
+}
+
+#[test]
+fn markers_enqueue_far_to_near_from_the_camera_eye() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let at =
+        |x: f32, tag: f32| Marker::new([x, 0.0, 0.0], [x + 1.0, 1.0, 1.0], [tag, 0.0, 0.0, 0.5]);
+    scene.markers_mut().upsert(MarkerId(1), at(1.0, 1.0));
+    scene.markers_mut().upsert(MarkerId(2), at(8.0, 8.0));
+
+    render_frame_from(
+        &mut scene,
+        &mut renderer,
+        &[],
+        &[],
+        Vec3::new(0.0, 0.5, 0.5),
+    );
+
+    let tags: Vec<f32> = renderer.marker_batches[0]
+        .iter()
+        .map(|m| m.color[0])
+        .collect();
+    assert_eq!(tags, vec![8.0, 1.0]);
+}
+
+#[test]
+fn markers_are_not_enqueued_as_draws() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    scene
+        .markers_mut()
+        .upsert(MarkerId(1), Marker::new([0.0; 3], [1.0; 3], AMBER));
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert!(
+        renderer.non_empty_draws().is_empty(),
+        "a draw carrying a marker would enter the shadow and AO passes: {:?}",
+        renderer.draws
+    );
+    assert_eq!(
+        renderer.marker_batches.len(),
+        1,
+        "markers reach the backend through enqueue_markers"
+    );
+    assert_eq!(renderer.marker_batches[0].len(), 1);
+}
+
+#[test]
+fn removed_markers_are_no_longer_enqueued() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    scene
+        .markers_mut()
+        .upsert(MarkerId(1), Marker::new([0.0; 3], [1.0; 3], AMBER));
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    scene.markers_mut().remove(MarkerId(1));
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    // An empty second frame may skip the call or send an empty batch; it must not resend the marker.
+    assert_eq!(renderer.marker_batches.first().map(Vec::len), Some(1));
+    assert!(
+        renderer.marker_batches.iter().skip(1).all(Vec::is_empty),
+        "{:?}",
+        renderer.marker_batches
+    );
+}
+
+#[test]
+fn outline_markers_reach_the_backend_in_the_second_list() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let fill = Marker::new([0.0; 3], [1.0; 3], [1.0, 0.0, 0.0, 0.5]);
+    let outline =
+        Marker::new([4.0; 3], [5.0; 3], [2.0, 0.0, 0.0, 0.5]).with_style(MarkerStyle::Outline);
+    scene.markers_mut().upsert(MarkerId(1), fill);
+    scene.markers_mut().upsert(MarkerId(2), outline);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    let tags = |batch: &[MarkerGpu]| batch.iter().map(|m| m.color[0]).collect::<Vec<f32>>();
+    assert_eq!(renderer.marker_batches.len(), 1);
+    assert_eq!(tags(&renderer.marker_batches[0]), vec![1.0]);
+    assert_eq!(tags(&renderer.outline_batches[0]), vec![2.0]);
+}

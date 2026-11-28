@@ -3,14 +3,13 @@
 //! This module handles loading, saving, and managing user preferences including
 //! key bindings, mouse sensitivity, input filtering, audio volumes, and video settings.
 
-mod key_names;
-mod parser;
+mod reader;
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-pub use key_names::parse_key_name;
-pub use parser::{binding_to_string, parse_binding};
+pub use reader::{PrefsIssue, PrefsWarning};
 
 /// Window display mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -30,12 +29,15 @@ impl WindowMode {
         }
     }
 
-    fn from_str(s: &str) -> Self {
-        match s {
-            "Fullscreen" => WindowMode::Fullscreen,
-            "Borderless" => WindowMode::Borderless,
-            _ => WindowMode::Windowed,
-        }
+    /// Inverse of `as_str`: exact names only.
+    fn parse(s: &str) -> Option<Self> {
+        [
+            WindowMode::Windowed,
+            WindowMode::Fullscreen,
+            WindowMode::Borderless,
+        ]
+        .into_iter()
+        .find(|mode| mode.as_str() == s)
     }
 }
 
@@ -47,39 +49,15 @@ pub const RESOLUTION_PRESETS: &[(&str, (u32, u32))] = &[
     ("3840×2160 (4K)", (3840, 2160)),
 ];
 
-/// A numeric key binding: key code and modifier bits.
-/// mods bitflags: bit0 = ctrl, bit1 = shift, bit2 = alt
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct Binding {
-    pub code: u32,
-    pub mods: u8,
-}
-
-impl Binding {
-    pub fn new(code: u32, mods: u8) -> Self {
-        Self { code, mods }
-    }
-}
-
-impl Default for Binding {
-    fn default() -> Self {
-        Binding::new('W' as u32, 0)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
-    key_w: Binding,
-    key_a: Binding,
-    key_s: Binding,
-    key_d: Binding,
-    key_up: Binding,
-    key_down: Binding,
-    key_sprint: Binding,
-    key_jump: Binding,
     mouse_sensitivity: f32,
-    input_filtering_enabled: bool,
-    // Audio settings (values 1.0 to 10.0)
+    mouse_smoothing: bool,
+    invert_mouse_y: bool,
+    mouse_acceleration: bool,
+    mouse_acceleration_strength: f32,
+    // Audio settings (values 0.0 to 10.0)
+    audio_master_volume: f32,
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
     audio_ui_volume: f32,
@@ -87,72 +65,117 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_effects_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_bloom: u32,          // 0=Off, 1=Low, 2=High
+    graphics_brightness: f32,
     // Video settings
     window_mode: WindowMode,
     window_resolution: (u32, u32),
+    vsync: bool,
+    fps_max: u32,
     // World / streaming settings
     world_load_radius: u32,
     world_unload_radius: u32,
     world_chunks_per_frame: u32,
+    bindings: BTreeMap<String, String>,
+    action_modes: BTreeMap<String, String>,
+    debug: BTreeMap<String, String>,
+    game: BTreeMap<String, String>,
+    content_mods: Vec<String>,
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
+const MAX_BLOOM_QUALITY: u32 = 2;
+/// Brightness is a linear exposure multiplier.
+const MIN_BRIGHTNESS: f32 = 0.5;
+const MAX_BRIGHTNESS: f32 = 2.0;
+const DEFAULT_BRIGHTNESS: f32 = 1.0;
+
+/// Why a name or value for a game-owned section was refused.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum PrefsValueError {
+    #[error("name {0:?} must be non-empty lowercase letters, digits or underscores")]
+    InvalidName(String),
+    #[error("value {0:?} must be non-empty, unpadded and free of ';', '#' and line breaks")]
+    InvalidValue(String),
+}
+
+fn check_name_and_value(name: &str, value: &str) -> Result<(), PrefsValueError> {
+    let name_ok = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !name_ok {
+        return Err(PrefsValueError::InvalidName(name.to_owned()));
+    }
+    // The INI reader trims values and treats `;` and `#` as comments.
+    let value_ok =
+        !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
+    if !value_ok {
+        return Err(PrefsValueError::InvalidValue(value.to_owned()));
+    }
+    Ok(())
+}
 
 impl Prefs {
-    // --- Binding accessors ---
-
-    pub fn key_w(&self) -> Binding {
-        self.key_w
-    }
-    pub fn key_a(&self) -> Binding {
-        self.key_a
-    }
-    pub fn key_s(&self) -> Binding {
-        self.key_s
-    }
-    pub fn key_d(&self) -> Binding {
-        self.key_d
-    }
-    pub fn key_up(&self) -> Binding {
-        self.key_up
-    }
-    pub fn key_down(&self) -> Binding {
-        self.key_down
+    /// The value a game stored under `name` in `[game]`, if any.
+    pub fn game_value(&self, name: &str) -> Option<&str> {
+        self.game.get(name).map(String::as_str)
     }
 
-    pub fn key_sprint(&self) -> Binding {
-        self.key_sprint
+    /// Stores a game's own value.
+    ///
+    /// # Errors
+    /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
+    pub fn set_game_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
+        check_name_and_value(name, value)?;
+        self.game.insert(name.to_owned(), value.to_owned());
+        Ok(())
     }
 
-    pub fn key_jump(&self) -> Binding {
-        self.key_jump
+    /// The value a game stored under `name` in `[debug]`, if any.
+    pub fn debug_value(&self, name: &str) -> Option<&str> {
+        self.debug.get(name).map(String::as_str)
     }
 
-    pub fn set_key_w(&mut self, b: Binding) {
-        self.key_w = b;
-    }
-    pub fn set_key_a(&mut self, b: Binding) {
-        self.key_a = b;
-    }
-    pub fn set_key_s(&mut self, b: Binding) {
-        self.key_s = b;
-    }
-    pub fn set_key_d(&mut self, b: Binding) {
-        self.key_d = b;
-    }
-    pub fn set_key_up(&mut self, b: Binding) {
-        self.key_up = b;
-    }
-    pub fn set_key_down(&mut self, b: Binding) {
-        self.key_down = b;
+    /// Stores a game's debug value.
+    ///
+    /// # Errors
+    /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
+    pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
+        check_name_and_value(name, value)?;
+        self.debug.insert(name.to_owned(), value.to_owned());
+        Ok(())
     }
 
-    pub fn set_key_sprint(&mut self, b: Binding) {
-        self.key_sprint = b;
+    /// The raw `[bindings]` section: action name to unparsed value.
+    pub fn bindings(&self) -> &BTreeMap<String, String> {
+        &self.bindings
     }
 
-    pub fn set_key_jump(&mut self, b: Binding) {
-        self.key_jump = b;
+    pub fn set_bindings(&mut self, section: BTreeMap<String, String>) {
+        self.bindings = section;
+    }
+
+    /// The raw `[action_modes]` section: action name to unparsed mode.
+    pub fn action_modes(&self) -> &BTreeMap<String, String> {
+        &self.action_modes
+    }
+
+    pub fn set_action_modes(&mut self, section: BTreeMap<String, String>) {
+        self.action_modes = section;
+    }
+
+    /// The content mod names to load after the base root, in load order.
+    pub fn content_mods(&self) -> &[String] {
+        &self.content_mods
+    }
+
+    /// Replaces the content mod list. Names are saved comma-separated, so a name holding a
+    /// comma or edge whitespace does not read back as itself.
+    pub fn set_content_mods(&mut self, mods: Vec<String>) {
+        self.content_mods = mods;
     }
 
     // --- Scalar getters ---
@@ -160,8 +183,20 @@ impl Prefs {
     pub fn mouse_sensitivity(&self) -> f32 {
         self.mouse_sensitivity
     }
-    pub fn input_filtering_enabled(&self) -> bool {
-        self.input_filtering_enabled
+    pub fn mouse_smoothing(&self) -> bool {
+        self.mouse_smoothing
+    }
+    pub fn invert_mouse_y(&self) -> bool {
+        self.invert_mouse_y
+    }
+    pub fn mouse_acceleration(&self) -> bool {
+        self.mouse_acceleration
+    }
+    pub fn mouse_acceleration_strength(&self) -> f32 {
+        self.mouse_acceleration_strength
+    }
+    pub fn master_volume(&self) -> f32 {
+        self.audio_master_volume
     }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
@@ -181,6 +216,14 @@ impl Prefs {
     pub fn ssao_quality(&self) -> u32 {
         self.graphics_ssao_quality
     }
+    /// Bloom quality: 0=Off, 1=Low, 2=High.
+    pub fn bloom(&self) -> u32 {
+        self.graphics_bloom
+    }
+    /// Scene exposure multiplier, within `0.5..=2.0`.
+    pub fn brightness(&self) -> f32 {
+        self.graphics_brightness
+    }
     pub fn world_load_radius(&self) -> u32 {
         self.world_load_radius
     }
@@ -190,20 +233,28 @@ impl Prefs {
     pub fn world_chunks_per_frame(&self) -> u32 {
         self.world_chunks_per_frame
     }
-    pub fn set_world_load_radius(&mut self, v: u32) {
-        self.world_load_radius = v;
-    }
-    pub fn set_world_unload_radius(&mut self, v: u32) {
-        self.world_unload_radius = v;
-    }
-    pub fn set_world_chunks_per_frame(&mut self, v: u32) {
-        self.world_chunks_per_frame = v.max(1);
-    }
     pub fn window_mode(&self) -> WindowMode {
         self.window_mode
     }
     pub fn window_resolution(&self) -> (u32, u32) {
         self.window_resolution
+    }
+    /// Whether presented frames wait for the display refresh.
+    pub fn vsync(&self) -> bool {
+        self.vsync
+    }
+    /// Frame-rate cap applied while vsync is off; 0 is uncapped.
+    pub fn fps_max(&self) -> u32 {
+        self.fps_max
+    }
+    /// The frame-rate cap these prefs ask for: none while vsync paces frames or
+    /// `fps_max` is 0.
+    pub fn frame_cap(&self) -> Option<std::num::NonZeroU32> {
+        if self.vsync {
+            None
+        } else {
+            std::num::NonZeroU32::new(self.fps_max)
+        }
     }
 
     // --- Mutable accessors (for egui widget binding) ---
@@ -211,8 +262,20 @@ impl Prefs {
     pub fn mouse_sensitivity_mut(&mut self) -> &mut f32 {
         &mut self.mouse_sensitivity
     }
-    pub fn input_filtering_enabled_mut(&mut self) -> &mut bool {
-        &mut self.input_filtering_enabled
+    pub fn mouse_smoothing_mut(&mut self) -> &mut bool {
+        &mut self.mouse_smoothing
+    }
+    pub fn invert_mouse_y_mut(&mut self) -> &mut bool {
+        &mut self.invert_mouse_y
+    }
+    pub fn mouse_acceleration_mut(&mut self) -> &mut bool {
+        &mut self.mouse_acceleration
+    }
+    pub fn mouse_acceleration_strength_mut(&mut self) -> &mut f32 {
+        &mut self.mouse_acceleration_strength
+    }
+    pub fn master_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_master_volume
     }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
@@ -233,8 +296,30 @@ impl Prefs {
         self.graphics_shadow_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
 
+    pub fn effects_quality(&self) -> u32 {
+        self.graphics_effects_quality
+    }
+
+    pub fn set_effects_quality(&mut self, quality: u32) {
+        self.graphics_effects_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
     pub fn set_ssao_quality(&mut self, quality: u32) {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
+    /// Stores the bloom quality, clamped to `0..=2`.
+    pub fn set_bloom(&mut self, quality: u32) {
+        self.graphics_bloom = quality.min(MAX_BLOOM_QUALITY);
+    }
+
+    /// Stores the scene exposure multiplier, clamped to `0.5..=2.0`; NaN gives the default.
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.graphics_brightness = if brightness.is_nan() {
+            DEFAULT_BRIGHTNESS
+        } else {
+            brightness.clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS)
+        };
     }
 
     pub fn set_window_mode(&mut self, mode: WindowMode) {
@@ -245,32 +330,42 @@ impl Prefs {
         self.window_resolution = (width, height);
     }
 
+    pub fn vsync_mut(&mut self) -> &mut bool {
+        &mut self.vsync
+    }
+
+    pub fn fps_max_mut(&mut self) -> &mut u32 {
+        &mut self.fps_max
+    }
+
+    pub fn set_vsync(&mut self, on: bool) {
+        self.vsync = on;
+    }
+
+    pub fn set_fps_max(&mut self, fps: u32) {
+        self.fps_max = fps;
+    }
+
     // --- Builder methods (for construction in tests) ---
 
-    pub fn with_key_w(mut self, b: Binding) -> Self {
-        self.key_w = b;
-        self
-    }
-    pub fn with_key_a(mut self, b: Binding) -> Self {
-        self.key_a = b;
-        self
-    }
     pub fn with_mouse_sensitivity(mut self, v: f32) -> Self {
         self.mouse_sensitivity = v;
         self
     }
-    pub fn with_input_filtering_enabled(mut self, v: bool) -> Self {
-        self.input_filtering_enabled = v;
+    pub fn with_mouse_smoothing(mut self, v: bool) -> Self {
+        self.mouse_smoothing = v;
         self
     }
-
-    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
-        self.window_mode = mode;
+    pub fn with_invert_mouse_y(mut self, v: bool) -> Self {
+        self.invert_mouse_y = v;
         self
     }
-
-    pub fn with_window_resolution(mut self, width: u32, height: u32) -> Self {
-        self.window_resolution = (width, height);
+    pub fn with_mouse_acceleration(mut self, v: bool) -> Self {
+        self.mouse_acceleration = v;
+        self
+    }
+    pub fn with_mouse_acceleration_strength(mut self, v: f32) -> Self {
+        self.mouse_acceleration_strength = v;
         self
     }
 }
@@ -278,31 +373,37 @@ impl Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Self {
-            key_w: Binding::new('W' as u32, 0),
-            key_a: Binding::new('A' as u32, 0),
-            key_s: Binding::new('S' as u32, 0),
-            key_d: Binding::new('D' as u32, 0),
-            key_up: Binding::new(' ' as u32, 0),   // Space
-            key_down: Binding::new(0x205, 0),      // Ctrl
-            key_sprint: Binding::new(0x204, 0),    // Shift
-            key_jump: Binding::new(' ' as u32, 0), // Space
-            mouse_sensitivity: 1.0,
-            input_filtering_enabled: true,
-            // Default audio volumes (mid-range)
-            audio_sound_effect_volume: 7.0,
-            audio_music_volume: 5.0,
-            audio_ui_volume: 8.0,
-            audio_voice_volume: 7.0,
+            mouse_sensitivity: 3.0,
+            mouse_smoothing: false,
+            invert_mouse_y: false,
+            mouse_acceleration: false,
+            mouse_acceleration_strength: 0.04,
+            // Audio volumes use a 0 to 10 scale
+            audio_master_volume: 10.0,
+            audio_sound_effect_volume: 8.0,
+            audio_music_volume: 6.0,
+            audio_ui_volume: 7.0,
+            audio_voice_volume: 9.0,
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_effects_quality: 3,
+            graphics_bloom: MAX_BLOOM_QUALITY,
+            graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
             window_mode: WindowMode::Windowed,
             window_resolution: (1920, 1080),
+            vsync: true,
+            fps_max: 300,
             // Default streaming settings
             world_load_radius: 8,
             world_unload_radius: 12,
             world_chunks_per_frame: 4,
+            bindings: BTreeMap::new(),
+            action_modes: BTreeMap::new(),
+            debug: BTreeMap::new(),
+            game: BTreeMap::new(),
+            content_mods: Vec::new(),
         }
     }
 }
@@ -312,230 +413,103 @@ impl Prefs {
         PathBuf::from("config/prefs.ini")
     }
 
-    /// Load preferences from config/prefs.ini. If the file doesn't exist,
-    /// create it with defaults and return defaults.
+    /// Load preferences from config/prefs.ini, logging a warning for each fallback.
     pub fn load() -> Self {
-        let path = Self::config_path();
-        if !path.exists() {
-            if let Some(dir) = path.parent() {
-                let _ = fs::create_dir_all(dir);
-            }
-            let def = Prefs::default();
-            let _ = def.save();
-            return def;
+        let (prefs, warnings) = Self::load_from(&Self::config_path());
+        for w in warnings {
+            tracing::warn!(warning = %w, "Preferences load fallback");
         }
-
-        let content = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => return Prefs::default(),
-        };
-
-        let mut prefs = Prefs::default();
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(section) = map.get("prefs").or_else(|| map.get("default"))
-        {
-            let get_str = |k: &str| section.get(k).and_then(|o| o.clone());
-            let get_f32 = |k: &str, def: f32| {
-                section
-                    .get(k)
-                    .and_then(|o| o.clone())
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(def)
-            };
-
-            // Use parser module for binding parsing
-            if let Some(s) = get_str("key_w") {
-                prefs.key_w = parser::parse_binding(&s, prefs.key_w);
-            }
-            if let Some(s) = get_str("key_a") {
-                prefs.key_a = parser::parse_binding(&s, prefs.key_a);
-            }
-            if let Some(s) = get_str("key_s") {
-                prefs.key_s = parser::parse_binding(&s, prefs.key_s);
-            }
-            if let Some(s) = get_str("key_d") {
-                prefs.key_d = parser::parse_binding(&s, prefs.key_d);
-            }
-            if let Some(s) = get_str("key_up") {
-                prefs.key_up = parser::parse_binding(&s, prefs.key_up);
-            }
-            if let Some(s) = get_str("key_down") {
-                prefs.key_down = parser::parse_binding(&s, prefs.key_down);
-            }
-            if let Some(s) = get_str("key_sprint") {
-                prefs.key_sprint = parser::parse_binding(&s, prefs.key_sprint);
-            }
-            if let Some(s) = get_str("key_jump") {
-                prefs.key_jump = parser::parse_binding(&s, prefs.key_jump);
-            }
-            prefs.mouse_sensitivity = get_f32("mouse_sensitivity", prefs.mouse_sensitivity);
-
-            if let Some(s) = get_str("input_filtering_enabled") {
-                prefs.input_filtering_enabled = s.to_lowercase() == "true" || s == "1";
-            }
-        }
-
-        // Load audio settings from [audio] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(audio_section) = map.get("audio")
-        {
-            let get_f32 = |k: &str, def: f32| {
-                audio_section
-                    .get(k)
-                    .and_then(|o| o.clone())
-                    .and_then(|s| s.parse::<f32>().ok())
-                    .unwrap_or(def)
-            };
-
-            prefs.audio_sound_effect_volume =
-                get_f32("sound_effect_volume", prefs.audio_sound_effect_volume);
-            prefs.audio_music_volume = get_f32("music_volume", prefs.audio_music_volume);
-            prefs.audio_ui_volume = get_f32("ui_volume", prefs.audio_ui_volume);
-            prefs.audio_voice_volume = get_f32("voice_volume", prefs.audio_voice_volume);
-        }
-
-        // Load graphics settings from [graphics] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(graphics_section) = map.get("graphics")
-        {
-            let get_u32 = |k: &str, def: u32| {
-                graphics_section
-                    .get(k)
-                    .and_then(|o| o.clone())
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(def)
-            };
-
-            prefs.graphics_shadow_quality =
-                get_u32("shadow_quality", prefs.graphics_shadow_quality);
-            prefs.graphics_ssao_quality = get_u32("ssao_quality", prefs.graphics_ssao_quality);
-        }
-
-        // Load video settings from [video] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(video_section) = map.get("video")
-        {
-            let get_str = |k: &str| video_section.get(k).and_then(|o| o.clone());
-            let get_u32 = |k: &str, def: u32| {
-                video_section
-                    .get(k)
-                    .and_then(|o| o.clone())
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(def)
-            };
-
-            if let Some(s) = get_str("window_mode") {
-                prefs.window_mode = WindowMode::from_str(&s);
-            }
-            let w = get_u32("window_width", prefs.window_resolution.0);
-            let h = get_u32("window_height", prefs.window_resolution.1);
-            prefs.window_resolution = (w, h);
-        }
-
-        // Load world / streaming settings from [world] section if present
-        if let Ok(map) = ini::macro_safe_read(&content)
-            && let Some(world_section) = map.get("world")
-        {
-            let get_u32 = |k: &str, def: u32| {
-                world_section
-                    .get(k)
-                    .and_then(|o| o.clone())
-                    .and_then(|s| s.parse::<u32>().ok())
-                    .unwrap_or(def)
-            };
-            prefs.world_load_radius = get_u32("load_radius", prefs.world_load_radius);
-            prefs.world_unload_radius = get_u32("unload_radius", prefs.world_unload_radius);
-            prefs.world_chunks_per_frame =
-                get_u32("chunks_per_frame", prefs.world_chunks_per_frame).max(1);
-        }
-
         prefs
     }
 
+    pub fn to_ini_string(&self) -> String {
+        let mut text = format!(
+            "[prefs]\n\
+             mouse_sensitivity={mouse_sensitivity}\n\
+             mouse_smoothing={mouse_smoothing}\n\
+             invert_mouse_y={invert_mouse_y}\n\
+             mouse_acceleration={mouse_acceleration}\n\
+             mouse_acceleration_strength={mouse_acceleration_strength}\n\
+             \n[audio]\n\
+             master_volume={master:.1}\n\
+             sound_effect_volume={sfx:.1}\n\
+             music_volume={music:.1}\n\
+             ui_volume={ui:.1}\n\
+             voice_volume={voice:.1}\n\
+             \n[graphics]\n\
+             shadow_quality={shadow}\n\
+             ssao_quality={ssao}\n\
+             effects_quality={effects}\n\
+             bloom={bloom}\n\
+             brightness={brightness:.2}\n\
+             \n[video]\n\
+             window_mode={window_mode}\n\
+             window_width={width}\n\
+             window_height={height}\n\
+             vsync={vsync}\n\
+             fps_max={fps_max}\n\
+             \n[world]\n\
+             load_radius={load}\n\
+             unload_radius={unload}\n\
+             chunks_per_frame={chunks}\n",
+            mouse_sensitivity = self.mouse_sensitivity,
+            mouse_smoothing = self.mouse_smoothing,
+            invert_mouse_y = self.invert_mouse_y,
+            mouse_acceleration = self.mouse_acceleration,
+            mouse_acceleration_strength = self.mouse_acceleration_strength,
+            master = self.audio_master_volume,
+            sfx = self.audio_sound_effect_volume,
+            music = self.audio_music_volume,
+            ui = self.audio_ui_volume,
+            voice = self.audio_voice_volume,
+            shadow = self.graphics_shadow_quality,
+            ssao = self.graphics_ssao_quality,
+            effects = self.graphics_effects_quality,
+            bloom = self.graphics_bloom,
+            brightness = self.graphics_brightness,
+            window_mode = self.window_mode.as_str(),
+            width = self.window_resolution.0,
+            height = self.window_resolution.1,
+            vsync = self.vsync,
+            fps_max = self.fps_max,
+            load = self.world_load_radius,
+            unload = self.world_unload_radius,
+            chunks = self.world_chunks_per_frame,
+        );
+        if !self.content_mods.is_empty() {
+            text.push_str("\n[content]\nmods=");
+            text.push_str(&self.content_mods.join(","));
+            text.push('\n');
+        }
+        for (section, map) in [
+            ("bindings", &self.bindings),
+            ("action_modes", &self.action_modes),
+            ("debug", &self.debug),
+            ("game", &self.game),
+        ] {
+            if !map.is_empty() {
+                text.push_str("\n[");
+                text.push_str(section);
+                text.push_str("]\n");
+                text.extend(map.iter().map(|(key, value)| format!("{key}={value}\n")));
+            }
+        }
+        text
+    }
+
     pub fn save(&self) -> Result<(), std::io::Error> {
-        let path = Self::config_path();
+        self.save_to(&Self::config_path())
+    }
+
+    /// Write the preferences to `path`, creating its parent directory.
+    ///
+    /// # Errors
+    /// Returns the I/O error if the directory or file cannot be written.
+    pub fn save_to(&self, path: &Path) -> Result<(), std::io::Error> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
-        let mut out = String::new();
-
-        // Controls section
-        out.push_str("[prefs]\n");
-
-        // Use parser module for binding serialization
-        out.push_str(&format!(
-            "key_w={}\n",
-            parser::binding_to_string(&self.key_w)
-        ));
-        out.push_str(&format!(
-            "key_a={}\n",
-            parser::binding_to_string(&self.key_a)
-        ));
-        out.push_str(&format!(
-            "key_s={}\n",
-            parser::binding_to_string(&self.key_s)
-        ));
-        out.push_str(&format!(
-            "key_d={}\n",
-            parser::binding_to_string(&self.key_d)
-        ));
-        out.push_str(&format!(
-            "key_up={}\n",
-            parser::binding_to_string(&self.key_up)
-        ));
-        out.push_str(&format!(
-            "key_down={}\n",
-            parser::binding_to_string(&self.key_down)
-        ));
-        out.push_str(&format!(
-            "key_sprint={}\n",
-            parser::binding_to_string(&self.key_sprint)
-        ));
-        out.push_str(&format!(
-            "key_jump={}\n",
-            parser::binding_to_string(&self.key_jump)
-        ));
-        out.push_str(&format!("mouse_sensitivity={}\n", self.mouse_sensitivity));
-        out.push_str(&format!(
-            "input_filtering_enabled={}\n",
-            self.input_filtering_enabled
-        ));
-
-        // Audio section
-        out.push_str("\n[audio]\n");
-        out.push_str(&format!(
-            "sound_effect_volume={:.1}\n",
-            self.audio_sound_effect_volume
-        ));
-        out.push_str(&format!("music_volume={:.1}\n", self.audio_music_volume));
-        out.push_str(&format!("ui_volume={:.1}\n", self.audio_ui_volume));
-        out.push_str(&format!("voice_volume={:.1}\n", self.audio_voice_volume));
-
-        // Graphics section
-        out.push_str("\n[graphics]\n");
-        out.push_str(&format!(
-            "shadow_quality={}\n",
-            self.graphics_shadow_quality
-        ));
-        out.push_str(&format!("ssao_quality={}\n", self.graphics_ssao_quality));
-
-        // Video section
-        out.push_str("\n[video]\n");
-        out.push_str(&format!("window_mode={}\n", self.window_mode.as_str()));
-        out.push_str(&format!("window_width={}\n", self.window_resolution.0));
-        out.push_str(&format!("window_height={}\n", self.window_resolution.1));
-
-        // World / streaming section
-        out.push_str("\n[world]\n");
-        out.push_str(&format!("load_radius={}\n", self.world_load_radius));
-        out.push_str(&format!("unload_radius={}\n", self.world_unload_radius));
-        out.push_str(&format!(
-            "chunks_per_frame={}\n",
-            self.world_chunks_per_frame
-        ));
-
-        fs::write(path, out)?;
-        Ok(())
+        fs::write(path, self.to_ini_string())
     }
 }
 
@@ -543,73 +517,651 @@ impl Prefs {
 mod tests {
     use super::*;
 
+    /// Restores the working directory when dropped, even if the test panics.
+    struct CwdGuard(PathBuf);
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
+    /// `load` and `save` read and write the working-directory-relative `config_path()`.
+    /// No other test depends on the working directory, and nextest runs each test in
+    /// its own process.
     #[test]
-    fn test_default_prefs() {
-        let prefs = Prefs::default();
-        assert_eq!(prefs.key_w().code, 'W' as u32);
-        assert_eq!(prefs.mouse_sensitivity(), 1.0);
-        assert!(prefs.input_filtering_enabled());
+    fn save_then_load_round_trips_through_config_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let _restore = CwdGuard(std::env::current_dir().unwrap());
+        std::env::set_current_dir(dir.path()).unwrap();
+        let mut prefs = Prefs::default();
+        *prefs.mouse_sensitivity_mut() = 2.5;
+        prefs.set_window_mode(WindowMode::Fullscreen);
+
+        prefs.save().unwrap();
+        let loaded = Prefs::load();
+
+        assert!(dir.path().join("config/prefs.ini").is_file());
+        assert_eq!(loaded, prefs);
     }
 
     #[test]
-    fn test_binding_default() {
-        let binding = Binding::default();
-        assert_eq!(binding.code, 'W' as u32);
-        assert_eq!(binding.mods, 0);
+    fn brightness_defaults_to_one() {
+        assert_eq!(Prefs::default().brightness(), 1.0);
     }
 
     #[test]
-    fn test_default_video_settings() {
-        let prefs = Prefs::default();
-        assert_eq!(prefs.window_mode(), WindowMode::Windowed);
-        assert_eq!(prefs.window_resolution(), (1920, 1080));
-    }
+    fn brightness_round_trips() {
+        for brightness in [0.5, 0.75, 1.0, 1.5, 2.0] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_brightness(brightness);
 
-    #[test]
-    fn test_video_round_trip_windowed() {
-        // Build a prefs with custom video settings
-        let prefs = Prefs::default()
-            .with_window_mode(WindowMode::Windowed)
-            .with_window_resolution(2560, 1440);
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
 
-        // Serialize to INI string directly (without touching disk)
-        let mut out = String::new();
-        out.push_str("[video]\n");
-        out.push_str(&format!("window_mode={}\n", prefs.window_mode().as_str()));
-        out.push_str(&format!("window_width={}\n", prefs.window_resolution().0));
-        out.push_str(&format!("window_height={}\n", prefs.window_resolution().1));
-
-        // Parse back
-        if let Ok(map) = ini::macro_safe_read(&out)
-            && let Some(section) = map.get("video")
-        {
-            let mode_str = section
-                .get("window_mode")
-                .and_then(|o| o.clone())
-                .unwrap_or_default();
-            let w: u32 = section
-                .get("window_width")
-                .and_then(|o| o.clone())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-            let h: u32 = section
-                .get("window_height")
-                .and_then(|o| o.clone())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-
-            assert_eq!(WindowMode::from_str(&mode_str), WindowMode::Windowed);
-            assert_eq!((w, h), (2560, 1440));
-        } else {
-            panic!("Failed to parse video section");
+            assert_eq!(warnings, vec![], "brightness {brightness}");
+            assert_eq!(loaded.brightness(), brightness);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("brightness={brightness:.2}\n"))
+            );
         }
     }
 
     #[test]
-    fn test_window_mode_from_str() {
-        assert_eq!(WindowMode::from_str("Windowed"), WindowMode::Windowed);
-        assert_eq!(WindowMode::from_str("Fullscreen"), WindowMode::Fullscreen);
-        assert_eq!(WindowMode::from_str("Borderless"), WindowMode::Borderless);
-        assert_eq!(WindowMode::from_str("unknown"), WindowMode::Windowed); // default
+    fn brightness_clamps_to_range() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_brightness(0.1);
+        let low = prefs.brightness();
+        prefs.set_brightness(9.0);
+        let high = prefs.brightness();
+        prefs.set_brightness(f32::NAN);
+        let nan = prefs.brightness();
+
+        assert_eq!(low, 0.5);
+        assert_eq!(high, 2.0);
+        assert_eq!(nan, 1.0);
+    }
+
+    #[test]
+    fn bloom_defaults_to_high() {
+        assert_eq!(Prefs::default().bloom(), 2);
+    }
+
+    #[test]
+    fn bloom_round_trips() {
+        for quality in [0, 1, 2] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_bloom(quality);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "bloom {quality}");
+            assert_eq!(loaded.bloom(), quality);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("bloom={quality}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn bloom_clamps_to_high() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_bloom(3);
+        let above = prefs.bloom();
+        prefs.set_bloom(u32::MAX);
+        let max = prefs.bloom();
+
+        assert_eq!(above, 2);
+        assert_eq!(max, 2);
+    }
+
+    #[test]
+    fn effects_quality_round_trips_through_the_file() {
+        for quality in 0..=4 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_effects_quality(quality);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "effects_quality {quality}");
+            assert_eq!(loaded.effects_quality(), quality);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("effects_quality={quality}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn effects_quality_defaults_to_high_and_clamps_to_ultra() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.ini");
+        let absent = dir.path().join("absent.ini");
+        let over = dir.path().join("over.ini");
+        fs::write(&absent, "[graphics]\nssao_quality=1\n").unwrap();
+        fs::write(&over, "[graphics]\neffects_quality=9\n").unwrap();
+
+        let default = Prefs::default().effects_quality();
+        let from_missing_file = Prefs::load_from(&missing).0.effects_quality();
+        let from_absent_key = Prefs::load_from(&absent).0.effects_quality();
+        let from_over_range = Prefs::load_from(&over).0.effects_quality();
+        let mut prefs = Prefs::default();
+        prefs.set_effects_quality(u32::MAX);
+
+        assert_eq!(default, 3);
+        assert_eq!(from_missing_file, 3);
+        assert_eq!(from_absent_key, 3);
+        assert_eq!(from_over_range, 4);
+        assert_eq!(prefs.effects_quality(), 4);
+    }
+
+    #[test]
+    fn vsync_is_on_by_default() {
+        assert!(Prefs::default().vsync());
+    }
+
+    #[test]
+    fn fps_max_is_300_by_default() {
+        assert_eq!(Prefs::default().fps_max(), 300);
+    }
+
+    #[test]
+    fn frame_cap_is_none_while_vsync_is_on_even_with_fps_max_set() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(true);
+        prefs.set_fps_max(144);
+
+        assert_eq!(prefs.frame_cap(), None);
+    }
+
+    #[test]
+    fn frame_cap_is_none_when_vsync_is_off_and_fps_max_is_zero() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(false);
+        prefs.set_fps_max(0);
+
+        assert_eq!(prefs.frame_cap(), None);
+    }
+
+    #[test]
+    fn frame_cap_is_fps_max_when_vsync_is_off() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(false);
+
+        prefs.set_fps_max(144);
+        let custom = prefs.frame_cap();
+        prefs.set_fps_max(300);
+        let default_cap = prefs.frame_cap();
+
+        assert_eq!(custom, std::num::NonZeroU32::new(144));
+        assert_eq!(default_cap, std::num::NonZeroU32::new(300));
+    }
+
+    #[test]
+    fn vsync_mut_edits_are_visible_through_vsync() {
+        let mut prefs = Prefs::default();
+
+        *prefs.vsync_mut() = false;
+        let after_off = prefs.vsync();
+        *prefs.vsync_mut() = true;
+        let after_on = prefs.vsync();
+
+        assert!(!after_off);
+        assert!(after_on);
+    }
+
+    #[test]
+    fn fps_max_mut_edits_are_visible_through_fps_max() {
+        let mut prefs = Prefs::default();
+
+        *prefs.fps_max_mut() = 144;
+
+        assert_eq!(prefs.fps_max(), 144);
+    }
+
+    #[test]
+    fn video_setters_replace_the_defaults() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_vsync(false);
+        prefs.set_fps_max(0);
+
+        assert!(!prefs.vsync());
+        assert_eq!(prefs.fps_max(), 0);
+    }
+
+    #[test]
+    fn default_prefs_have_mouse_smoothing_off() {
+        assert!(!Prefs::default().mouse_smoothing());
+    }
+
+    #[test]
+    fn defaults_hold_source_sensitivity_three() {
+        assert_eq!(Prefs::default().mouse_sensitivity(), 3.0);
+    }
+
+    #[test]
+    fn default_prefs_have_invert_mouse_y_off() {
+        assert!(!Prefs::default().invert_mouse_y());
+    }
+
+    #[test]
+    fn acceleration_is_off_by_default() {
+        let prefs = Prefs::default();
+
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
+    fn with_invert_mouse_y_sets_the_flag() {
+        assert!(Prefs::default().with_invert_mouse_y(true).invert_mouse_y());
+        assert!(
+            !Prefs::default()
+                .with_invert_mouse_y(true)
+                .with_invert_mouse_y(false)
+                .invert_mouse_y()
+        );
+    }
+
+    #[test]
+    fn invert_mouse_y_mut_edits_the_flag() {
+        let mut prefs = Prefs::default();
+
+        *prefs.invert_mouse_y_mut() = true;
+
+        assert!(prefs.invert_mouse_y());
+    }
+
+    #[test]
+    fn mouse_acceleration_mut_edits_the_flag() {
+        let mut prefs = Prefs::default().with_mouse_acceleration(false);
+
+        *prefs.mouse_acceleration_mut() = true;
+        let after_enable = prefs.mouse_acceleration();
+        *prefs.mouse_acceleration_mut() = false;
+
+        assert!(after_enable);
+        assert!(!prefs.mouse_acceleration());
+    }
+
+    #[test]
+    fn mouse_acceleration_strength_mut_edits_the_value() {
+        let mut prefs = Prefs::default();
+
+        *prefs.mouse_acceleration_strength_mut() = 0.25;
+
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.25);
+    }
+
+    #[test]
+    fn with_mouse_sensitivity_sets_the_value() {
+        let prefs = Prefs::default().with_mouse_sensitivity(2.5);
+
+        assert_eq!(prefs.mouse_sensitivity(), 2.5);
+    }
+
+    #[test]
+    fn with_mouse_smoothing_sets_the_flag() {
+        assert!(
+            Prefs::default()
+                .with_mouse_smoothing(true)
+                .mouse_smoothing()
+        );
+        assert!(
+            !Prefs::default()
+                .with_mouse_smoothing(true)
+                .with_mouse_smoothing(false)
+                .mouse_smoothing()
+        );
+    }
+
+    #[test]
+    fn window_mode_parse_accepts_only_exact_names() {
+        let cases = [
+            ("Windowed", Some(WindowMode::Windowed)),
+            ("Fullscreen", Some(WindowMode::Fullscreen)),
+            ("Borderless", Some(WindowMode::Borderless)),
+            ("windowed", None),
+            ("fullscreen", None),
+            ("unknown", None),
+            ("", None),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(WindowMode::parse(input), expected, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn bindings_section_round_trips() {
+        let raw: BTreeMap<String, String> = [
+            ("move_forward", "Z"),
+            ("jump", "Unbound"),
+            ("sprint", "Shift, Ctrl"),
+            ("not_an_action", "Banana"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(raw.clone());
+
+        let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(parsed.bindings(), &raw);
+    }
+
+    #[test]
+    fn action_modes_section_round_trips() {
+        let raw: BTreeMap<String, String> = [
+            ("sprint", "toggle"),
+            ("crouch", "Hold"),
+            ("not_an_action", "sometimes"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut prefs = Prefs::default();
+        prefs.set_action_modes(raw.clone());
+
+        let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(parsed.action_modes(), &raw);
+        assert!(parsed.bindings().is_empty());
+    }
+
+    #[test]
+    fn no_action_modes_section_is_written_when_empty() {
+        let text = Prefs::default().to_ini_string();
+
+        assert!(!text.contains("[action_modes]"), "{text}");
+    }
+
+    #[test]
+    fn hand_written_action_modes_section_is_read_verbatim() {
+        let (prefs, issues) = Prefs::parse("[action_modes]\nsprint = Toggle\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(
+            prefs.action_modes().get("sprint").map(String::as_str),
+            Some("Toggle")
+        );
+    }
+
+    #[test]
+    fn a_debug_value_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("game.ini");
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "1").unwrap();
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.debug_value("god"), Some("1"));
+        assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn storing_a_debug_value_again_overwrites_it() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "0").unwrap();
+        prefs.set_debug_value("tgm", "1").unwrap();
+
+        prefs.set_debug_value("god", "1").unwrap();
+        assert_eq!(prefs.debug_value("god"), Some("1"));
+
+        prefs.set_debug_value("tgm", "0").unwrap();
+        assert_eq!(prefs.debug_value("tgm"), Some("0"));
+        assert_eq!(prefs.debug_value("god"), Some("1"));
+    }
+
+    #[test]
+    fn an_unstored_debug_value_is_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("game.ini");
+        let mut prefs = Prefs::default();
+        assert_eq!(prefs.debug_value("god"), None);
+        prefs.set_debug_value("tgm", "on").unwrap();
+        prefs.save_to(&path).unwrap();
+
+        let (loaded, _) = Prefs::load_from(&path);
+
+        assert_eq!(loaded.debug_value("god"), None);
+        assert_eq!(loaded.debug_value("tgm"), Some("on"));
+    }
+
+    const BAD_NAMES: [&str; 8] = ["God", "a b", "", "a-b", "a=b", "a;b", "é", "a\n"];
+    const BAD_VALUES: [&str; 10] = [
+        "", "a;b", "a#b", "a\nb", "a\rb", " 1", "1 ", "\t1", "1\n", "  ",
+    ];
+
+    #[test]
+    fn invalid_debug_value_is_refused() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("kept", "yes").unwrap();
+        let before = prefs.clone();
+
+        for name in BAD_NAMES {
+            let result = prefs.set_debug_value(name, "1");
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidName(_))),
+                "name {name:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "name {name:?} changed prefs");
+        }
+        for value in BAD_VALUES {
+            let result = prefs.set_debug_value("kept", value);
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidValue(_))),
+                "value {value:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "value {value:?} changed prefs");
+        }
+    }
+
+    #[test]
+    fn invalid_game_value_is_refused() {
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("kept", "yes").unwrap();
+        let before = prefs.clone();
+
+        for name in BAD_NAMES {
+            let result = prefs.set_game_value(name, "1");
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidName(_))),
+                "name {name:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "name {name:?} changed prefs");
+        }
+        for value in BAD_VALUES {
+            let result = prefs.set_game_value("kept", value);
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidValue(_))),
+                "value {value:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "value {value:?} changed prefs");
+        }
+        assert_eq!(prefs.game_value("kept"), Some("yes"));
+    }
+
+    #[test]
+    fn no_game_section_is_written_when_empty() {
+        let text = Prefs::default().to_ini_string();
+
+        assert!(!text.contains("[debug]"), "{text}");
+    }
+
+    #[test]
+    fn a_game_value_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("game.ini");
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("head_bob", "25").unwrap();
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+        let text = fs::read_to_string(&path).unwrap();
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.game_value("head_bob"), Some("25"));
+        assert_eq!(loaded, prefs);
+        assert!(text.contains("\n[game]\nhead_bob=25\n"), "{text}");
+    }
+
+    #[test]
+    fn game_and_debug_values_are_separate() {
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        prefs.set_debug_value("head_bob", "1").unwrap();
+
+        let (loaded, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.game_value("head_bob"), Some("25"));
+        assert_eq!(prefs.debug_value("head_bob"), Some("1"));
+        assert_eq!(loaded.game_value("head_bob"), Some("25"));
+        assert_eq!(loaded.debug_value("head_bob"), Some("1"));
+    }
+
+    #[test]
+    fn no_game_values_writes_no_game_section() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "1").unwrap();
+
+        let without = prefs.to_ini_string();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let with = prefs.to_ini_string();
+
+        assert!(without.contains("[debug]"), "{without}");
+        assert!(!without.contains("[game]"), "{without}");
+        assert!(
+            !Prefs::default().to_ini_string().contains("[game]"),
+            "defaults wrote a [game] section"
+        );
+        let debug_at = with.find("[debug]").expect("a [debug] section");
+        let game_at = with.find("[game]").expect("a [game] section");
+        assert!(game_at > debug_at, "[game] follows [debug]: {with}");
+    }
+
+    #[test]
+    fn content_mods_round_trip_through_ini() {
+        let mods = vec!["heavy".to_owned(), "light".to_owned()];
+        let mut prefs = Prefs::default();
+        prefs.set_content_mods(mods.clone());
+
+        let text = prefs.to_ini_string();
+        let (parsed, issues) = Prefs::parse(&text);
+
+        assert!(text.contains("[content]"), "{text}");
+        assert_eq!(issues, vec![]);
+        assert_eq!(parsed.content_mods(), mods.as_slice());
+        assert_eq!(parsed, prefs);
+    }
+
+    #[test]
+    fn default_prefs_write_no_content_section() {
+        let prefs = Prefs::default();
+
+        let text = prefs.to_ini_string();
+
+        assert!(prefs.content_mods().is_empty());
+        assert!(!text.contains("[content]"), "{text}");
+        assert!(!text.contains("mods"), "{text}");
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn accepted_debug_values_round_trip(
+            name in "[a-z0-9_]{1,16}",
+            value in "[A-Za-z0-9_.,:/=+-]([A-Za-z0-9_.,:/=+ -]{0,12}[A-Za-z0-9_.,:/=+-])?",
+        ) {
+            let mut prefs = Prefs::default();
+            prefs.set_debug_value(&name, &value).unwrap();
+
+            let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+            proptest::prop_assert_eq!(issues, vec![]);
+            proptest::prop_assert_eq!(parsed.debug_value(&name), Some(value.as_str()));
+            proptest::prop_assert_eq!(parsed, prefs);
+        }
+
+        #[test]
+        fn accepted_game_values_round_trip(
+            name in "[a-z0-9_]{1,16}",
+            value in "[A-Za-z0-9_.,:/=+-]([A-Za-z0-9_.,:/=+ -]{0,12}[A-Za-z0-9_.,:/=+-])?",
+        ) {
+            let mut prefs = Prefs::default();
+            prefs.set_game_value(&name, &value).unwrap();
+
+            let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+            proptest::prop_assert_eq!(issues, vec![]);
+            proptest::prop_assert_eq!(parsed.game_value(&name), Some(value.as_str()));
+            proptest::prop_assert_eq!(parsed, prefs);
+        }
+    }
+
+    #[test]
+    fn master_volume_round_trips_through_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("prefs.ini");
+        let mut prefs = Prefs::default();
+        *prefs.master_volume_mut() = 3.0;
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.master_volume(), 3.0);
+        assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn master_volume_is_written_first_in_audio_with_one_decimal() {
+        let mut prefs = Prefs::default();
+        *prefs.master_volume_mut() = 3.0;
+
+        let text = prefs.to_ini_string();
+
+        assert!(
+            text.contains("\n[audio]\nmaster_volume=3.0\nsound_effect_volume=8.0\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn hand_written_bindings_section_is_read_verbatim() {
+        let (prefs, issues) = Prefs::parse("[bindings]\njump = F\nsprint = Shift, Ctrl\n");
+
+        let expected: BTreeMap<String, String> = [("jump", "F"), ("sprint", "Shift, Ctrl")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.bindings(), &expected);
     }
 }

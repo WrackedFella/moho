@@ -1,0 +1,266 @@
+test_tool = "nextest"
+# The auto-set floor is 20 s. With the voxel lighting suite, some caught mutants make the light
+# spread into far more chunks and the package's tests then need about 25 s to all finish, so they
+# read as timeouts. Genuine hangs are excluded below, so the higher floor costs little.
+minimum_test_timeout = 60
+# GPU, windowing and egui-adapter code has no headless tests, so every mutant
+# there would read as missed without telling us anything.
+exclude_globs = [
+    # moho_renderer: only the files that hold wgpu resources are excluded; the pure ones
+    # (shadow/light_matrix, sky, markers, world_meshes, lights, materials, ...) are mutated.
+    "moho_renderer/src/builder.rs",
+    "moho_renderer/src/device.rs",
+    "moho_renderer/src/lib.rs",
+    "moho_renderer/src/mesh_renderer.rs",
+    "moho_renderer/src/pipeline/**",
+    "moho_renderer/src/render_ops/**",
+    "moho_renderer/src/renderer.rs",
+    "moho_renderer/src/resources.rs",
+    "moho_renderer/src/shadow.rs",
+    "moho_renderer/src/ssao.rs",
+    "moho_renderer/src/tone_map.rs",
+    "moho_renderer/src/types.rs",
+    "moho_renderer/src/ui_pass.rs",
+    "moho_renderer/src/ui_pass/**",
+    "flagstone_ui/src/adapter/**",
+    "flagstone/src/main.rs",
+    "flagstone/src/app/renderer_setup.rs",
+    "searchlight/src/main.rs",
+]
+# These bodies only drive the renderer backend or window, which need a real
+# `Window`; the binary's headless tests (`App::headless`) can't reach them.
+exclude_re = [
+    # The winit handler methods need a display, which tests don't have; the routing
+    # they use is tested through `route`.
+    "ApplicationHandler for Runner",
+    # Needs `ActiveEventLoop` and a window: it calls `Window::set_fullscreen`. The toggle
+    # decision is tested through `ToggleKeys`.
+    'replace Runner<G>::flip_window_mode with \(\)',
+    # winit's `KeyEvent` cannot be built outside winit, so this arm is unreachable from tests; the
+    # classification it feeds is tested through `ToggleKeys::observe`.
+    'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in observe_toggle',
+    'replace run -> Result<\(\), AppError> with Ok\(\(\)\)',
+    # `Game::init` only runs once the runner has created a real window.
+    'replace <impl moho_app::Game for App>::init with \(\)',
+    "App::initial_render",
+    'delete match arm "light" in EventProcessor::handle_debug_event',
+    'delete match arm DebugEvent::SetShadowQuality\{quality\} in EventProcessor::handle_debug_event',
+    'delete match arm DebugEvent::SetSsaoQuality\{quality\} in EventProcessor::handle_debug_event',
+    # Equivalent: the fallback is a single-axis vector and only its sign survives
+    # normalisation, which dividing by the density step keeps.
+    'replace \* with / in MarchingCubes::edge_gradient',
+    # Equivalent: the edge filter only skips edges no triangle of the cell uses, and edge
+    # flags never hold a single bit, so `|` and `^` just compute vertices nothing reads.
+    'replace & with [|^] in MarchingCubes::process_cell',
+    # Equivalent: a zero direction normalises to zero, so moving by it changes nothing.
+    'replace > with >= in PlayerController::apply_input',
+    # Equivalent: the three axis fields occupy disjoint bits, so OR and XOR agree.
+    'replace \| with \^ in chunk_mesh_id',
+    # Equivalent: ctrl, shift and alt occupy disjoint bits, so OR and XOR agree.
+    'replace \| with \^ in modifier_bits',
+    # Equivalent: each action owns a distinct bit, so OR and XOR agree.
+    'replace \| with \^ in ActionMap<A>::refresh_held',
+    # Equivalent: the seed fills the low 32 bits and the x cell the high 32, so OR and XOR agree.
+    'replace \| with \^ in Perlin::gradient',
+    # winit 0.30's `KeyEvent` has a crate-private field, so no test can build the key
+    # press these paths need to return true.
+    'replace KeybindCaptureHandler::handle_winit_event -> bool with false',
+    'replace != with == in KeybindCaptureHandler::handle_winit_event',
+    'replace <impl Screen for SettingsMenu>::handle_raw_input -> bool with false',
+    'replace == with != in App::handle_window_event',
+    'delete match arm WindowEvent::KeyboardInput\{event:key_event, \.\.\} in App::handle_window_event',
+    # Only a key press (Escape, backquote) changes the play state inside this handler.
+    'replace && with \|\| in App::handle_window_event',
+    # A non-empty audio accessor needs an `AudioSystem`, which needs an audio device.
+    'replace FrameContext<.a>::audio -> Option<&mut AudioSystem> with None',
+    'replace EventContext<.a>::audio -> Option<&mut AudioSystem> with None',
+    # Headless tests have no `ui_adapter`, and the egui adapter exposes no HUD data to
+    # read back.
+    'replace FrameProcessor::update_hud_data with \(\)',
+    # Same `KeyEvent` limit; and a `MouseInput` event needs `DeviceId::dummy()`, which is
+    # unsafe (`unsafe_code` is denied). The `ActionMap` calls these arms make are tested.
+    'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in handle_window_event',
+    'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in handle_window_event',
+    # The pointer arms need a `CursorMoved` or `CursorLeft` event, which hits the same
+    # `DeviceId::dummy()` limit; `pointer_moved` and `pointer_left` are tested.
+    'delete match arm WindowEvent::CursorMoved\{position, \.\.\} in handle_window_event',
+    'delete match arm WindowEvent::CursorLeft\{\.\.\} in handle_window_event',
+    'replace == with != in handle_window_event',
+    # Equivalent: the settings menu's spec is always `ScreenSpec::default()`.
+    'replace <impl Screen for SettingsMenu>::spec -> &ScreenSpec with Box::leak',
+    # `Default` calls `new`, which calls `from_prefs`: this mutant recurses until the
+    # stack runs out and reads as a timeout, not a survivor.
+    'replace SettingsState::from_prefs -> Self with Default::default\(\)',
+    # `AppConfig::default` calls `from_prefs_struct`, so this mutant recurses the same way.
+    'replace AppConfig::from_prefs_struct -> Self with Default::default\(\)',
+    # gilrs::ev::Code has no public constructor, so no test can build a button or axis
+    # event; the ActionMap calls these arms make are tested.
+    'delete match arm gilrs::EventType::ButtonPressed\(button, _\) \| gilrs::EventType::ButtonReleased\(button, _\) in apply_event',
+    'delete match arm gilrs::EventType::AxisChanged\(axis, value, _\) in apply_event',
+    # Opening the default device needs sound hardware, which tests don't have.
+    'replace RodioOutput::open_default -> AudioResult<Self> with',
+    # Equivalent: dropping an undetached rodio `Player` stops it, as `stop` does.
+    'replace <impl AudioOutput for RodioOutput>::stop with \(\)',
+    # Polling needs a live gilrs backend; headless tests and the headless App have none.
+    'replace Gamepads::poll with \(\)',
+    'replace Gamepads::discard with \(\)',
+    # searchlight: these bodies need a real `Window`, a GPU or an audio device, which tests
+    # don't have; the logic around them (status text, flash timing, geometry) is tested.
+    'replace capture_cursor with \(\)',
+    'delete match arm Feedback::Fired in Stage::react',
+    'replace Stage::play_shot with \(\)',
+    # Not proven equivalent: `init` grabs the cursor on the real window, which needs a display.
+    'replace <impl Game for SearchlightGame>::(init|event) with \(\)',
+    # The title text is `window_title`, tested; what is left is comparing with the shown title and
+    # calling `Window::set_title`, which needs a real window.
+    'replace Stage::refresh_title with \(\)',
+    'replace != with == in Stage::refresh_title',
+    # Equivalent: `SETTLE_DT` only feeds the one step that indexes new colliders, and the
+    # static level geometry does not move in it.
+    'arena\.rs:\d+:\d+: replace / with [%\*]$',
+    # Equivalent: a zero cooldown leaves the weapon `Ready` on the next advance either way.
+    'replace > with >= in SearchlightSim::pull_trigger',
+    # Equivalent: the target number is shifted past the three part-index bits, so OR and
+    # XOR agree.
+    'replace \| with \^ in <impl From<SurfaceTag> for HitTag>::from',
+    # Equivalent: `wrap` only reduces modulo 2 PI, and adding or subtracting PI before that
+    # lands on the same residue.
+    'replace \+ with - in wrap',
+    # Equivalent: `right` can only be 0 when `forward.abs() >= right.abs()` already took the
+    # first branch.
+    'replace > with >= in hit_edge',
+    # flagstone_game::raycast. Untested boundary: `3·ceil(L)` already covers every boundary a
+    # ray of length L crosses; they differ only at `max_distance` <= 0 from an origin exactly
+    # on a cell face, which is unspecified.
+    'replace \+ with \* in max_boundary_crossings',
+    # Equivalent: each corner owns a distinct bit, so OR and XOR agree.
+    'replace \| with \^ in cube_index',
+    # Equivalent: `<=` differs from `<` only for a barycentric exactly on the edge margin, or
+    # (in the facing test) a zero determinant, which is already rejected; measure zero.
+    'replace < with <= in triangle_crossing',
+    'replace > with >= in triangle_crossing',
+    # Equivalent: `step` is always 1 or -1.
+    'replace > with >= in axis_traversal',
+    # Unspecified: these change only which side cell is visited when a ray crosses a cell
+    # edge or corner exactly, i.e. when it grazes the skipped cell's edge.
+    'replace < with <= in GridWalk::advance',
+    # searchlight::sim. Equivalent: `hurt` is read only for a living enemy brain; a dummy has no
+    # brain and a dead enemy leaves the world before the next tick reads it, so `||` stores a
+    # value nothing consumes.
+    'replace && with \|\| in SearchlightSim::resolve_player_shot',
+    # searchlight::cover. Hangs rather than survives: the mutated step walks the ray backwards, so
+    # it strikes the same character forever and only the timeout stops it.
+    'replace \+ with - in world_blocks',
+    # flagstone_voxel::grid. Hangs rather than survives: with no chunk light to read, the light BFS
+    # sees every cell as dark and re-queues all its neighbours, so only the timeout stops it.
+    'replace VoxelGrid::chunk_light -> Option<&ChunkLight> with None',
+    # Equivalent: `VoxelGrid::new` debug-asserts a chunk size of 16 and every caller passes 16, so
+    # every grid supports lighting.
+    'replace VoxelGrid::supports_lighting -> bool with true',
+    # Equivalent: the lower-chunk pass runs only once the changed chunk's own `sky_dirty` is
+    # true, so also marking that chunk writes `true` over `true`.
+    'replace < with <= in VoxelGrid::note_block_change',
+    # moho_ui_shell::host. Feeding egui needs the `egui_winit::State` that `attach` builds from a
+    # real `Window`; headless tests have none, so these bodies do nothing there. Building the
+    # key or button events `input_of` reads hits the same `KeyEvent` / `DeviceId::dummy()`
+    # limit as `handle_window_event`; the routing behind them is tested through `route`.
+    'replace UiShell<G>::(attach|feed|feed_egui) with \(\)',
+    'replace == with != in UiShell<G>::feed',
+    'delete match arm \(Some\(state\), Some\(window\)\) in UiShell<G>::take_input',
+    'replace is_input_event -> bool with false',
+    'delete match arm WindowEvent::KeyboardInput\{event:KeyEvent\{physical_key, state, repeat, \.\.\}, \.\.\} in input_of',
+    'delete match arm WindowEvent::MouseInput\{state, button, \.\.\} in input_of',
+    # flagstone_voxel lighting. Hangs rather than survives: a light BFS that cannot read back its
+    # own writes re-queues the same voxels forever, and only the timeout stops it.
+    'replace LightPropagator::read_ch -> u8 with',
+    'replace LightPropagator::write_ch with \(\)',
+    # A broken index inverse sends the light BFS into the same endless re-queue. The round-trip
+    # test fails at once, but nextest waits for the hung lighting tests already running.
+    'replace % with \+ in idx_to_local',
+    'replace / with \* in idx_to_local',
+    'replace \* with [+/] in idx_to_local',
+    # Equivalent: the six offsets come in opposite pairs, so subtracting them visits the same voxels.
+    'replace \+ with - in neighbours',
+    # Equivalent: a neighbour already at `next` is pushed, then skipped when popped.
+    'replace > with >= in LightPropagator::enqueue_neighbours',
+    # The condition only gates a debug log line.
+    'replace > with [<=>]+ in LightJobQueue::process_frame',
+    # flagstone_game world generation (#462). Equivalent: at raw == 0 both branches give the
+    # same signed zero.
+    'replace < with <= in BiomeType::shape',
+    # Equivalent: pos_hash returns k/2^24, which never equals f32 0.1. Anchored to the column of
+    # the `pos_hash(..) < 0.1` test: the `y < column_height - 3` mutant on the same line is caught.
+    'scene_builders\.rs:\d+:66: replace < with <= in determine_resource_id',
+    # Debug output is diagnostics only; ENG-F9 allows excluding debug code (#463).
+    'replace <impl (std::)?fmt::Debug for \w+>::fmt',
+    # flagstone cut caps (#467). Equivalent: chunk ids use the low 63 bits, so OR and XOR agree.
+    'replace \| with \^ in cap_mesh_id',
+    # Equivalent: only which side a vertex exactly on the slice counts as; same segment.
+    'replace >= with < in slice_walls',
+    # Equivalent: the orientation dot is zero only for a horizontal triangle, which has no segment.
+    'replace < with <= in slice_walls',
+    # Equivalent: zero-turn vertices are dropped before the ear test.
+    'replace > with >= in ear_clip',
+    # Equivalent on the two ring edges; also hides the caught diagonal-edge mutant.
+    'replace < with <= in ear_clip',
+        # Equivalent: actions_where folds each action index once, so `mask | 1 << index` and `^` agree.
+    'replace \| with \^ in ActionMap<A>::actions_where',
+    # Equivalent: one axis update releases at most one stick direction, so at most one tap mask
+    # is non-zero and `|` and `^` agree.
+    'replace \| with \^ in ActionMap<A>::sync_stick_directions',
+    # moho_ui_shell::host: `input_of` now returns `Input` (ENG-F26-01); same headless KeyEvent limit as above.
+    'replace input_of -> Option<\(Input, bool, bool\)> with None',
+        # moho_level::nav (#454). Equivalent: rerecast winds every polygon clockwise, so the
+    # reversal always runs and -1.0 satisfies the debug check that says so.
+    'replace signed_area -> f32 with -1\.0',
+    # Equivalent: these differ only for a zero-length polygon edge or a zero-area fan
+    # triangle, which rerecast does not emit.
+    'replace > with >= in Polygon::closest_ground_point',
+    'replace < with (==|<=) in Polygon::height_at',
+    # Equivalent: two fan triangles tie only on their shared edge, where both give one height.
+    'replace > with >= in Polygon::height_at',
+    # Float-exact snap limits: vertices are voxel-quantised, so no test can sit exactly on one.
+    'replace > with >= in snap',
+    # BinaryHeap orders by Ord only; eq exists for the trait bound and is never called.
+    'replace <impl PartialEq for Open>::eq -> bool with (true|false)',
+    # Equivalent: only changes which of two exactly tied routes is kept, not the path length.
+    'replace < with <= in route',
+    # Unobservable in every scene we built: ordering by cost x remaining distance still picked
+    # the same corridor (not proven equivalent).
+    'replace \+ with \* in priority',
+    # Equivalent: the step counter only feeds the debug guard against a stalled funnel. The
+    # pattern also skips `i += 1`, which that guard catches.
+    'replace \+= with \*= in funnel',
+    # Equivalent: these only change whether a portal vertex exactly collinear with a funnel side
+    # is listed; the path geometry is the same. The `<` pattern also skips the loop bound
+    # (caught by an index panic) and `+ with *` the left-side restart (caught by tests).
+    'replace < with <= in funnel',
+    'replace > with >= in funnel',
+    'replace \+ with \* in funnel',
+    'replace <impl Game for SearchlightGame>::init with \(\)',
+    # The negation only gates the skip warning; the filter returns the un-negated mode check.
+    'delete ! in triangle_primitives',
+    'movement\.rs.*delete ! in checked', 
+    # checked's warn condition: log-only, no log capture in tests,
+    # moho_renderer::block_on. Hangs rather than survives: a waker that never wakes leaves the
+    # polled future parked, so only the timeout stops it.
+    'replace <impl Wake for ThreadWaker>::wake with \(\)',
+    'replace \| with \^ in chunks_meshed_from',
+    'replace \+ with - in contact_ao',
+    'replace \| with \^ in chunks_meshed_from',
+    'replace \+ with - in contact_ao',
+    'replace UiShell<G, A>::(attach|feed|feed_egui) with \(\)',
+    'replace == with != in UiShell<G, A>::feed',
+    'delete match arm \(Some\(state\), Some\(window\)\) in UiShell<G, A>::take_input',
+    # The look-down-the-axis threshold: at exactly 1e-4 both branches give a valid unit vector perpendicular to the streak, so the boundary is unobservable.
+    'replace < with <= in streak_transform',
+    # An exactly 5 mm deep contact is a float boundary with no behaviour of its own.
+    'replace < with <= in rests_on_flat_ground',
+    # Equivalent: NEIGHBOURS is symmetric, so block - d visits the same six cells.
+    'flagstone_game/src/jobs\.rs:.*: replace \+ with - in has_exposed_face$',
+    # Equivalent: x + PI and x - PI differ by exactly TAU before rem_euclid(TAU).
+    'flagstone_game/src/jobs\.rs:.*: replace \+ with - in steer$',
+    # Equivalent: unit step costs and a consistent heuristic mean no cell is re-pushed
+    # cheaper, so the stale-entry guard in route never fires.
+    'flagstone_game/src/routing\.rs:.*: replace < with > in route$',
+]

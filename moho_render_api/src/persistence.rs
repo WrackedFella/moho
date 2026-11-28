@@ -1,9 +1,9 @@
-use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 
 /// Serializable descriptor for a dynamic point light.
 ///
 /// Used to persist lights alongside scene data.
-#[derive(Encode, Decode, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LightDesc {
     pub position: [f32; 3],
     pub color: [f32; 3],
@@ -13,7 +13,7 @@ pub struct LightDesc {
 }
 
 /// Serializable descriptor for camera pose.
-#[derive(Encode, Decode, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CameraDesc {
     pub position: [f32; 3],
     pub yaw: f32,

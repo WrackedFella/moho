@@ -1,104 +1,313 @@
 name: CI
 
+# PRs into dev or a feature integration branch run the gate on Linux only; main
+# (promotions) runs all three OSes.
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev, "feature/**"]
   workflow_dispatch: {}
 
-# This CI workflow runs independently of the metrics workflow.
-# Both workflows trigger on the same events but execute in parallel.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  pull-requests: read
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0  # Disable incremental compilation for CI
+  CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  NEXTEST_PROFILE: ci
+  # Diff-based checks compare against the PR's target branch.
+  MOHO_BASE: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/dev' }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  # Single job that does everything - eliminates job overhead
-  test:
-    name: Test (${{ matrix.os }})
+  # Chooses the OS matrix: Linux for dev and feature branches, all three for main and manual runs.
+  # Also decides whether a PR touches code: docs-only PRs (Markdown, wiki/, _todo/) skip the
+  # gate's and mutants' steps. The jobs still run and pass, since their checks are required.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      os: ${{ steps.os.outputs.os }}
+      code: ${{ steps.code.outputs.code }}
+      multi_os: ${{ steps.os.outputs.multi_os }}
+    steps:
+      - id: code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ -z $PR ]]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          code=$(grep -Evq '\.md$|^wiki/|^_todo/' <<< "$files" && echo true || echo false)
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "touches code: $code"
+      - id: os
+        run: |
+          target="${GITHUB_BASE_REF:-$GITHUB_REF_NAME}"
+          if [[ "$target" == "dev" || "$target" == feature/* ]]; then
+            echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'multi_os=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'multi_os=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  # `just check`: fmt, clippy, nextest, doctests, comment refs, layering. The same gate agents run.
+  gate:
+    name: Gate (${{ matrix.os }})
+    needs: plan
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      # Full history: comment-refs diffs against the merge-base with MOHO_BASE.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.plan.outputs.code == 'true'
         with:
-          components: rustfmt, clippy
-      
-      # Install system dependencies
-      - name: Install system deps (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libudev-dev \
-            libasound2-dev \
-            libssl-dev
-          # Ensure pkg-config can find system pc files (fallback)
-          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}" >> $GITHUB_ENV
-      
-      # Use Swatinem's cache action - much faster than manual caching
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ${{ matrix.os }}
-          cache-on-failure: true
-          # Cache all target directories including dependencies
-          cache-targets: true
-          # Save cache even if build fails
-          save-if: true
-      
-      # Check formatting first (fast, fails early)
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      
-      # Run clippy (catches issues before full build)
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      
-      # Build all targets (leverages cache from clippy)
-      - name: Build
-        run: cargo build --all-targets --all-features
-      
-      # Run tests
-      - name: Run tests
-        run: cargo test --workspace --all-features -- --nocapture
+          fetch-depth: 0
 
-  # Optional: Separate benchmark job (only on Linux, only on push to main/dev)
+      - name: Install system deps (Linux)
+        timeout-minutes: 5
+        if: runner.os == 'Linux' && needs.plan.outputs.code == 'true'
+        run: |
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        if: needs.plan.outputs.code == 'true'
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        if: needs.plan.outputs.code == 'true'
+        with:
+          tool: just,cargo-nextest
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: needs.plan.outputs.code == 'true'
+        with:
+          shared-key: gate-${{ matrix.os }}
+          cache-on-failure: true
+
+      - run: just check
+        if: needs.plan.outputs.code == 'true'
+
+  # Skipped on a single-OS plan: nothing to compare.
+  replay-hashes:
+    name: Replay hashes (${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.multi_os == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps (Linux)
+        timeout-minutes: 5
+        if: runner.os == 'Linux'
+        run: |
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cargo-nextest
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: replay-${{ matrix.os }}
+          cache-on-failure: true
+
+      # The artifact holds <os>/hashes.txt, so downloads merge into the layout the comparison reads.
+      - run: mkdir -p "$RUNNER_TEMP/replay-hashes/${{ matrix.os }}"
+
+      - run: cargo nextest run -p moho_physics --test replay
+        env:
+          MOHO_REPLAY_HASH_OUT: ${{ runner.temp }}/replay-hashes/${{ matrix.os }}/hashes.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: replay-hashes-${{ matrix.os }}
+          path: ${{ runner.temp }}/replay-hashes
+          if-no-files-found: ignore
+
+  # A disagreement or a missing platform is reported in the run summary, never a failure.
+  replay-compare:
+    name: Replay hash comparison
+    needs: [plan, replay-hashes]
+    if: always() && needs.plan.outputs.multi_os == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: replay-hashes-*
+          merge-multiple: true
+          path: replay-hashes
+
+      - run: scripts/compare-replay-hashes.sh --self-test
+
+      # Tee to the log too, for readers (and agents) that only see job logs.
+      - name: Compare
+        env:
+          OS_LIST: ${{ needs.plan.outputs.os }}
+        run: |
+          mkdir -p replay-hashes # absent when no platform uploaded, so all are reported missing
+          mapfile -t platforms < <(jq -r '.[]' <<< "$OS_LIST")
+          scripts/compare-replay-hashes.sh replay-hashes "${platforms[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Licenses, advisories, sources. Separate so a new advisory doesn't mask gate results.
+  deny:
+    name: Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-deny
+
+      - run: just deny
+
+  # Mutation-tests the domain code this PR changes (CLAUDE.md's domain paths; glue is left to
+  # the weekly full run). A survivor fails the check: the new tests don't prove behavior.
+  mutants:
+    name: Mutants (diff)
+    needs: plan
+    if: github.event_name == 'pull_request' && (github.base_ref == 'dev' || startsWith(github.base_ref, 'feature/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.plan.outputs.code == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Install system deps
+        timeout-minutes: 5
+        if: needs.plan.outputs.code == 'true'
+        run: |
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        if: needs.plan.outputs.code == 'true'
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        if: needs.plan.outputs.code == 'true'
+        with:
+          tool: just,cargo-nextest,cargo-mutants
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: needs.plan.outputs.code == 'true'
+        with:
+          shared-key: mutants
+          cache-on-failure: true
+
+      - run: just mutants
+        if: needs.plan.outputs.code == 'true'
+
+      - name: Summarize
+        if: always()
+        run: |
+          if [[ -f mutants.out/outcomes.json ]]; then
+            jq -r '"caught \(.caught)  missed \(.missed)  unviable \(.unviable)  timeout \(.timeout)"' \
+              mutants.out/outcomes.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: mutants-out
+          path: mutants.out
+          if-no-files-found: ignore
+
+  # Informational: LCOV report as an artifact once changes land.
+  coverage:
+    name: Coverage
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps
+        timeout-minutes: 5
+        run: |
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install --component llvm-tools-preview
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: just,cargo-nextest,cargo-llvm-cov
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: coverage
+          cache-on-failure: true
+
+      - run: just cov
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lcov
+          path: lcov.info
+
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
+    if: github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Install system deps
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libudev-dev \
-            libasound2-dev
-          # Ensure pkg-config can find system pc files (fallback)
-          echo "PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-/usr/lib/x86_64-linux-gnu/pkgconfig}" >> $GITHUB_ENV
-      
-      - name: Setup Rust cache
-        uses: Swatinem/rust-cache@v2
+          { grep -rl packages.microsoft.com /etc/apt/sources.list.d || true; } | xargs -r sudo rm -f
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: bench
-      
-      - name: Run benchmarks
-        run: cargo bench --bench event_bus_bench -- --output-format bencher
 
+      - run: cargo bench --bench event_bus_bench -- --output-format bencher

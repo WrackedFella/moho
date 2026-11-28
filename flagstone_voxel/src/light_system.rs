@@ -1,0 +1,1162 @@
+//! Light system manager integrating light propagation with event system.
+//!
+//! This module provides a high-level manager for light updates that:
+//! - Listens to block modification events
+//! - Automatically enqueues light update jobs
+//! - Processes light updates within frame budget
+//! - Emits chunk mesh dirty events for affected chunks
+//!
+//! # Architecture
+//!
+//! The LightSystem acts as the bridge between block modifications and light
+//! propagation. It subscribes to WorldEvents (BlockPlaced, BlockRemoved) and
+//! translates them into light update jobs that are processed incrementally.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use flagstone_voxel::{LightSystem, VoxelGrid, LightFrameBudget};
+//! use moho_core::events::EventBus;
+//!
+//! let grid = VoxelGrid::new(16);
+//! let event_bus = EventBus::new();
+//! let mut light_system = LightSystem::new(grid, event_bus, LightFrameBudget::default());
+//!
+//! // Process light updates each frame
+//! light_system.process_frame();
+//!
+//! // Notify the mesh system of chunks whose light changed
+//! let dirtied = light_system.emit_dirty_events();
+//! ```
+
+use super::grid::VoxelGrid;
+use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
+use super::light_propagation::LightPropagator;
+use super::light_sky::{dirty_chunks_below, recompute_sky_change};
+use crate::events::{BlockChangeReason, WorldEvent};
+use glam::{IVec3, Vec3};
+use moho_core::events::EventBus;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+/// Light system manager coordinating light propagation with events
+pub struct LightSystem {
+    /// The voxel grid (shared reference for light propagation)
+    grid: VoxelGrid,
+
+    /// Light job queue for async processing
+    job_queue: LightJobQueue,
+
+    /// Event bus for listening to modifications and emitting dirty events
+    event_bus: Arc<EventBus>,
+
+    /// Player position for priority calculation (updated externally)
+    player_pos: Vec3,
+
+    /// Chunks affected by recent light updates (pending mesh dirty events)
+    affected_chunks: HashSet<IVec3>,
+}
+
+impl LightSystem {
+    /// Create a new light system
+    ///
+    /// # Arguments
+    /// * `grid` - The voxel grid to propagate light through
+    /// * `event_bus` - Event bus for listening and publishing events
+    /// * `budget` - Frame budget configuration
+    pub fn new(grid: VoxelGrid, event_bus: Arc<EventBus>, budget: LightFrameBudget) -> Self {
+        let job_queue = LightJobQueue::new(budget);
+
+        Self {
+            grid,
+            job_queue,
+            event_bus,
+            player_pos: Vec3::ZERO,
+            affected_chunks: HashSet::new(),
+        }
+    }
+
+    /// A light system with [`LightFrameBudget::default`].
+    pub fn with_default_budget(grid: VoxelGrid, event_bus: Arc<EventBus>) -> Self {
+        Self::new(grid, event_bus, LightFrameBudget::default())
+    }
+
+    /// Update player position for priority calculation
+    pub fn set_player_position(&mut self, pos: Vec3) {
+        self.player_pos = pos;
+    }
+
+    /// Whether a block of `material_id` (`None` for no block) can change any
+    /// light: it emits, or it is opaque, or the position is empty.
+    fn affects_light(&self, material_id: Option<u32>) -> bool {
+        material_id.is_none_or(|id| {
+            let lighting = self.grid.material_registry.lighting(id);
+            lighting.is_emissive() || lighting.is_opaque()
+        })
+    }
+
+    fn submit_reconcile(&mut self, position: IVec3) {
+        let job = LightUpdateJob::at(position).with_player_distance(self.player_pos);
+        self.job_queue.submit(job);
+    }
+
+    /// Handle a block placed event. The job reads the grid when it runs, so the
+    /// block must already be in the grid. A transparent, non-emissive block queues
+    /// nothing, which assumes it was placed into an empty position.
+    pub fn on_block_placed(&mut self, position: IVec3, material_id: u32) {
+        if self.affects_light(Some(material_id)) {
+            self.submit_reconcile(position);
+        }
+    }
+
+    /// Handle a block removed event.
+    pub fn on_block_removed(&mut self, position: IVec3, old_material_id: u32) {
+        self.submit_reconcile(position);
+
+        tracing::debug!(
+            pos = ?position,
+            material_id = old_material_id,
+            "Block removed, enqueued light reconcile job"
+        );
+    }
+
+    /// Handle a batch block modification event
+    ///
+    /// Enqueues a reconcile job for every position the edit left empty, opaque or emissive.
+    pub fn on_blocks_batch_modified(&mut self, positions: &[IVec3], reason: &BlockChangeReason) {
+        tracing::debug!(count = positions.len(), reason = ?reason, "Batch modification of blocks");
+
+        for &position in positions {
+            if self.affects_light(self.grid.material_at(position)) {
+                self.submit_reconcile(position);
+            }
+        }
+    }
+
+    /// Process light update jobs for this frame
+    ///
+    /// Returns the number of jobs completed this frame
+    pub fn process_frame(&mut self) -> usize {
+        let completed = self.job_queue.process_frame(&mut self.grid);
+
+        self.affected_chunks.extend(
+            self.job_queue
+                .collect_results()
+                .into_iter()
+                .flat_map(|r| r.affected_chunks),
+        );
+        self.refresh_sky(&[]);
+
+        completed
+    }
+
+    /// Recompute sky exposure of every `sky_dirty` chunk, topmost first within
+    /// each column so a lower chunk reads current heights above it. Chunks with
+    /// blocks whose exposure changed join the affected set; a chunk without
+    /// blocks has no mesh to rebuild. Chunks across a changed outer layer join too,
+    /// except for `arriving` chunks, whose neighbours are re-meshed by the arrival itself.
+    fn refresh_sky(&mut self, arriving: &[IVec3]) {
+        let mut dirty: Vec<IVec3> = self
+            .grid
+            .lit_chunk_positions()
+            .filter(|&cp| self.grid.chunk_light(cp).is_some_and(|cl| cl.sky_dirty))
+            .collect();
+        dirty.sort_unstable_by_key(|cp| (cp.x, cp.z, std::cmp::Reverse(cp.y)));
+        for chunk_pos in dirty {
+            let change = recompute_sky_change(&mut self.grid, chunk_pos);
+            if change.any && self.grid.has_chunk(chunk_pos) {
+                self.affected_chunks.insert(chunk_pos);
+            }
+            if !change.borders.is_empty() && !arriving.contains(&chunk_pos) {
+                self.affected_chunks.extend(
+                    change
+                        .borders
+                        .iter()
+                        .map(|&offset| chunk_pos + offset)
+                        .filter(|&across| self.grid.has_chunk(across)),
+                );
+            }
+        }
+    }
+
+    /// Light chunks that have just entered the grid (world load, generation
+    /// preload, streaming): refresh their sky exposure and block light.
+    ///
+    /// Synchronous, so the chunks are lit when this returns. Chunks whose light
+    /// or sky changed are queued for [`Self::emit_dirty_events`].
+    pub fn light_arrived_chunks(&mut self, chunks: &[IVec3]) {
+        // Streaming calls this every tick, mostly with nothing arriving.
+        if chunks.is_empty() {
+            return;
+        }
+        let mut highest: HashMap<(i32, i32), i32> = HashMap::new();
+        for &chunk_pos in chunks {
+            self.grid.chunk_light_mut(chunk_pos).sky_dirty = true;
+            let top = highest
+                .entry((chunk_pos.x, chunk_pos.z))
+                .or_insert(chunk_pos.y);
+            *top = (*top).max(chunk_pos.y);
+        }
+        for (&(x, z), &top) in &highest {
+            dirty_chunks_below(&mut self.grid, IVec3::new(x, top, z));
+        }
+        self.refresh_sky(chunks);
+        let changed = LightPropagator::new().light_arrived(&mut self.grid, chunks);
+        self.affected_chunks.extend(changed);
+    }
+
+    /// Emit ChunkMeshDirty events for all affected chunks
+    ///
+    /// This should be called after process_frame() to notify the mesh system
+    /// that chunks need regeneration due to light changes.
+    ///
+    /// Returns the number of chunks marked dirty
+    pub fn emit_dirty_events(&mut self) -> usize {
+        let count = self.affected_chunks.len();
+        // Light shades both terrain and structure meshes.
+        for chunk_pos in self.affected_chunks.drain() {
+            self.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                chunk_pos,
+                terrain_dirty: true,
+                structure_dirty: true,
+            });
+        }
+        count
+    }
+
+    /// Get number of pending jobs
+    pub fn pending_jobs(&self) -> usize {
+        self.job_queue.pending_jobs()
+    }
+
+    /// Queue light work for a world event. The grid must already hold the edit
+    /// the event describes.
+    pub fn handle_event(&mut self, event: &WorldEvent) {
+        match event {
+            WorldEvent::BlockPlaced {
+                position,
+                material_id,
+                ..
+            } => {
+                self.on_block_placed(*position, *material_id);
+            }
+            WorldEvent::BlockRemoved {
+                position,
+                old_material_id,
+                ..
+            } => {
+                self.on_block_removed(*position, *old_material_id);
+            }
+            WorldEvent::BlocksBatchModified {
+                positions, reason, ..
+            } => {
+                self.on_blocks_batch_modified(positions, reason);
+            }
+            WorldEvent::ChunkMeshDirty { .. } => {
+                // Ignore other events
+            }
+        }
+    }
+
+    /// Get reference to the underlying voxel grid
+    pub fn grid(&self) -> &VoxelGrid {
+        &self.grid
+    }
+
+    /// Get mutable reference to the underlying voxel grid
+    pub fn grid_mut(&mut self) -> &mut VoxelGrid {
+        &mut self.grid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::light_propagation::LightPropagator;
+
+    #[test]
+    fn test_block_placed_light_source() {
+        use crate::grid::MaterialLighting;
+        let mut grid = VoxelGrid::new(16);
+        // Material 1: warm torch emission.
+        grid.material_registry.set_lighting(
+            1,
+            MaterialLighting {
+                emission: [15, 8, 2],
+                opacity_cost: 0,
+            },
+        );
+
+        let event_bus = Arc::new(EventBus::new());
+        let mut light_system = LightSystem::with_default_budget(grid, event_bus);
+
+        // Placing an emissive block should enqueue a job.
+        light_system.on_block_placed(IVec3::new(2, 2, 2), 1);
+        assert_eq!(light_system.pending_jobs(), 1);
+    }
+
+    const TORCH: [u8; 3] = [15, 8, 2];
+
+    /// Chunks holding any lit voxel within 16 blocks of `center`.
+    fn lit_chunks(grid: &VoxelGrid, center: IVec3) -> HashSet<IVec3> {
+        let mut chunks = HashSet::new();
+        for x in -16..=16 {
+            for y in -16..=16 {
+                for z in -16..=16 {
+                    let pos = center + IVec3::new(x, y, z);
+                    if grid.block_light_rgb_at(pos) != [0, 0, 0] {
+                        chunks.insert(crate::light_storage::world_to_chunk_local(pos).0);
+                    }
+                }
+            }
+        }
+        chunks
+    }
+
+    /// Material 0 is an opaque block (the default), 1 a torch, 2 a transparent
+    /// block with no emission; the registry only holds ids 0 to 2.
+    fn test_grid() -> VoxelGrid {
+        use crate::grid::MaterialLighting;
+        let mut grid = VoxelGrid::new(16);
+        for (id, emission, opacity_cost) in [(1, TORCH, 0), (2, [0, 0, 0], 0)] {
+            grid.material_registry.set_lighting(
+                id,
+                MaterialLighting {
+                    emission,
+                    opacity_cost,
+                },
+            );
+        }
+        grid
+    }
+
+    type DirtyLog = Arc<std::sync::Mutex<Vec<IVec3>>>;
+
+    fn system_with_budget(budget: LightFrameBudget) -> (LightSystem, DirtyLog) {
+        let event_bus = Arc::new(EventBus::new());
+        let received: DirtyLog = Arc::default();
+        let sink = Arc::clone(&received);
+        event_bus.subscribe(move |event: &WorldEvent| {
+            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
+                sink.lock().unwrap().push(*chunk_pos);
+            }
+        });
+        (LightSystem::new(test_grid(), event_bus, budget), received)
+    }
+
+    fn system() -> (LightSystem, DirtyLog) {
+        system_with_budget(LightFrameBudget::default())
+    }
+
+    fn placed(position: IVec3, material_id: u32) -> WorldEvent {
+        WorldEvent::BlockPlaced {
+            position,
+            material_id,
+            reason: BlockChangeReason::Player,
+        }
+    }
+
+    fn assert_published_once_each(received: &DirtyLog, expected: &HashSet<IVec3>) {
+        let got = received.lock().unwrap().clone();
+        assert_eq!(got.len(), expected.len(), "one event per chunk: {got:?}");
+        assert_eq!(&got.into_iter().collect::<HashSet<_>>(), expected);
+    }
+
+    #[test]
+    fn placing_an_emissive_block_emits_dirty_events_for_reached_chunks() {
+        let (mut light_system, received) = system();
+        let source = IVec3::new(15, 15, 15);
+        light_system.grid_mut().place_block(source, 1, None);
+
+        light_system.handle_event(&placed(source, 1));
+        let completed = light_system.process_frame();
+        let emitted = light_system.emit_dirty_events();
+
+        assert_eq!(completed, 1);
+        assert_eq!(light_system.pending_jobs(), 0, "the frame drains the queue");
+        assert_eq!(light_system.grid().block_light_rgb_at(source), TORCH);
+        let expected = lit_chunks(light_system.grid(), source);
+        assert!(
+            expected.len() > 1,
+            "light must spill into neighbouring chunks"
+        );
+        assert_eq!(emitted, expected.len());
+        assert_published_once_each(&received, &expected);
+        assert_eq!(light_system.emit_dirty_events(), 0);
+        assert_eq!(received.lock().unwrap().len(), expected.len());
+    }
+
+    #[test]
+    fn removing_an_emissive_block_darkens_it_and_emits_dirty_events_for_those_chunks() {
+        let (mut light_system, received) = system();
+        let source = IVec3::new(15, 15, 15);
+        light_system.grid_mut().place_block(source, 1, None);
+        light_system.handle_event(&placed(source, 1));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+        let lit = lit_chunks(light_system.grid(), source);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(source),
+            TORCH,
+            "the emitter starts lit"
+        );
+        assert!(!lit.is_empty(), "the removal starts from a lit area");
+        received.lock().unwrap().clear();
+        light_system.grid_mut().mutator().remove(source);
+
+        light_system.handle_event(&WorldEvent::BlockRemoved {
+            position: source,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        let completed = light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        assert_eq!(completed, 1);
+        assert_eq!(light_system.grid().block_light_rgb_at(source), [0, 0, 0]);
+        assert!(lit_chunks(light_system.grid(), source).is_empty());
+        assert_published_once_each(&received, &lit);
+    }
+
+    #[test]
+    fn a_batch_lights_emissive_blocks_and_clears_light_at_non_emissive_ones() {
+        let (mut light_system, received) = system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        });
+        let torch_pos = IVec3::new(5, 5, 5);
+        let stone_pos = IVec3::new(40, 5, 5);
+        let empty_pos = IVec3::new(70, 5, 5);
+        light_system.grid_mut().place_block(torch_pos, 1, None);
+        light_system.grid_mut().place_block(stone_pos, 0, None);
+        for pos in [stone_pos, empty_pos] {
+            LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
+        }
+        let darkened = lit_chunks(light_system.grid(), stone_pos);
+        let darkened_empty = lit_chunks(light_system.grid(), empty_pos);
+
+        light_system.handle_event(&WorldEvent::BlocksBatchModified {
+            chunk_pos: IVec3::ZERO,
+            positions: vec![torch_pos, stone_pos, empty_pos],
+            reason: BlockChangeReason::Explosion,
+        });
+        assert_eq!(
+            light_system.pending_jobs(),
+            3,
+            "one job per position, the empty one included"
+        );
+        let completed = light_system.process_frame();
+
+        assert_eq!(completed, 3);
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(torch_pos), TORCH);
+        assert_eq!(grid.block_light_rgb_at(stone_pos), [0, 0, 0]);
+        assert_eq!(
+            grid.block_light_rgb_at(empty_pos),
+            [0, 0, 0],
+            "light at a position emptied by the edit is reconciled away"
+        );
+        let mut expected = lit_chunks(grid, torch_pos);
+        expected.extend(darkened);
+        expected.extend(darkened_empty);
+        light_system.emit_dirty_events();
+        assert_published_once_each(&received, &expected);
+    }
+
+    #[test]
+    fn a_batch_queues_every_changed_position() {
+        let (mut light_system, _received) = system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        });
+        let torch_pos = IVec3::new(5, 5, 5);
+        let lit_stone_pos = IVec3::new(7, 5, 5);
+        let stone_pos = IVec3::new(40, 5, 5);
+        let empty_positions = [IVec3::new(70, 5, 5), IVec3::new(85, 5, 5)];
+        let glass_positions = [
+            IVec3::new(100, 5, 5),
+            IVec3::new(115, 5, 5),
+            IVec3::new(130, 5, 5),
+        ];
+        light_system.grid_mut().place_block(torch_pos, 1, None);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), torch_pos, TORCH);
+        light_system.grid_mut().place_block(lit_stone_pos, 0, None);
+        light_system.grid_mut().place_block(stone_pos, 0, None);
+        for pos in glass_positions {
+            light_system.grid_mut().place_block(pos, 2, None);
+        }
+        assert_ne!(
+            light_system.grid().block_light_rgb_at(lit_stone_pos),
+            [0, 0, 0],
+            "the stone is placed into real light"
+        );
+        let mut positions = vec![torch_pos, lit_stone_pos, stone_pos];
+        positions.extend(empty_positions);
+        positions.extend(glass_positions);
+
+        light_system.handle_event(&WorldEvent::BlocksBatchModified {
+            chunk_pos: IVec3::ZERO,
+            positions,
+            reason: BlockChangeReason::Explosion,
+        });
+
+        assert_eq!(
+            light_system.pending_jobs(),
+            5,
+            "emitter, two opaque and two emptied positions queue; the three transparent placements do not"
+        );
+        assert_eq!(light_system.process_frame(), 5);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(lit_stone_pos),
+            [0, 0, 0],
+            "the stone placed into light is darkened"
+        );
+    }
+
+    /// Place an emitter at `pos`, mine it again, and publish both events in the
+    /// given order before one frame runs; a distant torch proves jobs do run.
+    fn place_and_mine_before_processing(removed_event_first: bool) {
+        let (mut light_system, _received) = system();
+        let pos = IVec3::new(5, 5, 5);
+        let witness = IVec3::new(45, 5, 5);
+        light_system.grid_mut().place_block(witness, 1, None);
+        light_system.handle_event(&placed(witness, 1));
+        light_system.grid_mut().place_block(pos, 1, None);
+        let place = placed(pos, 1);
+        let remove = WorldEvent::BlockRemoved {
+            position: pos,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        };
+
+        let (first, second) = if removed_event_first {
+            (&remove, &place)
+        } else {
+            (&place, &remove)
+        };
+        light_system.handle_event(first);
+        light_system.handle_event(second);
+        light_system.grid_mut().mutator().remove(pos);
+        light_system.process_frame();
+
+        let grid = light_system.grid();
+        assert_eq!(
+            grid.block_light_rgb_at(witness),
+            TORCH,
+            "the witness torch is lit"
+        );
+        assert!(
+            lit_chunks(grid, pos).is_empty(),
+            "the mined torch leaves no light (removed event first: {removed_event_first})"
+        );
+    }
+
+    #[test]
+    fn place_then_remove_before_processing_leaves_no_light() {
+        place_and_mine_before_processing(false);
+        place_and_mine_before_processing(true);
+    }
+
+    #[test]
+    fn placing_an_opaque_non_emissive_block_queues_one_job_that_clears_its_light() {
+        let (mut light_system, _received) = system();
+        let pos = IVec3::new(5, 5, 5);
+        let emitter = IVec3::new(6, 5, 5);
+        light_system.grid_mut().place_block(emitter, 1, None);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), emitter, TORCH);
+        light_system.grid_mut().place_block(pos, 0, None);
+        assert_ne!(
+            light_system.grid().block_light_rgb_at(pos),
+            [0, 0, 0],
+            "the block is placed into real light"
+        );
+
+        light_system.handle_event(&placed(pos, 0));
+
+        assert_eq!(light_system.pending_jobs(), 1);
+        light_system.process_frame();
+        assert_eq!(light_system.grid().block_light_rgb_at(pos), [0, 0, 0]);
+        assert_eq!(light_system.grid().block_light_rgb_at(emitter), TORCH);
+    }
+
+    #[test]
+    fn placing_a_transparent_non_emissive_block_queues_nothing() {
+        let (mut light_system, _received) = system();
+        let pos = IVec3::new(5, 5, 5);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), pos, [10, 0, 0]);
+
+        light_system.handle_event(&placed(pos, 2));
+
+        assert_eq!(light_system.pending_jobs(), 0);
+        light_system.process_frame();
+        assert_eq!(light_system.grid().block_light_rgb_at(pos), [10, 0, 0]);
+    }
+
+    #[test]
+    fn a_chunk_mesh_dirty_event_queues_nothing() {
+        let (mut light_system, _received) = system();
+
+        light_system.handle_event(&WorldEvent::ChunkMeshDirty {
+            chunk_pos: IVec3::ZERO,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        assert_eq!(light_system.pending_jobs(), 0);
+    }
+
+    #[test]
+    fn the_job_nearest_the_player_is_processed_first() {
+        let (mut light_system, _received) = system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: 1,
+            max_time_us: u64::MAX,
+        });
+        let far = IVec3::new(0, 8, 8);
+        let near = IVec3::new(100, 8, 8);
+        light_system.set_player_position(Vec3::new(100.0, 8.0, 8.0));
+        light_system.grid_mut().place_block(far, 1, None);
+        light_system.grid_mut().place_block(near, 1, None);
+        light_system.handle_event(&placed(far, 1));
+        light_system.handle_event(&placed(near, 1));
+
+        let completed = light_system.process_frame();
+
+        assert_eq!(completed, 1);
+        assert_eq!(light_system.pending_jobs(), 1);
+        assert_eq!(light_system.grid().block_light_rgb_at(near), TORCH);
+        assert_eq!(light_system.grid().block_light_rgb_at(far), [0, 0, 0]);
+    }
+
+    fn unbounded_system() -> (LightSystem, DirtyLog) {
+        system_with_budget(LightFrameBudget {
+            max_blocks_per_frame: usize::MAX,
+            max_time_us: u64::MAX,
+        })
+    }
+
+    /// Runs one frame and publishes its dirty events, then forgets them, so a
+    /// test starts from a settled world.
+    fn settle(light_system: &mut LightSystem, received: &DirtyLog) {
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+        received.lock().unwrap().clear();
+    }
+
+    fn removed(position: IVec3) -> WorldEvent {
+        WorldEvent::BlockRemoved {
+            position,
+            old_material_id: 0,
+            reason: BlockChangeReason::Player,
+        }
+    }
+
+    /// Digs `column` from `top` down to `bottom` (inclusive) the way the game
+    /// does: edit the grid, then publish the removal.
+    fn dig(light_system: &mut LightSystem, column: (i32, i32), top: i32, bottom: i32) {
+        for y in (bottom..=top).rev() {
+            let pos = IVec3::new(column.0, y, column.1);
+            assert!(light_system.grid_mut().mutator().remove(pos));
+            light_system.handle_event(&removed(pos));
+        }
+    }
+
+    /// Solid ground in a 4x4 footprint, 34 blocks tall: chunk layers 0 and 1
+    /// full, layer 2 holding two block layers.
+    fn solid_ground(light_system: &mut LightSystem) {
+        light_system
+            .grid_mut()
+            .mutator()
+            .fill_region(IVec3::ZERO, IVec3::new(3, 33, 3), 0);
+    }
+
+    fn chunks_of(positions: &[IVec3]) -> HashSet<IVec3> {
+        positions
+            .iter()
+            .map(|p| crate::light_storage::world_to_chunk_local(*p).0)
+            .collect()
+    }
+
+    #[test]
+    fn digging_a_shaft_exposes_its_floor_after_one_frame() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        settle(&mut light_system, &received);
+        let floor = IVec3::new(1, 29, 1);
+        assert!(!light_system.grid().sky_exposed_at(floor), "ground is dark");
+
+        dig(&mut light_system, (1, 1), 33, 29);
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert!(grid.sky_exposed_at(floor), "the shaft floor sees the sky");
+        assert!(grid.sky_exposed_at(IVec3::new(1, 33, 1)), "so does the top");
+        assert!(
+            !grid.sky_exposed_at(IVec3::new(1, 28, 1)),
+            "the ground under the shaft stays shadowed"
+        );
+        assert!(
+            !grid.sky_exposed_at(IVec3::new(2, 29, 1)),
+            "the wall beside the shaft stays shadowed"
+        );
+        let crossed = chunks_of(&[IVec3::new(1, 33, 1), floor]);
+        assert_eq!(crossed.len(), 2, "the shaft crosses a chunk border");
+        assert_published_once_each(&received, &crossed);
+    }
+
+    #[test]
+    fn sealing_a_shaft_hides_its_floor_from_the_sky() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        dig(&mut light_system, (1, 1), 33, 29);
+        settle(&mut light_system, &received);
+        let floor = IVec3::new(1, 29, 1);
+        let cap = IVec3::new(1, 33, 1);
+        assert!(light_system.grid().sky_exposed_at(floor), "open shaft");
+
+        light_system.grid_mut().mutator().place(cap, 0, None);
+        light_system.handle_event(&placed(cap, 0));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert!(!grid.sky_exposed_at(floor), "the roof hides the floor");
+        assert!(!grid.sky_exposed_at(IVec3::new(1, 31, 1)));
+        assert!(
+            grid.sky_exposed_at(IVec3::new(1, 34, 1)),
+            "above the roof is open"
+        );
+        assert_published_once_each(&received, &chunks_of(&[cap, floor]));
+    }
+
+    #[test]
+    fn sky_refresh_runs_top_down_across_chunk_layers() {
+        let (mut light_system, received) = unbounded_system();
+        let cap = IVec3::new(1, 4 * 16 + 3, 1);
+        for layer in 0..=4 {
+            // A filler block in another column keeps every layer loaded.
+            let filler = IVec3::new(8, layer * 16 + 5, 8);
+            light_system.grid_mut().mutator().place(filler, 0, None);
+        }
+        light_system.grid_mut().mutator().place(cap, 0, None);
+        settle(&mut light_system, &received);
+        let probes: Vec<IVec3> = (0..=4)
+            .map(|layer| IVec3::new(1, layer * 16 + 1, 1))
+            .collect();
+        for probe in &probes {
+            assert!(
+                !light_system.grid().sky_exposed_at(*probe),
+                "{probe:?} roofed"
+            );
+        }
+
+        assert!(light_system.grid_mut().mutator().remove(cap));
+        light_system.handle_event(&removed(cap));
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        for probe in &probes {
+            assert!(
+                light_system.grid().sky_exposed_at(*probe),
+                "{probe:?} sees the sky once the roof is gone"
+            );
+        }
+        assert_published_once_each(&received, &chunks_of(&probes));
+    }
+
+    /// Brings the chunk at `chunk` into the grid the way streaming does: from
+    /// serialized bytes, then handed to the light system. `build` places the
+    /// chunk's blocks in a throwaway grid.
+    fn arrive(light_system: &mut LightSystem, chunk: IVec3, build: impl FnOnce(&mut VoxelGrid)) {
+        let mut donor = test_grid();
+        build(&mut donor);
+        let bytes = donor
+            .serialize_chunk(chunk)
+            .expect("the chunk holds blocks");
+        light_system
+            .grid_mut()
+            .deserialize_chunk_into(chunk, &bytes)
+            .expect("valid chunk bytes");
+        light_system.light_arrived_chunks(&[chunk]);
+    }
+
+    #[test]
+    fn arrived_chunk_with_an_emitter_lights_itself_and_its_neighbours() {
+        let (mut light_system, received) = unbounded_system();
+        let source = IVec3::new(15, 5, 5);
+        let next_chunk = IVec3::new(1, 0, 0);
+
+        arrive(&mut light_system, IVec3::ZERO, |donor| {
+            donor.mutator().place(source, 1, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(source), TORCH);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(14, 5, 5)), [14, 7, 1]);
+        assert_eq!(
+            grid.block_light_rgb_at(IVec3::new(16, 5, 5)),
+            [14, 7, 1],
+            "light crosses into the next chunk"
+        );
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(18, 5, 5)), [12, 5, 0]);
+        let got = received.lock().unwrap().clone();
+        let unique: HashSet<IVec3> = got.iter().copied().collect();
+        assert_eq!(unique.len(), got.len(), "one event per chunk: {got:?}");
+        assert!(unique.contains(&IVec3::ZERO), "the arrived chunk: {got:?}");
+        assert!(unique.contains(&next_chunk), "the lit neighbour: {got:?}");
+    }
+
+    #[test]
+    fn arrival_refills_from_lit_neighbours() {
+        let (mut light_system, received) = unbounded_system();
+        let neighbour = IVec3::new(1, 0, 0);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), IVec3::new(14, 5, 5), TORCH);
+        light_system.grid_mut().remove_chunk(neighbour);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(IVec3::new(16, 5, 5)),
+            [0, 0, 0],
+            "the neighbour's light state is gone"
+        );
+
+        arrive(&mut light_system, neighbour, |donor| {
+            donor.mutator().place(IVec3::new(30, 10, 10), 0, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(16, 5, 5)), [13, 6, 0]);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(17, 5, 5)), [12, 5, 0]);
+        assert!(received.lock().unwrap().contains(&neighbour));
+    }
+
+    #[test]
+    fn arrival_clears_light_that_spread_before_the_blocks_loaded() {
+        let (mut light_system, received) = unbounded_system();
+        let wall_chunk = IVec3::new(1, 0, 0);
+        LightPropagator::new().add_light_rgb(light_system.grid_mut(), IVec3::new(14, 5, 5), TORCH);
+        assert_eq!(
+            light_system.grid().block_light_rgb_at(IVec3::new(17, 5, 5)),
+            [12, 5, 0],
+            "light has spread into the unloaded chunk"
+        );
+
+        arrive(&mut light_system, wall_chunk, |donor| {
+            donor
+                .mutator()
+                .fill_region(IVec3::new(16, 0, 0), IVec3::new(16, 15, 15), 0);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(16, 5, 5)), [0, 0, 0]);
+        assert_eq!(
+            grid.block_light_rgb_at(IVec3::new(17, 5, 5)),
+            [0, 0, 0],
+            "the wall now shades what lies behind it"
+        );
+        assert_eq!(
+            grid.block_light_rgb_at(IVec3::new(15, 5, 5)),
+            [14, 7, 1],
+            "light on the open side is kept"
+        );
+        assert!(received.lock().unwrap().contains(&wall_chunk));
+    }
+
+    #[test]
+    fn arrival_refreshes_sky_exposure_without_a_frame() {
+        let (mut light_system, _received) = unbounded_system();
+        let below = IVec3::ZERO;
+        let above = IVec3::new(0, 1, 0);
+        arrive(&mut light_system, below, |donor| {
+            donor.mutator().place(IVec3::new(8, 2, 8), 0, None);
+        });
+        assert!(
+            light_system.grid().sky_exposed_at(IVec3::new(1, 5, 1)),
+            "open air in an arrived chunk sees the sky"
+        );
+
+        arrive(&mut light_system, above, |donor| {
+            donor.mutator().place(IVec3::new(1, 20, 1), 0, None);
+        });
+
+        let grid = light_system.grid();
+        assert!(
+            !grid.sky_exposed_at(IVec3::new(1, 5, 1)),
+            "the arriving roof shades the chunk below"
+        );
+        assert!(grid.sky_exposed_at(IVec3::new(1, 25, 1)));
+        assert!(grid.sky_exposed_at(IVec3::new(8, 18, 8)));
+        assert!(!grid.sky_exposed_at(IVec3::new(1, 18, 1)));
+    }
+
+    #[test]
+    fn arriving_the_same_chunk_twice_in_one_call_lights_it_once() {
+        let (mut light_system, received) = unbounded_system();
+        let source = IVec3::new(5, 5, 5);
+        let mut donor = test_grid();
+        donor.mutator().place(source, 1, None);
+        let bytes = donor.serialize_chunk(IVec3::ZERO).expect("holds blocks");
+        light_system
+            .grid_mut()
+            .deserialize_chunk_into(IVec3::ZERO, &bytes)
+            .expect("valid chunk bytes");
+
+        light_system.light_arrived_chunks(&[IVec3::ZERO, IVec3::ZERO]);
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert_eq!(grid.block_light_rgb_at(source), TORCH);
+        assert_eq!(grid.block_light_rgb_at(IVec3::new(4, 5, 5)), [14, 7, 1]);
+        let got = received.lock().unwrap().clone();
+        let unique: HashSet<IVec3> = got.iter().copied().collect();
+        assert_eq!(unique.len(), got.len(), "one event per chunk: {got:?}");
+        assert!(unique.contains(&IVec3::ZERO), "the arrived chunk: {got:?}");
+    }
+
+    #[test]
+    fn arrival_below_a_loaded_roof_is_shaded_and_the_roof_chunk_is_not_remeshed() {
+        let (mut light_system, received) = unbounded_system();
+        let roof_chunk = IVec3::new(0, 1, 0);
+        let below = IVec3::ZERO;
+        arrive(&mut light_system, roof_chunk, |donor| {
+            donor.mutator().place(IVec3::new(1, 20, 1), 0, None);
+        });
+        light_system.emit_dirty_events();
+        received.lock().unwrap().clear();
+
+        arrive(&mut light_system, below, |donor| {
+            donor.mutator().place(IVec3::new(8, 5, 8), 0, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        assert!(!grid.sky_exposed_at(IVec3::new(1, 5, 1)), "roofed column");
+        assert!(grid.sky_exposed_at(IVec3::new(8, 6, 8)), "open column");
+        let got = received.lock().unwrap().clone();
+        assert!(got.contains(&below), "the arrived chunk: {got:?}");
+        assert!(!got.contains(&roof_chunk), "roof chunk unchanged: {got:?}");
+    }
+
+    #[test]
+    fn a_frame_with_no_edits_remeshes_nothing() {
+        let (mut light_system, received) = unbounded_system();
+        for layer in 0..3 {
+            arrive(&mut light_system, IVec3::new(0, layer, 0), |donor| {
+                donor
+                    .mutator()
+                    .place(IVec3::new(1, layer * 16 + 3, 1), 0, None);
+            });
+        }
+        light_system.emit_dirty_events();
+        received.lock().unwrap().clear();
+
+        light_system.process_frame();
+        let emitted = light_system.emit_dirty_events();
+
+        assert_eq!(emitted, 0);
+        assert!(received.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn removing_the_only_torch_after_arrival_leaves_no_light() {
+        let (mut light_system, _received) = unbounded_system();
+        let source = IVec3::new(15, 5, 5);
+        arrive(&mut light_system, IVec3::ZERO, |donor| {
+            donor.mutator().place(source, 1, None);
+        });
+        light_system.emit_dirty_events();
+        assert_eq!(light_system.grid().block_light_rgb_at(source), TORCH);
+
+        assert!(light_system.grid_mut().mutator().remove(source));
+        light_system.handle_event(&WorldEvent::BlockRemoved {
+            position: source,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        light_system.process_frame();
+
+        assert!(lit_chunks(light_system.grid(), source).is_empty());
+    }
+
+    #[test]
+    fn arrival_refills_from_lit_neighbours_on_every_face() {
+        let (mut light_system, received) = unbounded_system();
+        let arriving = IVec3::new(2, 1, 3);
+        let axis_cell = |dir: IVec3, along: i32| {
+            let mut cell = IVec3::splat(5);
+            cell[dir.abs().max_position()] = along;
+            cell
+        };
+        let faces = [
+            IVec3::X,
+            IVec3::NEG_X,
+            IVec3::Y,
+            IVec3::NEG_Y,
+            IVec3::Z,
+            IVec3::NEG_Z,
+        ];
+        for dir in faces {
+            let neighbour = arriving + dir;
+            let touching = if dir.max_element() > 0 { 0 } else { 15 };
+            light_system
+                .grid_mut()
+                .set_block_light_rgb(neighbour * 16 + axis_cell(dir, touching), [10, 0, 0]);
+        }
+
+        arrive(&mut light_system, arriving, |donor| {
+            donor
+                .mutator()
+                .place(arriving * 16 + IVec3::splat(8), 0, None);
+        });
+        light_system.emit_dirty_events();
+
+        let grid = light_system.grid();
+        for dir in faces {
+            let border = if dir.max_element() > 0 { 15 } else { 0 };
+            assert_eq!(
+                grid.block_light_rgb_at(arriving * 16 + axis_cell(dir, border)),
+                [9, 0, 0],
+                "light enters across the {dir} face"
+            );
+        }
+        assert!(received.lock().unwrap().contains(&arriving));
+    }
+
+    #[test]
+    fn light_change_on_a_chunk_face_dirties_the_chunk_across_it() {
+        use crate::grid::MaterialLighting;
+        // (source, block across the border, voxel on the light's last layer, expected chunks)
+        let sides = [
+            (
+                IVec3::new(13, 8, 8),
+                IVec3::new(16, 8, 8),
+                IVec3::new(15, 8, 8),
+                [IVec3::ZERO, IVec3::new(1, 0, 0)],
+            ),
+            (
+                IVec3::new(2, 8, 8),
+                IVec3::new(-1, 8, 8),
+                IVec3::new(0, 8, 8),
+                [IVec3::ZERO, IVec3::new(-1, 0, 0)],
+            ),
+        ];
+
+        for adding in [true, false] {
+            for (source, across, face_voxel, chunks) in sides {
+                let why = format!("adding {adding}, source {source:?}");
+                let (mut light_system, received) = unbounded_system();
+                light_system.grid_mut().material_registry.set_lighting(
+                    1,
+                    MaterialLighting {
+                        emission: [3, 0, 0],
+                        opacity_cost: 0,
+                    },
+                );
+                light_system.grid_mut().place_block(across, 0, None);
+                if adding {
+                    light_system.grid_mut().place_block(source, 1, None);
+                }
+                settle(&mut light_system, &received);
+                if adding {
+                    light_system.handle_event(&placed(source, 1));
+                } else {
+                    LightPropagator::new().add_light_rgb(
+                        light_system.grid_mut(),
+                        source,
+                        [3, 0, 0],
+                    );
+                    assert_eq!(
+                        light_system.grid().block_light_rgb_at(face_voxel),
+                        [1, 0, 0],
+                        "{why}: the light reaches the chunk's face layer"
+                    );
+                    light_system.handle_event(&removed(source));
+                }
+
+                light_system.process_frame();
+                light_system.emit_dirty_events();
+
+                let expected_face = if adding { [1, 0, 0] } else { [0, 0, 0] };
+                assert_eq!(
+                    light_system.grid().block_light_rgb_at(face_voxel),
+                    expected_face,
+                    "{why}"
+                );
+                assert_eq!(
+                    light_system.grid().block_light_rgb_at(across),
+                    [0, 0, 0],
+                    "{why}: the light stops at the border"
+                );
+                assert_published_once_each(&received, &HashSet::from(chunks));
+            }
+        }
+    }
+
+    #[test]
+    fn sky_change_on_a_chunk_face_dirties_the_chunk_across_it() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        settle(&mut light_system, &received);
+
+        dig(&mut light_system, (1, 1), 33, 16);
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        assert!(light_system.grid().sky_exposed_at(IVec3::new(1, 16, 1)));
+        assert!(!light_system.grid().sky_exposed_at(IVec3::new(1, 15, 1)));
+        assert_published_once_each(
+            &received,
+            &HashSet::from([IVec3::ZERO, IVec3::new(0, 1, 0), IVec3::new(0, 2, 0)]),
+        );
+    }
+
+    #[test]
+    fn light_change_on_a_chunk_edge_dirties_the_diagonal_chunk_that_reads_it() {
+        use crate::grid::MaterialLighting;
+        let source = IVec3::new(16, 16, 8);
+        let loaded = [
+            IVec3::new(5, 5, 5),
+            IVec3::new(20, 5, 5),
+            IVec3::new(5, 20, 5),
+            IVec3::new(20, 20, 5),
+        ];
+        let expected = HashSet::from([
+            IVec3::ZERO,
+            IVec3::new(1, 0, 0),
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+        ]);
+
+        for adding in [true, false] {
+            let (mut light_system, received) = unbounded_system();
+            light_system.grid_mut().material_registry.set_lighting(
+                1,
+                MaterialLighting {
+                    emission: [1, 0, 0],
+                    opacity_cost: 0,
+                },
+            );
+            for pos in loaded {
+                light_system.grid_mut().place_block(pos, 0, None);
+            }
+            if adding {
+                light_system.grid_mut().place_block(source, 1, None);
+            }
+            settle(&mut light_system, &received);
+            if adding {
+                light_system.handle_event(&placed(source, 1));
+            } else {
+                LightPropagator::new().add_light_rgb(light_system.grid_mut(), source, [1, 0, 0]);
+                light_system.handle_event(&removed(source));
+            }
+
+            light_system.process_frame();
+            light_system.emit_dirty_events();
+
+            let lit = if adding { [1, 0, 0] } else { [0, 0, 0] };
+            assert_eq!(light_system.grid().block_light_rgb_at(source), lit);
+            assert_published_once_each(&received, &expected);
+        }
+    }
+}

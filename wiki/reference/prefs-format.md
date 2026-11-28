@@ -1,0 +1,204 @@
+# Preferences file
+
+**Source:** `moho_core/src/prefs/` (`mod.rs`, `reader.rs`), `moho_input/src/bindings.rs`, `moho_input/src/key.rs`, `moho_input/src/pad.rs`,
+`flagstone_ui/src/actions.rs`, `flagstone/src/main.rs` (`App::save_prefs`, `App::adopt_settings`),
+`flagstone/src/app/initializer.rs` (`build_actions`), `moho_audio/src/audio_settings.rs` (`AudioSettings::from_prefs`), `flagstone_ui/src/adapter/mod.rs`. Path: `config/prefs.ini`,
+relative to the working directory. The FPS (`searchlight`) keeps its own file,
+`config/searchlight.ini` (`searchlight::prefs_path`), read with `Prefs::load_from`. It
+splits the `console` entry from the game's own `[bindings]` (`split_console_binding`) so
+neither loader warns about the other's key. It splits the `fullscreen` entry first (`split_fullscreen_binding`).
+
+`Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
+take their defaults silently. `Prefs::save` writes every key below; `[content]` is written only when `mods` is non-empty.
+
+Anything else that can't be used is logged as a warning and falls back:
+
+| Problem | Warning names | Falls back |
+|---|---|---|
+| Value that doesn't parse or isn't allowed, or a key with no `=` | file, section, key, raw value | that key |
+| Unknown key | file, section, key | nothing; the other keys load |
+| Unknown section | file, section | nothing; the other sections load |
+| File the INI parser rejects (e.g. `[video` with no `]`) | file, parser reason (0-based line) | every key |
+| File that can't be read as UTF-8 text | file, I/O reason | every key |
+| Missing file that can't be created | file, I/O reason | every key |
+
+One bad value never stops the other keys from loading. Section and key names are
+case-insensitive; `;` and `#` start a comment anywhere on a line, so they can't appear
+in a value. Keys before any section header are read as `[prefs]` when there is no
+`[prefs]` section; when there is one, they are ignored and each is reported as an
+unknown key of section `[default]`.
+
+```mermaid
+flowchart LR
+    F["config/prefs.ini"] -->|"Prefs::load"| P["Prefs"]
+    P --> B["[bindings] raw text"] -->|"ActionBindings::load"| I["input: bindings"]
+    P --> M["input: sensitivity, invert-Y"]
+    P --> Au["moho_audio: category volumes"]
+    P --> Rn["moho_renderer: shadow / SSAO quality"]
+    P --> W["window: mode, resolution"]
+    P --> S["ChunkStreamer: radii, budget"]
+    B -.->|"ActionBindings::to_section"| P
+    P -->|"Prefs::save"| F
+```
+
+## 1 Running prefs and saving
+
+`App::prefs` is the running copy; `App::prefs_path` is where the app saves it (`None` for
+a headless `App`, so its console commands never touch the user's file; a Settings screen
+opened there still saves to the default path).
+
+- **Console graphics commands** (`SetShadowQuality`, `SetSsaoQuality`, `SetBloomQuality`) update `App::prefs`
+  and call `App::save_prefs`, with or without a window; a failed write is logged.
+- **Settings screen** is seeded from `App::prefs` when it opens
+  (`EguiAdapter::open_settings`), so a console change made earlier is not overwritten
+  on save. The screen writes the file itself. Prefs never ride on the event bus
+  ([ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md)): on `UiEvent::SettingsSaved` the app takes the
+  saved copy from the adapter (`EguiAdapter::take_saved_prefs`, once) and calls
+  `App::adopt_settings`.
+- **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
+  `build_actions`, the same function startup uses, so new bindings, sensitivity,
+  invert-Y, mouse smoothing and mouse acceleration apply without a restart. It also queues `AudioSettings::from_prefs`
+  (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
+- **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
+  first frame. The master and each category volume are their prefs divided by ten and clamped to 0..=1; 0 is silent. The master level scales every category, including music already playing.
+
+## 2 Keys
+
+| Section | Key | Accepted values | Default |
+|---|---|---|---|
+| `[prefs]` | `mouse_sensitivity` | finite float, Source scale (see below) | `3` |
+| | `invert_mouse_y` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_smoothing` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_acceleration` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_acceleration_strength` | finite float, Source `m_customaccel_scale` scale; negatives load unchanged and act as 0; the Settings screen clamps the value to 0 to 1 when shown | `0.04` |
+| `[bindings]` | one key per action id | binding list | per action, below |
+| `[audio]` | `master_volume` `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal; `master_volume` is written first and a file without it loads 10.0 with no warning | `10.0` `8.0` `6.0` `7.0` `9.0` |
+| `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
+| | `effects_quality` | unsigned integer, clamped to 0 (off) to 4 (ultra); the Settings screen stores it; each game hands it to `Effects::set_quality` on its `Scene` (Searchlight and Flagstone at start, Searchlight when Apply is pressed, Flagstone when the Settings screen saves) | `3` |
+| | `bloom` | unsigned integer, clamped to 0 (Off) to 2 (High); 1 is Low | `2` |
+| | `brightness` | finite float, clamped to 0.5 to 2.0, written with 2 decimals; NaN, infinity or text is malformed and gives the default | `1.00` |
+| `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
+| | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
+| | `vsync` | `true` \| `false`; whether presented frames wait for the display refresh | `true` |
+| | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
+| `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
+| | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
+| `[debug]` | one key per game debug value | free text, see below | none |
+| `[game]` | one key per game setting | free text, see below | none |
+
+`mouse_sensitivity` is on Source's scale: one count turns `0.022` degrees times the
+value (`source_look_per_count`, `moho_input/src/action_map.rs`), so `3` is the default feel.
+`invert_mouse_y` negates the mouse's vertical counts only; the stick is unaffected.
+`mouse_acceleration_strength` applies only while `mouse_acceleration` is on. It adds
+`source_look_per_count(strength)` look per count for each count per millisecond of mouse
+speed. Values carry over from Source's `m_customaccel_scale` only approximately: Source's
+acceleration varies with frame rate, and ours matches it at 1000 fps.
+
+`[bindings]` is stored by `Prefs` as raw text (`Prefs::bindings`, `Prefs::set_bindings`);
+the game interprets it. `ActionBindings::load` (`moho_input`) reads it against the
+game's `Action` enum: each key is an action's stable `name()`, each value a binding
+list. Absent actions keep their defaults; `ActionBindings::to_section` writes every
+action, defaults included. Line problems are returned as `BindingWarning`s and the
+action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an unknown
+action id, a value with any unrecognised key, or a value holding a protected binding (see below). A `[bindings]` line with no `=` is a
+malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
+engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
+with a `Hold ` item or a chord, falls back to backtick), not a game action. In Searchlight `fullscreen` is reserved likewise (flagstone does not reserve it and reports it as an unknown action): it names the
+key that flips windowed and borderless fullscreen besides Alt+Enter (`moho_app::split_fullscreen_binding`;
+default F11; an empty or `Unbound` value, one that does not parse, is a protected key, or holds a chord, `Hold ` item or mouse button
+warns and falls back to F11). The game loader never sees it. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+keys and ignored.
+
+A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
+have several, and is active when any of them is (see `Hold ` below). Empty or `Unbound` (any case) is an empty list. Names are
+case-insensitive and come from `Key::name` in `moho_input/src/key.rs`: letters, digits,
+punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `ArrowUp`..,
+`Escape`, `Tab`, `Backspace`, `Enter`, `Spacebar`, and the modifiers `Shift`, `Ctrl`,
+`Alt` bound on their own. `Key::parse` also accepts the aliases `Up`, `Esc`, `Return`,
+`Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
+words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
+header, and `,` separates list items. There are no numeric key codes.
+
+A protected binding is an unmodified Enter, Escape or arrow key on any trigger (`Binding::is_protected`):
+menus and dialogs read those keys directly, so `ActionBindings::load` refuses it with a warning and the
+action keeps its default. A chord on them (`Ctrl+Enter`) is allowed, and defaults must not use one.
+
+A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+R`, `Shift+Mouse Left`, `Hold Ctrl+R`; the `Hold ` prefix stays outermost). Modifiers parse in any order and case and are written back as Ctrl, Shift, Alt. A repeated modifier, a modifier equal to the bound key itself (`Ctrl+Ctrl`), a pad input (`Ctrl+Pad West`), an empty input or any other prefix (`Control+R`) is an unrecognised key and warns. `Shift+Ctrl` (a modifier key under another modifier) is valid. Resolution is in [input](../architecture/input-and-state.md).
+
+`[action_modes]` is stored raw like `[bindings]` (`Prefs::action_modes`, `Prefs::set_action_modes`) and written only when non-empty. Each key is the stable `name()` of a toggleable action, each value `hold` or `toggle` (any case, surrounding whitespace ignored). `ActionBindings::load_modes` reads it; `modes_to_section` writes every toggleable action, `Hold` included. An unknown action, a non-toggleable action or an unknown value yields a `BindingWarning` and the action stays `Hold`.
+
+`[debug]` and `[game]` are game-owned sections of named values (`[debug]` a game's debug
+toggles, `[game]` its own player settings, such as a slider on the Settings screen), stored
+raw like `[bindings]` and each written only when non-empty. `Prefs::debug_value` and
+`Prefs::game_value` read one; `Prefs::set_debug_value` and `Prefs::set_game_value` store one and return
+`PrefsValueError` for a name or value that would not read back exactly. The two sections
+are independent: the same name may hold different values in each. Names are non-empty
+lowercase letters, digits and underscores. Values are non-empty, have no leading or
+trailing whitespace, and contain no `;`, `#` or line break. The Settings screen's save
+keeps them.
+
+A `Hold ` prefix (any case) makes a binding fire only after the input has been held for the game's hold threshold, e.g. `Hold R`, `Hold Pad West`; without it the binding fires on press, or on a quick release when the same input also has a `Hold` binding ([input](../architecture/input-and-state.md)). `Binding::name` writes the prefix back. A `Double ` prefix (any case) makes a binding fire on a second press within the game's double-press window, e.g. `Double Y`; a pad input takes none, and the prefix is outermost with at most one (`Double Ctrl+Y`).
+
+Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
+(`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`
+`LeftBumper` `RightBumper` `LeftTrigger` `RightTrigger` `Select` `Start` `Mode`
+`LeftThumb` `RightThumb` `DPadUp` `DPadDown` `DPadLeft` `DPadRight`. Stick directions
+are `Pad <Stick> <Dir>` with `LeftStick` or `RightStick` and `Up` `Down` `Left` `Right`
+(`Pad LeftStick Up`). A malformed pad name is an unrecognised key and warns. The right
+stick's analog look is not a binding.
+
+Strategy actions (`StrategyAction`, `flagstone_ui/src/actions.rs`) and defaults:
+
+| Id | Default |
+|---|---|
+| `move_forward` `move_back` `move_left` `move_right` | `W` `S` `A` `D`; `Pad LeftStick` `Up` `Down` `Left` `Right` |
+| `ascend` | `Spacebar`, `Pad RightTrigger` |
+| `jump` | `Spacebar`, `Pad South` |
+| `descend` | `Ctrl`, `Pad LeftTrigger` |
+| `sprint` | `Shift`, `Pad LeftThumb` |
+| `select` | `Mouse Left` |
+| `possess` | `Tab` |
+
+Action ids are persisted and never renamed.
+
+Audio sections map to `AudioCategory` in `moho_audio/src/audio_source.rs`: `SoundEffect`,
+`Music`, `UserInterface`, `Voice`.
+
+World keys drive [world streaming](../architecture/world-streaming.md).
+
+## 3 Example
+
+```ini
+[prefs]
+mouse_sensitivity=1.8
+invert_mouse_y=false
+mouse_smoothing=false
+
+[bindings]
+move_forward=W
+jump=Spacebar, F8
+descend=Unbound
+
+[audio]
+music_volume=5.0
+
+[graphics]
+shadow_quality=3
+ssao_quality=3
+effects_quality=3
+bloom=2
+brightness=1.00
+
+[video]
+window_mode=Windowed
+window_width=1280
+window_height=720
+vsync=true
+fps_max=300
+
+[world]
+load_radius=8
+unload_radius=12
+chunks_per_frame=4
+```

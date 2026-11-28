@@ -1,0 +1,971 @@
+//! Flagstone — the strategy game binary.
+//!
+//! This is the main executable that wires together the engine crates
+//! ([`moho_core`], [`moho_renderer`], [`moho_audio`], [`flagstone_ui`]) into a
+//! runnable application: [`App`] implements [`moho_app::Game`] and `main` hands
+//! it to [`moho_app::run`].
+
+use flagstone_game::scene::SceneEntities;
+use moho_core::prefs::Prefs;
+use moho_input::action_map;
+use std::sync::Arc;
+use std::sync::Mutex;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::LevelFilter;
+use winit::event::{DeviceEvent, ElementState, KeyEvent, WindowEvent};
+mod input_dispatcher;
+use crate::input_dispatcher::InputDispatcher;
+mod input_event;
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{CursorGrabMode, Window};
+
+// Core game state module
+mod game_state;
+
+// Application initialization modules
+mod app;
+
+mod save;
+
+enum GenerationMsg {
+    Progress(f32),
+    Completed {
+        scene_bytes: Vec<u8>,
+        spec: flagstone_game::scene_builders::WorldSpec,
+        terrain_config: flagstone_game::scene_builders::TerrainConfig,
+        // Empty grid — streaming populates it on demand. Boxed to reduce enum
+        // variant size (VoxelGrid is large; the other variants are cheap).
+        grid: Box<flagstone_voxel::VoxelGrid>,
+    },
+    Canceled,
+    Failed(String),
+}
+
+/// Conservatively forward a wheel delta to the game's input channel.
+/// Returns true if the event was forwarded.
+pub(crate) fn forward_wheel_if_allowed(
+    ui_adapter: &std::sync::Arc<std::sync::Mutex<flagstone_ui::EguiAdapter>>,
+    tx: &std::sync::mpsc::Sender<crate::input_event::InputEvent>,
+    delta_y: f32,
+) -> bool {
+    // Conservative: if we can't acquire the lock, do not forward.
+    match ui_adapter.try_lock() {
+        Ok(a) if a.is_visible() => return false,
+        Err(_) => return false,
+        _ => {}
+    }
+
+    tx.send(crate::input_event::InputEvent::MouseWheel { delta_y })
+        .is_ok()
+}
+
+/// A renderer change queued during a tick and applied by the next frame, the only
+/// place the renderer is reachable.
+enum RenderRequest {
+    AddPointLight {
+        position: glam::Vec3,
+        color: glam::Vec3,
+        intensity: f32,
+        range: f32,
+    },
+    ShadowQuality(u8),
+    SsaoQuality(u8),
+    BloomQuality(u8),
+    ViewHeight(Option<f32>),
+    Vsync(bool),
+    Brightness(f32),
+    ToneMap(bool),
+}
+
+struct App {
+    entities: SceneEntities,
+    scene: moho_renderer::Scene,
+    terrain_material_idx: u32,
+    terrain_palette: app::world_geometry::TerrainPalette,
+    /// Material table index of the cut-face caps' colour.
+    cut_face_material_idx: u32,
+    cut_caps: app::cut_caps::CutCaps,
+    view_level: app::view_level::ViewLevel,
+    camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+
+    // Light propagation system (owns the voxel grid internally)
+    light_system: Option<flagstone_voxel::LightSystem>,
+
+    // Game state management
+    game_state: crate::game_state::GameState,
+
+    // Runtime state (initialized after window creation)
+    window: Option<Arc<Window>>,
+    /// Whether the cursor was last grabbed (true) or released (false), kept whether or
+    /// not a window exists to carry it out.
+    cursor_grabbed: bool,
+    mesh_handle: u32,
+    cube_mesh_handle: u32,
+
+    // Renderer changes queued by the tick, applied by `frame`
+    pending_render: Vec<RenderRequest>,
+
+    /// Frame cap `frame` hands to the loop once `frame_cap_changed`; `None` is no cap.
+    pending_frame_cap: Option<std::num::NonZeroU32>,
+    frame_cap_changed: bool,
+
+    saves_dir: std::path::PathBuf,
+
+    /// The sound files the game plays, resolved at start.
+    sounds: app::sounds::Sounds,
+
+    /// Time of play between autosaves of an edited world; `None` when autosave is off.
+    autosave_interval: Option<std::time::Duration>,
+    autosave: app::autosave::AutosaveSchedule,
+
+    // Set when the UI asks to quit; `frame` autosaves and leaves the loop
+    exit_requested: bool,
+
+    // Set when the UI asks for the main menu; `frame` autosaves, then shows it
+    main_menu_requested: bool,
+
+    // Event bus for application-wide events
+    event_bus: Arc<moho_core::EventBus>,
+
+    // Event collection channels (for events that need to mutate App state)
+    ui_event_rx: std::sync::mpsc::Receiver<moho_core::events::UiEvent>,
+    audio_event_rx: std::sync::mpsc::Receiver<moho_core::events::AudioEvent>,
+    graphics_event_rx: std::sync::mpsc::Receiver<moho_core::events::GraphicsEvent>,
+    world_event_rx: std::sync::mpsc::Receiver<flagstone_voxel::WorldEvent>,
+    debug_event_rx: std::sync::mpsc::Receiver<moho_core::events::DebugEvent>,
+
+    // UI adapter
+    ui_adapter: Option<Arc<Mutex<flagstone_ui::EguiAdapter>>>,
+
+    // Debug state
+    debug_mode: u32,
+
+    // Input dispatcher (routes events to prioritized subscribers)
+    dispatcher: InputDispatcher,
+
+    // Camera control
+    simulation: flagstone_game::simulation::SimulationController,
+
+    // Keybinds and preferences
+    prefs: Prefs,
+    /// Where the app saves prefs. `None` for a headless `App`, so its console prefs
+    /// commands never write the user's config file; a Settings screen opened there
+    /// still saves to `Prefs::config_path()`, so tests that save from it set a path.
+    prefs_path: Option<std::path::PathBuf>,
+
+    pending_audio_settings: Option<moho_audio::AudioSettings>,
+
+    // Grouped sub-systems
+    physics: app::physics_controller::PhysicsController,
+    generation: app::generation_job::WorldGenerationJob,
+    input: app::input_state::InputState,
+    chunk_streamer: Option<app::chunk_streamer::ChunkStreamer>,
+    /// Cached player chunk position used to gate per-frame LOD transition scans.
+    lod_player_chunk_cache: glam::IVec3,
+
+    /// The colony's pawns (inventory, mining, job). Deliberately separate from
+    /// `simulation.player_controller`, which is camera/movement-only — see
+    /// `flagstone_game::pawn::Pawn`'s doc comment. Not saved yet.
+    crew: flagstone_game::crew::Crew,
+    /// The pawn the player possesses. `Some` only in first person, and while `Some` its body is
+    /// `physics.player`; in the strategy view `physics.player` still names the body last
+    /// possessed.
+    possessed: Option<flagstone_game::pawn::PawnId>,
+
+    /// The window's physical size, which pointer positions are measured in.
+    viewport: glam::UVec2,
+    /// The surface under the last strategy-view click, `None` when it hit nothing.
+    pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
+    /// The pawn the player has selected; ephemeral, not saved.
+    selection: flagstone_game::selection::Selection,
+
+    /// The orders the player has given the world.
+    colony: flagstone_game::colony::Colony,
+    /// The markers drawn for the colony's mining marks.
+    designation_markers: app::designation_markers::DesignationMarkers,
+}
+
+impl App {
+    /// The possessed pawn. Only for first-person paths, where a pawn is always possessed.
+    ///
+    /// # Panics
+    ///
+    /// Panics when nothing is possessed (the strategy view). Code that can run there reads
+    /// `self.possessed.and_then(|id| self.crew.get(id))` instead; this accessor is for tests.
+    #[cfg(test)]
+    fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
+        self.crew
+            .get(self.possessed.expect("a pawn is possessed"))
+            .expect("the possessed pawn is in the crew")
+    }
+
+    /// The possessed pawn, mutably.
+    ///
+    /// # Panics
+    ///
+    /// Panics when nothing is possessed, as `possessed_pawn` does.
+    #[cfg(test)]
+    fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
+        self.crew
+            .get_mut(self.possessed.expect("a pawn is possessed"))
+            .expect("the possessed pawn is in the crew")
+    }
+
+    /// Starts the crew over with one pawn standing at `first` and one at each of `rest`,
+    /// each with a body of its own. The first one's body is the character the physics steps
+    /// as the player; the first pawn is possessed only if the camera is first person. The
+    /// crew is never empty. Expects physics to be already reset.
+    fn spawn_crew(
+        &mut self,
+        first: moho_physics::CharacterSpawn,
+        rest: impl IntoIterator<Item = moho_physics::CharacterSpawn>,
+    ) {
+        self.crew = flagstone_game::crew::Crew::default();
+        // Selection names a pawn of the old crew; the new one's ids mean other pawns.
+        self.selection = flagstone_game::selection::Selection::default();
+        // The old crew's claims name pawns that no longer exist; new pawns reuse their ids.
+        self.colony.marks.release_all();
+        let first_id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+        self.possessed = (self.simulation.camera_mode()
+            == flagstone_game::controller::CameraMode::FirstPerson)
+            .then_some(first_id);
+        self.physics.spawn_possessed(first_id, first);
+        for spawn in rest {
+            let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+            self.physics.spawn_pawn(id, spawn);
+        }
+    }
+
+    /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
+    /// write is logged: the running prefs stay in effect either way.
+    fn save_prefs(&self) {
+        if let Some(path) = &self.prefs_path
+            && let Err(e) = self.prefs.save_to(path)
+        {
+            tracing::warn!(error = %e, path = %path.display(), "Failed to save prefs");
+        }
+    }
+
+    /// Saves `applied` as the shadow quality when it differs from the saved one: the renderer
+    /// lowers a level whose shadow maps the GPU could not allocate, and the next start must
+    /// not ask for it again.
+    fn shadow_quality_applied(&mut self, applied: u8) {
+        if u32::from(applied) != self.prefs.shadow_quality() {
+            self.prefs.set_shadow_quality(u32::from(applied));
+            self.save_prefs();
+        }
+    }
+
+    /// Makes `prefs` (just saved by the Settings screen) the running prefs and
+    /// rebinds input from them and queues their audio levels for the next frame.
+    /// Does not save: the screen already wrote the file.
+    fn adopt_settings(&mut self, prefs: Prefs) {
+        let config = crate::app::config::AppConfig::from_prefs_struct(prefs);
+        self.input.actions = crate::app::initializer::build_actions(&config);
+        self.pending_audio_settings = Some(moho_audio::AudioSettings::from_prefs(&config.prefs));
+        if config.prefs.vsync() != self.prefs.vsync() {
+            self.pending_render
+                .push(RenderRequest::Vsync(config.prefs.vsync()));
+        }
+        if config.prefs.brightness() != self.prefs.brightness() {
+            self.pending_render
+                .push(RenderRequest::Brightness(config.prefs.brightness()));
+        }
+        if config.prefs.bloom() != self.prefs.bloom() {
+            self.pending_render
+                .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
+        }
+        if config.prefs.shadow_quality() != self.prefs.shadow_quality() {
+            self.pending_render.push(RenderRequest::ShadowQuality(
+                config.prefs.shadow_quality() as u8
+            ));
+        }
+        if config.prefs.effects_quality() != self.prefs.effects_quality() {
+            self.scene
+                .effects_mut()
+                .set_quality(config.prefs.effects_quality());
+        }
+        self.set_pending_frame_cap(config.prefs.frame_cap());
+        self.prefs = config.prefs;
+    }
+
+    fn set_pending_frame_cap(&mut self, cap: Option<std::num::NonZeroU32>) {
+        self.pending_frame_cap = cap;
+        self.frame_cap_changed = true;
+    }
+
+    fn from_config(config: crate::app::config::AppConfig, sounds: app::sounds::Sounds) -> Self {
+        let initialized = crate::app::initializer::AppInitializer::new(config)
+            .build()
+            .expect("Failed to initialize application");
+
+        // Create a minimal voxel grid and light system for testing frame loop integration
+        // TODO: Replace with actual terrain grid when scene generation is integrated
+        let voxel_grid = flagstone_voxel::VoxelGrid::new(16);
+        let mut scene = initialized.scene;
+        let terrain_palette = app::world_geometry::TerrainPalette::new(
+            &voxel_grid.material_registry,
+            &mut scene.material_table,
+            initialized.terrain_material_idx,
+        );
+        let light_system = flagstone_voxel::LightSystem::with_default_budget(
+            voxel_grid,
+            initialized.event_bus.clone(),
+        );
+        tracing::info!("Created LightSystem for frame loop integration");
+
+        let autosave_interval = app::autosave::autosave_interval(&initialized.prefs);
+        let mut crew = flagstone_game::crew::Crew::default();
+        let possessed = crew.spawn(flagstone_game::pawn::Pawn::default());
+
+        Self {
+            entities: initialized.entities,
+            scene,
+            terrain_material_idx: initialized.terrain_material_idx,
+            terrain_palette,
+            cut_face_material_idx: initialized.cut_face_material_idx,
+            cut_caps: app::cut_caps::CutCaps::default(),
+            view_level: app::view_level::ViewLevel::default(),
+            camera: initialized.camera,
+
+            light_system: Some(light_system),
+
+            game_state: crate::game_state::GameState::Menu, // Start in menu
+            window: None,
+            cursor_grabbed: false,
+            mesh_handle: 0,
+            cube_mesh_handle: 0,
+            pending_render: Vec::new(),
+            pending_frame_cap: None,
+            frame_cap_changed: false,
+            saves_dir: std::path::PathBuf::from("saves"),
+            sounds,
+            autosave_interval,
+            autosave: app::autosave::AutosaveSchedule::from_interval(autosave_interval),
+            exit_requested: false,
+            main_menu_requested: false,
+            event_bus: initialized.event_bus,
+
+            ui_event_rx: initialized.ui_event_rx,
+            audio_event_rx: initialized.audio_event_rx,
+            graphics_event_rx: initialized.graphics_event_rx,
+            world_event_rx: initialized.world_event_rx,
+            debug_event_rx: initialized.debug_event_rx,
+
+            ui_adapter: None,
+
+            debug_mode: 0,
+
+            dispatcher: InputDispatcher::new(),
+
+            simulation: initialized.simulation,
+
+            pending_audio_settings: Some(moho_audio::AudioSettings::from_prefs(&initialized.prefs)),
+            prefs: initialized.prefs,
+            prefs_path: Some(Prefs::config_path()),
+
+            physics: app::physics_controller::PhysicsController::new(),
+            generation: app::generation_job::WorldGenerationJob::new(),
+            input: app::input_state::InputState::new(initialized.actions),
+            chunk_streamer: None,
+            lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
+
+            crew,
+            possessed: Some(possessed),
+
+            viewport: glam::UVec2::ZERO,
+            pointer_hit: None,
+            selection: flagstone_game::selection::Selection::default(),
+
+            colony: flagstone_game::colony::Colony::default(),
+            designation_markers: app::designation_markers::DesignationMarkers::default(),
+        }
+    }
+
+    /// An `App` with no window, renderer, UI or audio, built from default
+    /// prefs so tests never read `config/prefs.ini`.
+    #[cfg(test)]
+    fn headless() -> Self {
+        let mut app = Self::from_config(
+            crate::app::config::AppConfig::builder().build(),
+            app::sounds::Sounds::in_checkout(),
+        );
+        app.prefs_path = None;
+        app
+    }
+
+    /// Called as a world starts, so edits made before it do not count against the new one.
+    fn restart_autosave(&mut self) {
+        self.autosave = app::autosave::AutosaveSchedule::from_interval(self.autosave_interval);
+    }
+
+    fn generate_new_world(
+        &mut self,
+        spec: flagstone_game::scene_builders::WorldSpec,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let saves_dir = self.saves_dir.clone();
+        crate::app::world_generator::generate_new_world(self, spec, &saves_dir)
+    }
+
+    fn auto_save_on_shutdown(
+        &mut self,
+        clock: &moho_app::GameClock,
+        lights: &[moho_render_api::LightDesc],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let saves_dir = self.saves_dir.clone();
+        crate::app::autosave::auto_save_on_shutdown(self, clock, &saves_dir, lights)
+    }
+
+    fn load_scene<P: AsRef<std::path::Path>>(
+        &mut self,
+        clock: &mut moho_app::GameClock,
+        path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        crate::app::scene_loader::load_scene(self, clock, path.as_ref())
+    }
+
+    /// Place the character after a scene is loaded.
+    ///
+    /// Expects physics to be already reset and the loaded chunks registered
+    /// by the loader.
+    fn setup_physics_for_loaded_world(&mut self) {
+        // Spawn the physics character at the saved player position so the KCC
+        // doesn't immediately override the restored camera on the first frame.
+        let saved_pos = self.simulation.position();
+        let saved_x = saved_pos.x.floor() as i32;
+        let saved_z = saved_pos.z.floor() as i32;
+        // Spiral outward from the saved column: a column can sit on a zero-density
+        // boundary with no block, so the nearest surface stands in for it.
+        let surface = self.light_system.as_ref().and_then(|ls| {
+            let grid = ls.grid();
+            (0..=4i32).find_map(|r| {
+                (-r..=r)
+                    .flat_map(|dx| (-r..=r).map(move |dz| (dx, dz)))
+                    .filter(|&(dx, dz)| dx.abs() == r || dz.abs() == r)
+                    .find_map(|(dx, dz)| grid.get_height(saved_x + dx, saved_z + dz))
+            })
+        });
+        let spawn_pos = if let Some(height) = surface {
+            glam::Vec3::new(saved_pos.x, height as f32 + 3.0, saved_pos.z)
+        } else {
+            tracing::warn!(pos = ?saved_pos, "No terrain around the saved position; keeping it");
+            saved_pos
+        };
+        let (yaw, pitch) = self.simulation.yaw_pitch();
+        self.spawn_crew(
+            moho_physics::CharacterSpawn {
+                position: spawn_pos,
+                yaw,
+                pitch,
+                body: moho_physics::CharacterBody::default(),
+            },
+            [],
+        );
+
+        // Align the simulation Y to match physics spawn (avoids terrain clipping).
+        self.simulation
+            .set_position_yaw_pitch(spawn_pos, yaw, pitch);
+
+        tracing::info!(
+            count = self.entities.chunks.len(),
+            "Physics initialized for loaded world"
+        );
+    }
+
+    /// Handle keyboard input for camera controls
+    fn handle_keyboard_input(&mut self, event: &KeyEvent) {
+        let pressed = event.state == ElementState::Pressed;
+
+        if let PhysicalKey::Code(keycode) = event.physical_key {
+            match keycode {
+                KeyCode::F3 => {
+                    // F3 toggles the debug HUD overlay
+                    if pressed
+                        && let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.toggle_debug_hud();
+                    }
+                }
+                KeyCode::F4 => {
+                    // F4 toggles the chunk-boundary debug minimap
+                    if pressed
+                        && let Some(ui_adapter) = &self.ui_adapter
+                        && let Ok(mut adapter) = ui_adapter.lock()
+                    {
+                        adapter.toggle_overlay("chunk_debug");
+                    }
+                }
+                // A held Escape repeats; acting on repeats would flicker between pause and play.
+                KeyCode::Escape if pressed && !event.repeat => self.escape_pressed(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Escape: close the console, pause play, or resume from the pause window.
+    /// On Settings (reached from the pause window) it does nothing.
+    fn escape_pressed(&mut self) {
+        use crate::game_state::GameState;
+        match self.game_state {
+            GameState::ConsoleOpen => self.exit_console(),
+            GameState::Playing => self.toggle_pause(),
+            GameState::Paused if self.home_screen_showing() => self.toggle_pause(),
+            _ => {}
+        }
+    }
+
+    /// Whether Escape pauses or resumes here, so it must reach `escape_pressed` before
+    /// the UI: egui swallows it once a pause-window button has keyboard focus (Tab).
+    fn escape_skips_the_ui(&self) -> bool {
+        use crate::game_state::GameState;
+        match self.game_state {
+            GameState::Playing => true,
+            GameState::Paused => self.home_screen_showing(),
+            GameState::Menu | GameState::ConsoleOpen => false,
+        }
+    }
+
+    /// Runs a pausing or resuming Escape press ahead of the UI; true when it did.
+    fn take_escape_before_ui(&mut self, event: &WindowEvent) -> bool {
+        let WindowEvent::KeyboardInput {
+            event:
+                KeyEvent {
+                    physical_key: PhysicalKey::Code(KeyCode::Escape),
+                    state: ElementState::Pressed,
+                    repeat: false,
+                    ..
+                },
+            ..
+        } = event
+        else {
+            return false;
+        };
+        if !self.escape_skips_the_ui() {
+            return false;
+        }
+        self.escape_pressed();
+        true
+    }
+
+    /// Whether the current state's home screen (the pause window while paused) is
+    /// the active screen; true when no UI is attached.
+    fn home_screen_showing(&self) -> bool {
+        let home = self.game_state.home_screen();
+        self.ui_adapter.as_ref().is_none_or(|adapter| {
+            adapter
+                .lock()
+                .is_ok_and(|adapter| adapter.active_screen_name() == home)
+        })
+    }
+
+    fn resume_game(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::resume_game(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::debug!(error = %e, "Cannot resume game"),
+        }
+    }
+
+    fn handle_device_input(&mut self, event: &DeviceEvent) {
+        if self.game_state != crate::game_state::GameState::Playing
+            || !self.input.focused
+            || self.simulation.camera_mode() != flagstone_game::controller::CameraMode::FirstPerson
+        {
+            return;
+        }
+        action_map::handle_device_event(&mut self.input.actions, event);
+    }
+
+    /// Grab and hide the cursor for game mode
+    fn grab_cursor(&mut self) {
+        self.cursor_grabbed = true;
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(false);
+
+            // Try to grab the cursor - confined mode keeps it in window
+            let _ = window
+                .set_cursor_grab(CursorGrabMode::Confined)
+                .or_else(|_| window.set_cursor_grab(CursorGrabMode::Locked));
+        }
+    }
+
+    /// Release the cursor for menu mode
+    fn release_cursor(&mut self) {
+        self.cursor_grabbed = false;
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(true);
+            let _ = window.set_cursor_grab(CursorGrabMode::None);
+        }
+    }
+
+    fn hide_menu(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::hide_menu(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::warn!(error = %e, "Cannot hide menu"),
+        }
+    }
+
+    fn show_menu(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::show_menu(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::warn!(error = %e, "Cannot show menu"),
+        }
+    }
+
+    /// Enter console mode (opens debug console over game)
+    fn enter_console(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::enter_console(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::warn!(error = %e, "Cannot enter console"),
+        }
+    }
+
+    /// Exit console mode (return to playing)
+    fn exit_console(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::exit_console(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::warn!(error = %e, "Cannot exit console"),
+        }
+    }
+
+    /// Toggle pause state
+    fn toggle_pause(&mut self) {
+        use flagstone_ui::StateTransitionCoordinator;
+
+        match StateTransitionCoordinator::toggle_pause(self.game_state) {
+            Ok(actions) => self.apply_transition(actions),
+            Err(e) => tracing::debug!(error = %e, "Cannot toggle pause"),
+        }
+    }
+
+    /// Apply a state transition with all its side effects.
+    ///
+    /// This method centralizes all the boilerplate for state transitions:
+    /// - Update game_state
+    /// - Release every held input action
+    /// - Update UI visibility and state
+    /// - Show specific menu if requested
+    fn apply_transition(&mut self, actions: flagstone_ui::StateTransitionActions) {
+        tracing::info!(
+            from = ?self.game_state,
+            to = ?actions.new_state,
+            "State transition"
+        );
+
+        // Update core state
+        self.game_state = actions.new_state;
+
+        self.drop_pending_input();
+
+        // Update UI visibility and state
+        if let Some(ui_adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = ui_adapter.lock()
+        {
+            use flagstone_ui::UI_OVERLAY_VISIBLE;
+            adapter.set_visible(actions.ui_visible);
+
+            adapter.set_game_state(actions.new_state);
+
+            // Update atomic flag for UI visibility
+            UI_OVERLAY_VISIBLE.store(actions.ui_visible, std::sync::atomic::Ordering::SeqCst);
+
+            // Show specific menu if requested
+            if let Some(menu_name) = actions.show_menu {
+                adapter.show_menu(menu_name);
+            }
+
+            tracing::debug!(
+                visible = actions.ui_visible,
+                state = ?actions.new_state,
+                "UI updated"
+            );
+        }
+
+        self.apply_cursor();
+    }
+
+    fn apply_cursor(&mut self) {
+        if flagstone_ui::app_state::game_state::cursor_grabbed(
+            self.game_state,
+            self.simulation.camera_mode(),
+        ) {
+            self.grab_cursor();
+        } else {
+            self.release_cursor();
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        tracing::info!("Shutting down application...");
+        // WorldGenerationJob::drop handles cancel + join automatically.
+    }
+}
+
+/// Installs the global subscriber, which also forwards `log` records from dependencies.
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive(LevelFilter::INFO.into())
+                .from_env_lossy(),
+        )
+        .init();
+}
+
+/// Window, loop rate and audio settings for the strategy game, with the window opening in
+/// the mode `prefs` saved.
+fn app_config_for(prefs: &Prefs) -> moho_app::AppConfig {
+    moho_app::AppConfig {
+        window_title: "Flagstone".into(),
+        loop_config: moho_app::LoopConfig::new(flagstone_game::TICK_HZ),
+        init_audio: true,
+        ui_click: None,
+        toggle_keys: Some(vec![moho_input::bindings::Input::Key(
+            moho_input::key::Key::F11,
+        )]),
+        window_mode: moho_ui_shell::runtime_window_mode(prefs.window_mode()),
+    }
+}
+
+/// The config for default prefs, which tests use so they never read the user's file.
+#[cfg(test)]
+fn app_config() -> moho_app::AppConfig {
+    app_config_for(&Prefs::default())
+}
+
+/// The source checkout, where the placeholder assets live when no install sits beside the
+/// executable.
+fn checkout_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// The sounds this launch plays: the install's `assets` folder (beside the executable, else the
+/// checkout) under the folder `--assets` named, if any.
+fn launch_sounds() -> Result<app::sounds::Sounds, Box<dyn std::error::Error>> {
+    let (named, _ignored) = moho_app::launch::split_assets_option(std::env::args_os().skip(1))?;
+    let exe = std::env::current_exe()?;
+    let exe_dir = exe
+        .parent()
+        .ok_or("the executable path has no parent folder")?;
+    let install = moho_core::install::Install::locate(exe_dir, &checkout_root(), &["assets"])?;
+    let mut roots = moho_core::assets::AssetRoots::placeholders(&install.root().join("assets"))?;
+    if let Some(folder) = named {
+        roots = roots.with_folder(&folder)?;
+    }
+    Ok(app::sounds::Sounds::resolve(&roots)?)
+}
+
+fn main() {
+    init_logging();
+    let sounds = match launch_sounds() {
+        Ok(sounds) => sounds,
+        Err(error) => {
+            tracing::error!(%error, "Sounds could not be resolved");
+            std::process::exit(1);
+        }
+    };
+    let ui_click = sounds.click.clone();
+    let mut app = App::from_config(crate::app::config::AppConfig::from_prefs(), sounds);
+    app.input.gamepads = moho_input::gamepad::Gamepads::new();
+    let mut config = app_config_for(&app.prefs);
+    config.ui_click = ui_click;
+
+    if let Err(e) = moho_app::run(app, config) {
+        tracing::error!(error = %e, "Application failed");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use moho_audio::AudioCategory;
+
+    fn prefs_with_sfx(volume: f32) -> Prefs {
+        let mut prefs = Prefs::default();
+        *prefs.sound_effect_volume_mut() = volume;
+        prefs
+    }
+
+    fn pending_sfx(app: &App) -> Option<f32> {
+        app.pending_audio_settings
+            .as_ref()
+            .map(|s| s.effective_volume(&AudioCategory::SoundEffect))
+    }
+
+    #[test]
+    fn adopt_settings_queues_audio_settings_from_prefs() {
+        let mut app = App::headless();
+        app.adopt_settings(prefs_with_sfx(10.0));
+        app.pending_audio_settings = None;
+
+        app.adopt_settings(prefs_with_sfx(3.0));
+
+        let volume = pending_sfx(&app).expect("adopting settings queues audio settings");
+        assert!((volume - 0.3).abs() < 1e-6, "volume={volume}");
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_brightness() {
+        let mut app = App::headless();
+        let mut brighter = Prefs::default();
+        brighter.set_brightness(1.5);
+
+        app.adopt_settings(brighter);
+
+        let queued: Vec<f32> = app
+            .pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::Brightness(value) => Some(*value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queued, vec![1.5]);
+        assert_eq!(app.prefs.brightness(), 1.5);
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_bloom_quality() {
+        let mut app = App::headless();
+        let mut dimmer = Prefs::default();
+        dimmer.set_bloom(1);
+
+        app.adopt_settings(dimmer);
+
+        let queued: Vec<u8> = app
+            .pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::BloomQuality(value) => Some(*value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queued, vec![1]);
+        assert_eq!(app.prefs.bloom(), 1);
+    }
+
+    fn queued_shadow_quality(app: &App) -> Vec<u8> {
+        app.pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::ShadowQuality(value) => Some(*value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_shadow_quality() {
+        let mut app = App::headless();
+        let mut sharper = Prefs::default();
+        sharper.set_shadow_quality(4);
+
+        app.adopt_settings(sharper);
+
+        assert_eq!(queued_shadow_quality(&app), vec![4]);
+        assert_eq!(app.prefs.shadow_quality(), 4);
+    }
+
+    #[test]
+    fn adopting_settings_leaves_unchanged_shadow_quality_unqueued() {
+        let mut app = App::headless();
+        let mut other_change = Prefs::default();
+        other_change.set_bloom(1);
+
+        app.adopt_settings(other_change);
+
+        assert_eq!(queued_shadow_quality(&app), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn adopting_settings_sets_the_scenes_effects_quality() {
+        for (quality, cap) in [(1, 32), (4, 256), (0, 0)] {
+            let mut app = App::headless();
+            let mut adopted = Prefs::default();
+            adopted.set_effects_quality(quality);
+
+            app.adopt_settings(adopted);
+
+            let effects = app.scene.effects_mut();
+            for _ in 0..300 {
+                effects.begin_streak(moho_renderer::StreakStyle::new(1.0, 0.1, 0));
+            }
+            assert_eq!(effects.live(), cap, "adopted quality {quality}");
+        }
+    }
+
+    #[test]
+    fn frame_without_a_save_leaves_audio_settings_unqueued() {
+        use moho_app::{FrameContext, Game, GameClock, LoopConfig};
+        let mut app = App::headless();
+        app.pending_audio_settings = None;
+        let clock = GameClock::default();
+        let tick = LoopConfig::new(flagstone_game::TICK_HZ).tick_length();
+        let mut ctx = FrameContext::new(tick, &clock, None, None);
+
+        Game::frame(&mut app, &mut ctx, 0.0);
+
+        assert!(app.pending_audio_settings.is_none());
+    }
+
+    #[test]
+    fn app_config_ticks_at_60hz() {
+        let config = app_config();
+
+        assert_eq!(config.loop_config.tick_hz, flagstone_game::TICK_HZ);
+        assert_eq!(
+            config.loop_config.tick_length(),
+            std::time::Duration::from_secs(1) / 60
+        );
+    }
+
+    #[test]
+    fn app_config_window_is_titled_flagstone() {
+        assert_eq!(app_config().window_title, "Flagstone");
+    }
+
+    #[test]
+    fn app_config_toggles_with_f11() {
+        use moho_input::bindings::Input;
+        use moho_input::key::Key;
+
+        let config = app_config();
+
+        assert_eq!(config.toggle_keys, Some(vec![Input::Key(Key::F11)]));
+    }
+
+    #[test]
+    fn saved_modes_map_to_the_engine_mode() {
+        use moho_app::WindowMode as Engine;
+        use moho_core::prefs::WindowMode as Saved;
+
+        let rows = [
+            (Saved::Windowed, Engine::Windowed),
+            (Saved::Fullscreen, Engine::Borderless),
+            (Saved::Borderless, Engine::Borderless),
+        ];
+
+        for (saved, opens_in) in rows {
+            let mut prefs = Prefs::default();
+            prefs.set_window_mode(saved);
+
+            let config = app_config_for(&prefs);
+
+            assert_eq!(config.window_mode, opens_in, "saved {saved:?}");
+        }
+    }
+}

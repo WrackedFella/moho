@@ -1,7 +1,9 @@
 # Convert panic!/unwrap backlog to Result
 
-**Status:** not started
-**Feature:** ENG-F1
+**Feature:** [ENG-F1](_feature.md)
+**Status:** Draft
+**Gate class:** unset
+**Labels:** line:engine
 
 ## Summary
 
@@ -15,3 +17,5 @@ Convert opportunistically when the surrounding function is already touched.
 - `moho_core/src/voxel/modification.rs` — 9 `unwrap`.
 - `moho_core/src/voxel/light_jobs.rs` — 7 `unwrap`.
 - `moho_renderer/src/shadow.rs` — 4 `unwrap`.
+- `clippy::unwrap_used` / `expect_used` enabled workspace-wide (145 sites at
+  the 2026-10 baseline; tests may allow them).

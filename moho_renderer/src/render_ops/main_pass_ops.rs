@@ -3,7 +3,8 @@
 //! This module handles rendering the main color pass with skybox and scene geometry.
 
 use crate::shadow::ShadowSystem;
-use crate::types::{GpuInstance, MeshEntry};
+use crate::textures::TextureTable;
+use crate::types::{DrawKey, GpuInstance, MeshEntry};
 use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 
 /// Render the main color pass with skybox and all pending draws.
@@ -15,7 +16,7 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 ///
 /// # Arguments
 /// * `encoder` - Command encoder for recording the render pass
-/// * `frame_view` - Surface texture view to render into
+/// * `hdr_view` - HDR target view to render into
 /// * `depth_view` - Depth texture view for depth testing
 /// * `skybox_pipeline` - Pipeline for rendering skybox
 /// * `skybox_vertex_buffer` - Vertex buffer containing skybox geometry
@@ -24,13 +25,16 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 /// * `camera_bind_group` - Bind group 0 (camera uniforms)
 /// * `shadow_system` - Shadow system for bind group 1 (shadows)
 /// * `instance_buffer` - Instance buffer containing all instance data
-/// * `pending_draws` - List of (mesh_handle, instances) to render
+/// * `pending_draws` - List of (draw key, instances) to render; the key's texture is
+///   bound as group 2, set again only when it differs from the previous draw's
+/// * `textures` - Table the texture handles index
 /// * `mesh_table` - Table of registered meshes
 /// * `offsets` - Instance offsets into instance buffer for each draw
+/// * `arena` - Frame vertex arena that skinned draws read their vertices from
 #[allow(clippy::too_many_arguments)] // Render operations naturally have many parameters
 pub fn render_main_pass(
     encoder: &mut CommandEncoder,
-    frame_view: &TextureView,
+    hdr_view: &TextureView,
     depth_view: &TextureView,
     skybox_pipeline: &RenderPipeline,
     skybox_vertex_buffer: &Buffer,
@@ -39,14 +43,16 @@ pub fn render_main_pass(
     camera_bind_group: &BindGroup,
     shadow_system: &ShadowSystem,
     instance_buffer: &Buffer,
-    pending_draws: &[(u32, Vec<GpuInstance>)],
+    pending_draws: &[(DrawKey, Vec<GpuInstance>)],
+    textures: &TextureTable,
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
+    arena: Option<&Buffer>,
 ) {
     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("batched-rpass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: frame_view,
+            view: hdr_view,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -79,13 +85,24 @@ pub fn render_main_pass(
     rpass.set_bind_group(1, &shadow_system.csm_shadow_bind_group, &[]);
 
     // Iterate draws and issue draw calls
-    for (i, (mesh_handle, insts)) in pending_draws.iter().enumerate() {
-        let idx = *mesh_handle as usize;
+    let mut bound_texture = None;
+    for (i, (key, insts)) in pending_draws.iter().enumerate() {
+        if !key.passes.in_main_pass() {
+            continue;
+        }
+        let idx = key.mesh as usize;
         if idx >= mesh_table.len() {
             continue;
         }
         if let Some(me) = &mesh_table[idx] {
-            rpass.set_vertex_buffer(0, me.buffer.slice(..));
+            let Some(vertices) = key.vertex_slice(me, arena) else {
+                continue;
+            };
+            if bound_texture != Some(key.texture) {
+                rpass.set_bind_group(2, textures.bind_group(key.texture), &[]);
+                bound_texture = Some(key.texture);
+            }
+            rpass.set_vertex_buffer(0, vertices);
 
             let offset_instances = offsets[i];
             let actual_instance_count = insts.len();

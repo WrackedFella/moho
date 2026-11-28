@@ -17,6 +17,7 @@ use wgpu::util::DeviceExt;
 use crate::MaterialGpu;
 use crate::gpu_types::LightingGpu;
 use crate::types::GpuInstance;
+use moho_render_api::MarkerGpu;
 
 /// Encapsulates all GPU resources for the renderer.
 ///
@@ -53,6 +54,72 @@ pub struct ResourcePool {
 
     /// Number of vertices in skybox
     pub(crate) skybox_vertex_count: u32,
+
+    pub(crate) marker_buffers: MarkerBuffers,
+}
+
+/// GPU buffers of the marker pass: one shared unit cube with face and edge
+/// index lists, and a growable per-frame instance buffer.
+#[derive(Debug)]
+pub(crate) struct MarkerBuffers {
+    pub(crate) cube_vertices: wgpu::Buffer,
+    pub(crate) cube_indices: wgpu::Buffer,
+    pub(crate) edge_indices: wgpu::Buffer,
+    pub(crate) instances: wgpu::Buffer,
+    capacity: usize,
+}
+
+impl MarkerBuffers {
+    const INITIAL_CAPACITY: usize = 16;
+
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let cube_vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("marker-cube-vertices"),
+            contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let cube_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("marker-cube-indices"),
+            contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_INDICES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let edge_indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("marker-edge-indices"),
+            contents: bytemuck::cast_slice(crate::markers::UNIT_CUBE_EDGES),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        Self {
+            cube_vertices,
+            cube_indices,
+            edge_indices,
+            instances: Self::allocate(device, Self::INITIAL_CAPACITY),
+            capacity: Self::INITIAL_CAPACITY,
+        }
+    }
+
+    fn allocate(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("marker-instance-buffer"),
+            size: (capacity * std::mem::size_of::<MarkerGpu>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Write `markers` into the instance buffer, reallocating (doubling) only
+    /// when they no longer fit.
+    pub(crate) fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        markers: &[MarkerGpu],
+    ) {
+        if markers.len() > self.capacity {
+            self.capacity = crate::MeshRenderer::next_capacity(self.capacity, markers.len());
+            self.instances = Self::allocate(device, self.capacity);
+        }
+        queue.write_buffer(&self.instances, 0, bytemuck::cast_slice(markers));
+    }
 }
 
 impl ResourcePool {
@@ -60,7 +127,7 @@ impl ResourcePool {
     ///
     /// This creates:
     /// - Camera buffer (80 bytes for view/proj matrices)
-    /// - Lighting buffer (96 bytes for sun/moon/ambient with defaults)
+    /// - Lighting buffer (144 bytes: sun/moon/ambient and the sky palette, with defaults)
     /// - Material buffer (32 bytes for 1 initial white material)
     /// - Camera bind group (combines above 3 buffers)
     /// - Depth texture (matches surface dimensions)
@@ -74,22 +141,6 @@ impl ResourcePool {
     /// * `depth_format` - The depth texture format
     /// * `surface_width` - Width of the rendering surface
     /// * `surface_height` - Height of the rendering surface
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use moho_renderer::resources::ResourcePool;
-    /// # use wgpu::{Device, BindGroupLayout, TextureFormat};
-    /// # fn example(device: &Device, camera_bgl: &BindGroupLayout) {
-    /// let resources = ResourcePool::new(
-    ///     device,
-    ///     camera_bgl,
-    ///     TextureFormat::Depth24Plus,
-    ///     1920,
-    ///     1080
-    /// );
-    /// # }
-    /// ```
     pub fn new(
         device: &wgpu::Device,
         camera_bgl: &wgpu::BindGroupLayout,
@@ -97,6 +148,7 @@ impl ResourcePool {
         surface_width: u32,
         surface_height: u32,
     ) -> Self {
+        use crate::gpu_types::DynamicLightsGpu;
         // Create buffers
         let camera_buffer = Self::create_camera_buffer(device);
         let lighting_buffer = Self::create_lighting_buffer(device);
@@ -132,7 +184,6 @@ impl ResourcePool {
         });
 
         // Create placeholder dynamic lights buffer (will be replaced when renderer initializes light manager)
-        use crate::gpu_types::DynamicLightsGpu;
         let placeholder_dynamic_lights = DynamicLightsGpu::default();
         let placeholder_dynamic_lights_buffer =
             device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -174,6 +225,7 @@ impl ResourcePool {
             instance_capacity,
             skybox_vertex_buffer,
             skybox_vertex_count,
+            marker_buffers: MarkerBuffers::new(device),
         }
     }
 
@@ -192,7 +244,7 @@ impl ResourcePool {
 
     /// Create the lighting uniform buffer with default lighting.
     ///
-    /// Size: 96 bytes (6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day)
+    /// Size: `size_of::<LightingGpu>()`.
     fn create_lighting_buffer(device: &wgpu::Device) -> wgpu::Buffer {
         let initial_lighting = LightingGpu::default();
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -328,9 +380,9 @@ impl ResourcePool {
     /// Returns: (buffer, vertex_count)
     fn create_skybox_vertex_buffer(device: &wgpu::Device) -> (wgpu::Buffer, u32) {
         let (skybox_vertices, skybox_vertex_count) = Self::generate_skybox_quad();
-        log::info!(
-            "Generated skybox fullscreen quad with {} vertices",
-            skybox_vertex_count
+        tracing::info!(
+            count = skybox_vertex_count,
+            "Generated skybox fullscreen quad vertices"
         );
         let skybox_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("skybox-vertex-buffer"),
@@ -369,26 +421,35 @@ mod tests {
     #[test]
     fn test_skybox_quad_generation() {
         let (vertices, count) = ResourcePool::generate_skybox_quad();
+
         assert_eq!(count, 6, "Skybox quad should have 6 vertices (2 triangles)");
         assert_eq!(vertices.len(), 6);
-
-        // Check that vertices cover clip space
-        assert_eq!(vertices[0], [-1.0, -1.0, 0.0]); // Bottom-left
-        assert_eq!(vertices[2], [1.0, -1.0, 0.0]); // Bottom-right
-        assert_eq!(vertices[5], [1.0, 1.0, 0.0]); // Top-right
-    }
-
-    #[test]
-    fn test_initial_material() {
-        let material = MaterialGpu {
-            albedo: [1.0, 1.0, 1.0, 0.0],
-            params: [0.0, 0.0, 0.0, 0.0],
-        };
-
-        // Should be white, non-transparent
-        assert_eq!(material.albedo[0], 1.0);
-        assert_eq!(material.albedo[1], 1.0);
-        assert_eq!(material.albedo[2], 1.0);
-        assert!(!material.is_transparent());
+        let corners = [
+            [-1.0, -1.0, 0.0],
+            [-1.0, 1.0, 0.0],
+            [1.0, -1.0, 0.0],
+            [1.0, 1.0, 0.0],
+        ];
+        for v in &vertices {
+            assert!(corners.contains(v), "{v:?} is not a clip-space corner");
+        }
+        let omitted: Vec<[f32; 3]> = vertices
+            .chunks(3)
+            .map(|tri| {
+                assert!(
+                    tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2],
+                    "triangle {tri:?} repeats a corner"
+                );
+                *corners
+                    .iter()
+                    .find(|c| !tri.contains(c))
+                    .expect("a triangle of distinct corners omits exactly one")
+            })
+            .collect();
+        assert_eq!(omitted.len(), 2);
+        assert!(
+            omitted[0][0] != omitted[1][0] && omitted[0][1] != omitted[1][1],
+            "omitted corners {omitted:?} must be diagonally opposite"
+        );
     }
 }

@@ -1,0 +1,75 @@
+# searchlight assets
+
+| File | What it is |
+|---|---|
+| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`, `control_NN`, and three optional `menu_camera_NN` views the main menu cuts between). |
+| `proving_ground.glb` | Test range, +Z downrange from a firing line at z = 0 (the player spawn): dummies at 25, 50, 100 and 200 m, each distance marked on the floor by a strip and its number in block digits (1 cm high, material `mark`); 0.6, 1.0 and 1.4 m cover blocks beside the firing line; a 3 m platform behind it, reached by stairs (0.2 m rise, 0.3 m run) or a 30 degree slope, whose front edge is a ledge over a marked drop area. No enemy spawns, waypoints or covers. |
+| `parkour.glb` | Movement test level, +Z the direction of travel; one `player_spawn`, no enemy spawns, so no waves. A gap ladder of ten 2 m lanes (0.5 to 5.0 m gaps over a 2 m pit, each lane's width in decimetres in block digits on its run-up, coloured `mark_run` when a running jump clears it and `mark` otherwise) and a course of three steps, three ledges and three ramps, each labelled (steps and ledges in centimetres, ramps in degrees). Each take-off edge has a `gap_NN` marker (extras `width` in metres and `clears`: `stand`, `run` or `none`, the smallest movement that clears it); each course piece has a `course_NN` marker at its foot (extras `kind` `step`/`ledge`/`slope`, `value`, `passable` `walk`/`jump`/`none`). Markers face +Z. The game ignores both marker kinds; the labels are set from what the headless tests in `searchlight/src/levels.rs` measure with the shipped movement tuning. |
+| `rifle_shot.wav` | A short synthesized gunshot (22.05 kHz, mono, 16-bit). |
+| `characters/mannequin/mannequin.glb` | Box mannequin: one box per bone on the engine's 16 humanoid bones, rigidly skinned, with `hold_r` and `hold_l` points at the hands (where a held weapon's grip goes) and the ten clips (`idle`, `walk`, `run`, `crouch_idle`, `crouch_walk`, `prone_idle`, `crawl`, `rifle_idle`, `rifle_walk`, `death`). The body for enemies and any third-person view when no art is fetched. |
+| `characters/mannequin/mannequin_fp.glb` | The same rig and clips with no head or neck box: the player's body, so the camera never sits inside a head. |
+| `characters/mannequin/head.glb` | Head and neck as one rigid part with an `attach` node that rides the `head` bone, for the player's shadow. |
+
+## Waves and local maps
+
+Waves and a score run on a level that places at least one `enemy_spawn_NN`, and only there;
+such a level also needs numbered `waypoint_NN` markers an enemy can reach. Every level,
+borrowed maps included, needs exactly one `player_spawn`; a file without one fails to load
+with an error naming it. `dummy_NN` is optional, and without an enemy spawn a navmesh failure
+is a console notice. A node named `searchlight_level`
+is ignored.
+
+Launch a level by name (`arena`, the default, `proving_ground` or `parkour`) or by the path of a `.glb`
+or `.gltf` file: `cargo run -p searchlight -- proving_ground`. Put borrowed maps in
+`searchlight/assets/local/`, which git ignores; never commit them. CC0 maps
+are fine to keep locally; game maps (for example Counter-Strike) are all rights reserved,
+so use them for private testing only and never share them.
+
+## Overriding assets at launch
+
+`--assets <folder>` names a folder whose files take the place of the placeholders in this
+folder, one file at a time: `cargo run -p searchlight -- --assets ../my_assets arena`. A file the
+folder lacks comes from here; a folder that does not exist stops the start with an error naming
+it. The folder mirrors this layout (`arena.glb`, `rifle_shot.wav`), and a glTF takes its
+buffers and images from beside itself. The option may come before or after the level and may be
+given once. Each asset's source (the placeholders or the assets folder, and the folder) is
+logged at `info` (`RUST_LOG=info`). A level given as a path is loaded as given. Content
+definitions are not overridden, and tests never see the folder
+([ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md)).
+
+## Packaging and where a build looks
+
+`just package searchlight` builds a release executable and lays it out in
+`target/package/searchlight/` with the committed files of `assets` and `content` beside it,
+without `tools/`, any `.md` file or git-ignored local maps. Copied anywhere, that folder plays
+from its own `assets` and `content`.
+
+At start the executable looks beside itself: a folder holding `assets` or `content` must hold
+both, or the start fails naming what is missing (it never borrows from the checkout). A folder
+holding neither falls back to the source checkout, which is what `cargo run` uses; a start
+that finds neither names the folders it looked for. The log line `shipped folders located` says
+which one a run uses (`beside the executable` or `source checkout`). `--assets` still
+overrides single files in either case.
+
+## Origin
+
+The level `.glb` files and the `.wav` are generated by `tools/make_arena.py`, and the three
+`characters/mannequin/` files by `tools/make_mannequin.py` (which shares `tools/gltf_writer.py`),
+all Python standard library only. They are built from arithmetic in those scripts: no third-party model, texture, sample or recording is
+used or derived from. After changing the script, regenerate every generated asset with
+`just assets` and commit the result; `just check` fails while a committed file differs from
+what its generator makes.
+
+`arena.glb` may be replaced by a Blender export as long as the marker names stay and the
+script stops generating it; each
+`cover_NN` also carries a `shielded_from` extra (`+x`, `-x`, `+z` or `-z`: the direction from
+the cover point to the geometry that hides it). Each `control_NN` carries an `action` extra
+(`next_wave`); the game stands a usable post on its floor point, and a level naming any other
+action, or none, fails to load.
+
+## Licence
+
+The files and the script are the project's own work and carry the project's licence. They
+contain no third-party material, so there is nothing to attribute and no restriction on
+commercial redistribution, as [ADR-0007](../../_todo/adr/0007-third-party-licence-policy.md)
+requires of every asset.

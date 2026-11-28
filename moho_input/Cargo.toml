@@ -2,6 +2,17 @@
 name = "moho_input"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
+gilrs = { workspace = true }
+tracing = { workspace = true }
 winit = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+moho_core = { path = "../moho_core" }
+proptest = { workspace = true }
+tempfile = { workspace = true }

@@ -8,7 +8,6 @@ pub mod graphics;
 pub mod input;
 pub mod system;
 pub mod ui;
-pub mod world;
 
 // Re-export all event types for convenience
 pub use audio::*;
@@ -17,7 +16,6 @@ pub use graphics::*;
 pub use input::*;
 pub use system::*;
 pub use ui::*;
-pub use world::*;
 
 /// Base trait for all events in the system.
 ///
@@ -45,12 +43,6 @@ pub use world::*;
 /// }
 /// ```
 pub trait Event: Clone + Debug + Send + Sync + 'static {
-    /// Optional event priority (lower = higher priority)
-    /// Used for ordering when multiple events are processed
-    fn priority(&self) -> i32 {
-        0
-    }
-
     /// Whether this event should be recorded in history
     /// Disable for high-frequency events to save memory
     fn should_record(&self) -> bool {

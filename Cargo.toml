@@ -1,100 +1,75 @@
-[[bin]]
-path = "src/main.rs"
-name = "moho"
-required-features = []
-
-[package]
-name = "moho"
-version = "0.1.0"
-edition = "2024"
-
 [workspace]
-members = ["moho_core", "moho_game", "moho_render_api", "moho_renderer", "moho_audio", "moho_ui", "moho_input", "moho_sim", "moho_types", "moho_physics"]
+resolver = "3"
+members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_voxel", "moho_render_api", "moho_renderer", "moho_audio", "flagstone_ui", "moho_input", "moho_ui_shell", "moho_physics", "moho_level", "searchlight_rules", "searchlight"]
 
 [workspace.dependencies]
-bincode = "2.0"
 bytemuck = "1.24"
-crc32fast = "1.5"
-crossbeam-channel = "0.5"
-env_logger = "0.11"
-glam = "0.30.8"
-legion = "0.4.0"
-log = "0.4"
-naga = "29.0.1"
-noise = "0.9"
-pollster = "0.4"
+gilrs = "0.11"
+glam = { version = "0.33", features = ["libm"] }
+libm = "0.2"
+naga = "30.0.1"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+crc32fast = "1"
+sha2 = "0.11"
+proptest = { version = "1.11", default-features = false, features = ["std"] }
 rand = "0.10"
 rodio = "0.22"
 serde = "1.0"
 thiserror = "2.0"
-wgpu = "29.0.4"
-winit = "0.30"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+wgpu = "30.0.1"
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
-rapier3d = { version = "0.32", features = ["simd-stable"] }
+searchlight_rules = { path = "searchlight_rules" }
+rapier3d = { version = "0.36", features = ["enhanced-determinism"] }
+tempfile = "3.5"
+gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false }
+egui = "0.36.2"
+egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "wayland", "x11"] }
+egui-wgpu = "0.36.2"
+egui_kittest = "0.36.2"
+rerecast = { version = "0.4", default-features = false, features = ["std"] }
 
-[dependencies]
-crossbeam-channel = { workspace = true }
-legion = { workspace = true }
+[workspace.lints.rust]
+unsafe_code = "deny"
 
-[dependencies.bincode]
-workspace = true
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+undocumented_unsafe_blocks = "warn"
 
-[dependencies.bytemuck]
-workspace = true
-features = ["derive"]
+# Won't fix: noise for game and rendering code.
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+doc_markdown = "allow"
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+struct_excessive_bools = "allow"
+unused_self = "allow"
 
-[dependencies.env_logger]
-workspace = true
+# Ratchet: existing violations. Fix, then delete the line; never add to this group.
+float_cmp = "allow"
+large_stack_arrays = "allow"
+manual_midpoint = "allow"
+match_same_arms = "allow"
+missing_errors_doc = "allow"
+missing_fields_in_debug = "allow"
+missing_panics_doc = "allow"
+needless_pass_by_value = "allow"
+too_many_lines = "allow"
+trivially_copy_pass_by_ref = "allow"
+unnecessary_wraps = "allow"
 
-[dependencies.glam]
-workspace = true
-
-[dependencies.log]
-workspace = true
-
-[dependencies.moho_audio]
-path = "moho_audio"
-
-[dependencies.moho_core]
-path = "moho_core"
-
-[dependencies.moho_game]
-path = "moho_game"
-
-[dependencies.moho_input]
-path = "moho_input"
-
-[dependencies.moho_renderer]
-path = "moho_renderer"
-
-[dependencies.moho_sim]
-path = "moho_sim"
-
-[dependencies.moho_types]
-path = "moho_types"
-
-[dependencies.moho_physics]
-workspace = true
-
-[dependencies.moho_ui]
-path = "moho_ui"
-
-[dependencies.pollster]
-workspace = true
-
-[dependencies.rand]
-workspace = true
-
-[dependencies.wgpu]
-workspace = true
-
-[dependencies.winit]
-workspace = true
-
-[dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
-
-[[bench]]
-name = "event_bus_bench"
-harness = false
-
+# Navmesh generation is voxel-heavy; optimised in debug builds so arena-backed tests stay fast.
+[profile.dev.package.rerecast]
+opt-level = 3

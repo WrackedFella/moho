@@ -26,14 +26,7 @@ pub struct AudioSettings {
 
 impl Default for AudioSettings {
     fn default() -> Self {
-        Self {
-            master_volume: 1.0,
-            sound_effects_volume: 0.8,
-            music_volume: 0.6,
-            ui_volume: 0.7,
-            voice_volume: 0.9,
-            muted: false,
-        }
+        Self::from_prefs(&moho_core::prefs::Prefs::default())
     }
 }
 
@@ -41,6 +34,23 @@ impl AudioSettings {
     /// Create new audio settings with default values
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Levels from saved prefs: the master and each category are their 0..=10 prefs divided by ten.
+    pub fn from_prefs(prefs: &moho_core::prefs::Prefs) -> Self {
+        Self {
+            master_volume: 0.0,
+            sound_effects_volume: 0.0,
+            music_volume: 0.0,
+            ui_volume: 0.0,
+            voice_volume: 0.0,
+            muted: false,
+        }
+        .with_master_volume(prefs.master_volume() / 10.0)
+        .with_sound_effects_volume(prefs.sound_effect_volume() / 10.0)
+        .with_music_volume(prefs.music_volume() / 10.0)
+        .with_ui_volume(prefs.ui_volume() / 10.0)
+        .with_voice_volume(prefs.voice_volume() / 10.0)
     }
 
     /// Set master volume (affects all audio)
@@ -93,5 +103,199 @@ impl AudioSettings {
         };
 
         self.master_volume * category_volume
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio_source::AudioCategory;
+
+    type VolumeBuilder = fn(AudioSettings, f32) -> AudioSettings;
+
+    const TOLERANCE: f32 = 1e-6;
+
+    const CATEGORY_ROWS: [(AudioCategory, VolumeBuilder); 4] = [
+        (
+            AudioCategory::SoundEffect,
+            AudioSettings::with_sound_effects_volume,
+        ),
+        (AudioCategory::Music, AudioSettings::with_music_volume),
+        (AudioCategory::UserInterface, AudioSettings::with_ui_volume),
+        (AudioCategory::Voice, AudioSettings::with_voice_volume),
+    ];
+
+    fn default_volume(category: &AudioCategory) -> f32 {
+        match category {
+            AudioCategory::SoundEffect => 0.8,
+            AudioCategory::Music => 0.6,
+            AudioCategory::UserInterface => 0.7,
+            AudioCategory::Voice => 0.9,
+        }
+    }
+
+    fn prefs_with(sfx: f32, music: f32, ui: f32, voice: f32) -> moho_core::prefs::Prefs {
+        let mut prefs = moho_core::prefs::Prefs::default();
+        *prefs.sound_effect_volume_mut() = sfx;
+        *prefs.music_volume_mut() = music;
+        *prefs.ui_volume_mut() = ui;
+        *prefs.voice_volume_mut() = voice;
+        prefs
+    }
+
+    fn assert_volumes(settings: &AudioSettings, expected: [f32; 4]) {
+        for ((category, _), want) in CATEGORY_ROWS.iter().zip(expected) {
+            let actual = settings.effective_volume(category);
+
+            assert!(
+                (actual - want).abs() < TOLERANCE,
+                "category={category:?} expected={want} actual={actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_is_today_s_levels_and_matches_prefs_defaults() {
+        let prefs = moho_core::prefs::Prefs::default();
+
+        let defaults = AudioSettings::default();
+        let from_defaults = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&defaults, [0.8, 0.6, 0.7, 0.9]);
+        assert_volumes(&from_defaults, [0.8, 0.6, 0.7, 0.9]);
+        assert_eq!(
+            [
+                prefs.sound_effect_volume(),
+                prefs.music_volume(),
+                prefs.ui_volume(),
+                prefs.voice_volume()
+            ],
+            [8.0, 6.0, 7.0, 9.0]
+        );
+    }
+
+    #[test]
+    fn from_prefs_zero_volume_is_silent() {
+        let settings = AudioSettings::from_prefs(&prefs_with(0.0, 10.0, 3.0, 1.0));
+
+        assert_volumes(&settings, [0.0, 1.0, 0.3, 0.1]);
+    }
+
+    #[test]
+    fn from_prefs_scales_each_category_by_a_tenth() {
+        let settings = AudioSettings::from_prefs(&prefs_with(5.0, 10.0, 3.0, 1.0));
+
+        assert_volumes(&settings, [0.5, 1.0, 0.3, 0.1]);
+    }
+
+    #[test]
+    fn from_prefs_takes_the_master_volume() {
+        let mut prefs = prefs_with(5.0, 10.0, 3.0, 1.0);
+        *prefs.master_volume_mut() = 4.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.2, 0.4, 0.12, 0.04]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_a_master_volume_above_the_scale_to_full() {
+        let mut prefs = prefs_with(8.0, 8.0, 8.0, 8.0);
+        *prefs.master_volume_mut() = 25.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.8, 0.8, 0.8, 0.8]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_a_negative_master_volume_to_silence() {
+        let mut prefs = prefs_with(8.0, 8.0, 8.0, 8.0);
+        *prefs.master_volume_mut() = -3.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_out_of_range_values() {
+        let settings = AudioSettings::from_prefs(&prefs_with(25.0, -3.0, 11.0, 100.0));
+
+        assert_volumes(&settings, [1.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn category_volume_scales_by_master_and_leaves_others_at_default() {
+        for (set, builder) in &CATEGORY_ROWS {
+            let settings = builder(AudioSettings::new().with_master_volume(0.5), 0.5);
+
+            for (read, _) in &CATEGORY_ROWS {
+                let expected = if read == set {
+                    0.25
+                } else {
+                    default_volume(read) * 0.5
+                };
+                let actual = settings.effective_volume(read);
+
+                assert!(
+                    (actual - expected).abs() < TOLERANCE,
+                    "set={set:?} read={read:?} expected={expected} actual={actual}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn category_volume_above_one_clamps_to_one() {
+        for (category, builder) in &CATEGORY_ROWS {
+            let settings = builder(AudioSettings::new().with_master_volume(1.0), 1.5);
+
+            let actual = settings.effective_volume(category);
+
+            assert!(
+                (actual - 1.0).abs() < TOLERANCE,
+                "category={category:?} actual={actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn mute_silences_every_category() {
+        let settings = CATEGORY_ROWS
+            .iter()
+            .fold(
+                AudioSettings::new().with_master_volume(1.0),
+                |acc, (_, builder)| builder(acc, 1.0),
+            )
+            .set_muted(true);
+
+        for (category, _) in &CATEGORY_ROWS {
+            let actual = settings.effective_volume(category);
+
+            assert!(actual == 0.0, "category={category:?} actual={actual}");
+        }
+    }
+
+    #[test]
+    fn effective_volume_multiplies_clamped_master_and_category() {
+        let settings = AudioSettings::new()
+            .with_master_volume(0.5)
+            .with_music_volume(1.5);
+
+        let music = settings.effective_volume(&AudioCategory::Music);
+
+        assert!((music - 0.5).abs() < f32::EPSILON, "music={music}");
+    }
+
+    #[test]
+    fn effective_volume_clamps_master() {
+        let settings = AudioSettings::new()
+            .with_master_volume(2.0)
+            .with_music_volume(0.5);
+
+        let music = settings.effective_volume(&AudioCategory::Music);
+
+        assert!((music - 0.5).abs() < f32::EPSILON, "music={music}");
     }
 }

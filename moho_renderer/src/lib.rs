@@ -1,19 +1,12 @@
 //! GPU rendering backend for the Moho game engine.
 //!
-//! Built on [`wgpu`], this crate handles:
+//! Built on [`wgpu`], which stays behind [`RendererBackend`]: games reach the renderer
+//! through [`create_renderer`] and hand it data ([`Scene`], [`WorldMeshes`],
+//! [`MaterialTable`], the GPU data types), never GPU objects.
 //!
-//! - **[`Renderer`]** — Central render orchestrator (device, pipelines, frame submit)
 //! - **[`Scene`]** — Per-frame scene state (meshes, lights, camera)
-//! - **[`ShadowSystem`]** — Cascaded shadow maps with optional PCSS soft shadows
-//! - **[`SsaoSystem`]** — Screen-space ambient occlusion (GTAO)
-//! - **[`LightManager`]** — Dynamic point/spot light management
 //! - **[`MaterialTable`]** — GPU-side material storage buffer
-//! - **[`pipeline`]** — Render pipeline construction helpers
-
-pub type TextureFormatRepr = wgpu::TextureFormat;
-
-/// Type alias for backward compatibility.
-pub type Material = MaterialGpu;
+//! - **[`pipeline`]** — Shader sources and vertex layouts, for shader validation
 
 mod materials;
 pub use materials::MaterialTable;
@@ -21,37 +14,41 @@ mod scene;
 pub use moho_render_api::LightDesc;
 pub use scene::Scene;
 mod gpu_types;
-pub use gpu_types::{
-    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
-    ShadowMatrixGpu,
-};
+mod sky;
+pub use gpu_types::{LightingGpu, ShadowGpu};
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
-mod buffer_manager;
-pub use buffer_manager::BufferManager;
+use moho_render_api::{Rgba8Image, WorldMesh};
+mod block_on;
+mod bloom;
+mod markers;
+mod ui_pass;
+pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
+mod effects;
+pub use effects::{
+    EFFECT_MESH_IDS_FROM, EffectHandle, Effects, FlashStyle, MarkStyle, StreakStyle,
+};
+mod world_meshes;
+pub use world_meshes::WorldMeshes;
 mod instance_collector;
-pub use instance_collector::InstanceCollector;
+pub(crate) use instance_collector::InstanceCollector;
 mod mesh_renderer;
-pub use mesh_renderer::MeshRenderer;
+pub(crate) use mesh_renderer::MeshRenderer;
 
-pub mod device;
-mod render_ops;
-mod shadow;
-pub use shadow::{ActiveShadowLight, LightType, PcssQuality, PcssSettings, ShadowSystem};
-mod ssao;
-pub use ssao::{SsaoQuality, SsaoSettings, SsaoSystem};
+mod builder;
+mod device;
 mod lights;
-pub use lights::{Light, LightManager};
-mod types;
-pub use device::{DeviceInitError, DeviceSetup};
 pub mod pipeline;
-pub use pipeline::{PipelineInitError, PipelineSetup};
-pub mod resources;
-pub use resources::ResourcePool;
-pub mod builder;
-pub use builder::RendererBuilder;
+mod render_ops;
+mod resources;
+mod shadow;
+mod skinning;
+mod ssao;
+mod textures;
+mod types;
 
 mod renderer;
-pub use renderer::Renderer;
+pub(crate) use renderer::Renderer;
+mod tone_map;
 
 /// Object-safe renderer backend trait.
 ///
@@ -75,8 +72,83 @@ pub trait RendererBackend {
         light_level: &[f32],
         block_light_rgb: &[[f32; 3]],
         sky_exposed: &[f32],
+        material: &[u32],
         indices: &[u32],
     ) -> u32;
+    /// Register a contract mesh, with `material` as the per-vertex material channel
+    /// (empty defers every vertex to the instance material). The default uploads
+    /// through `register_indexed_mesh`; a backend that draws textures overrides it to
+    /// upload the mesh's UVs too.
+    fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        let light_level = renderer::world_mesh_light_level(mesh);
+        let renderer::VertexChannels {
+            positions,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+            uv: _,
+        } = renderer::world_mesh_channels(mesh, &light_level, material);
+        self.register_indexed_mesh(
+            positions,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+            mesh.indices(),
+        )
+    }
+    /// Upload `image` and return its handle; handle 0 is the white default texture, which
+    /// is all the default returns.
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        let _ = image;
+        0
+    }
+    /// Free a texture handle from `register_texture`. No-op by default.
+    fn unregister_texture(&mut self, texture: u32) {
+        let _ = texture;
+    }
+    /// Queue a previously-registered mesh for drawing with `texture` bound. The default
+    /// ignores the texture and calls `enqueue_draw`.
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        let _ = texture;
+        self.enqueue_draw(mesh, instances);
+    }
+    /// Queue a previously-registered mesh for drawing this frame without casting a shadow.
+    /// The default calls `enqueue_draw`.
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_draw(mesh, instances);
+    }
+    /// Queue a previously-registered mesh for the shadow pass only: it casts a shadow and is
+    /// not drawn in view. The default draws nothing, as a backend with no shadow pass has
+    /// nothing to cast into; it must not fall back to `enqueue_draw`.
+    fn enqueue_shadow_only_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        let _ = (mesh, instances);
+    }
+    /// Upload the skin (four joints and weights per vertex) of the mesh under `mesh`,
+    /// registered by [`register_world_mesh`](Self::register_world_mesh). No-op by default.
+    fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        let _ = (mesh, joints, weights);
+    }
+    /// Queue a skinned mesh for drawing this frame in the pose `palette` gives: one joint
+    /// matrix per entry as three rows of `[m_r0, m_r1, m_r2, t_r]`, in model space. The
+    /// default draws the bind pose, ignoring `palette`, through `enqueue_textured_draw`.
+    fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: InstanceGpu,
+    ) {
+        let _ = palette;
+        self.enqueue_textured_draw(mesh, texture, &[instance]);
+    }
     /// Unregister a previously-registered mesh handle and free GPU resources.
     fn unregister_mesh(&mut self, mesh: u32);
     /// Begin a new frame: uploads the camera, culls/updates dynamic lights,
@@ -90,7 +162,7 @@ pub trait RendererBackend {
     /// given instances. Must be called after `begin_frame` and before
     /// `submit_frame`.
     fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]);
-    /// Flush all queued draws (shadow passes, main pass, SSAO) and present
+    /// Flush all queued draws (shadow passes, main pass, markers, SSAO) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
     fn submit_frame(&mut self);
@@ -123,32 +195,51 @@ pub trait RendererBackend {
         Vec::new()
     }
 
-    /// Set shadow quality level.
-    fn set_shadow_quality(&mut self, quality: u8);
+    /// Set the shadow quality level (0-4) and return the level in use: lower than asked when
+    /// the GPU could not allocate the asked level's shadow maps.
+    fn set_shadow_quality(&mut self, quality: u8) -> u8;
 
     /// Set SSAO quality level.
     fn set_ssao_quality(&mut self, quality: u8);
 
-    /// Return the surface texture format used by the renderer (if applicable).
-    /// Useful for UI integrations that need to create GPU pipelines matching the swapchain format.
-    fn surface_format(&self) -> Option<TextureFormatRepr> {
-        None
-    }
-    /// Set an optional raw FrameCallback pointer. The renderer will call the callback during
-    /// finalization so the application can record UI commands into the frame encoder.
-    /// The pointer must remain valid until cleared.
-    fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>);
-    /// Set an optional safe Arc<Mutex<dyn FrameCallback>>. Prefer this over the raw pointer
-    /// variant; it's thread-safe and avoids pointer lifetime issues. Passing `None` clears.
-    fn set_frame_callback_arc(
+    /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
+    /// over the scene; `None` clears it. No-op by default.
+    fn set_ui_source(&mut self, _source: Option<UiSource>) {}
+    /// Choose whether presented frames wait for the display refresh. No-op by default.
+    fn set_vsync(&mut self, _on: bool) {}
+    /// Override the debug view mode in the lighting the shader reads; `None` leaves the
+    /// game's own value. No-op by default.
+    fn set_debug_view(&mut self, _mode: Option<u32>) {}
+    /// Draw nothing in the world above `height` metres (`None` clears the cut).
+    /// A non-finite height counts as `None`. Sticky until changed. No-op by
+    /// default.
+    fn set_view_height(&mut self, _height: Option<f32>) {}
+    /// Set the Brightness exposure multiplier applied by the tone-map pass (clamped
+    /// to `[0.5, 2.0]`, NaN gives 1.0). No-op by default.
+    fn set_brightness(&mut self, _brightness: f32) {}
+    /// Turn the tone-map curve on or off; off skips the curve and passes the
+    /// HDR scene through, still adding bloom when it is enabled. Session-only. No-op by default.
+    fn set_tone_map(&mut self, _enabled: bool) {}
+    /// Set the bloom quality: 0 Off, 1 Low, 2 High; any other value gives High. Off adds
+    /// no bloom at all. No-op by default.
+    fn set_bloom_quality(&mut self, _quality: u8) {}
+    /// Queue the frame's box markers to draw over the world: translucent
+    /// `fills` and edge-only `outlines`, each sorted far to near. Called once
+    /// per frame after the transparent draws and before `submit_frame`. No-op
+    /// by default.
+    fn enqueue_markers(
         &mut self,
-        cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
-    );
+        _fills: &[moho_render_api::MarkerGpu],
+        _outlines: &[moho_render_api::MarkerGpu],
+    ) {
+    }
 }
 
-impl<'a> RendererBackend for Renderer<'a> {
+pub use moho_render_api::UiSource;
+
+impl RendererBackend for Renderer<'_> {
     fn resize(&mut self, width: u32, height: u32) {
-        self.resize(width, height)
+        self.resize(width, height);
     }
     fn register_mesh(&mut self, vertices: &[[f32; 3]]) -> u32 {
         self.register_mesh(vertices)
@@ -162,6 +253,7 @@ impl<'a> RendererBackend for Renderer<'a> {
         light_level: &[f32],
         block_light_rgb: &[[f32; 3]],
         sky_exposed: &[f32],
+        material: &[u32],
         indices: &[u32],
     ) -> u32 {
         self.register_indexed_mesh(
@@ -172,11 +264,42 @@ impl<'a> RendererBackend for Renderer<'a> {
             light_level,
             block_light_rgb,
             sky_exposed,
+            material,
             indices,
         )
     }
+    fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        self.register_world_mesh(mesh, material)
+    }
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        self.register_texture(image)
+    }
+    fn unregister_texture(&mut self, texture: u32) {
+        self.unregister_texture(texture);
+    }
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        self.enqueue_textured_draw(mesh, texture, instances);
+    }
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_unshadowed_draw(mesh, instances);
+    }
+    fn enqueue_shadow_only_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_shadow_only_draw(mesh, instances);
+    }
+    fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        self.register_skin(mesh, joints, weights);
+    }
+    fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: InstanceGpu,
+    ) {
+        self.enqueue_skinned_draw(mesh, texture, palette, instance);
+    }
     fn unregister_mesh(&mut self, mesh: u32) {
-        self.unregister_mesh(mesh)
+        self.unregister_mesh(mesh);
     }
     fn begin_frame(
         &mut self,
@@ -185,28 +308,44 @@ impl<'a> RendererBackend for Renderer<'a> {
         self.begin_frame(camera)
     }
     fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]) {
-        self.enqueue_draw(mesh, instances)
+        self.enqueue_draw(mesh, instances);
     }
     fn submit_frame(&mut self) {
-        self.submit_frame()
+        self.submit_frame();
     }
     fn set_materials(&mut self, materials: &[crate::MaterialGpu]) {
-        self.set_material_table(materials)
+        self.set_material_table(materials);
     }
     fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
-        self.update_lighting(lighting)
+        self.update_lighting(lighting);
     }
-    fn surface_format(&self) -> Option<TextureFormatRepr> {
-        Some(self.surface_format())
+    fn set_ui_source(&mut self, source: Option<UiSource>) {
+        self.set_ui_source(source);
     }
-    fn set_frame_callback_raw(&mut self, ptr: Option<*mut dyn FrameCallback>) {
-        self.set_frame_callback_raw_inherent(ptr);
+    fn set_vsync(&mut self, on: bool) {
+        self.set_vsync(on);
     }
-    fn set_frame_callback_arc(
+    fn set_debug_view(&mut self, mode: Option<u32>) {
+        self.set_debug_view(mode);
+    }
+    fn set_view_height(&mut self, height: Option<f32>) {
+        self.set_view_height(height);
+    }
+    fn set_brightness(&mut self, brightness: f32) {
+        self.set_brightness(brightness);
+    }
+    fn set_tone_map(&mut self, enabled: bool) {
+        self.set_tone_map(enabled);
+    }
+    fn set_bloom_quality(&mut self, quality: u8) {
+        self.set_bloom_quality(quality);
+    }
+    fn enqueue_markers(
         &mut self,
-        cb: Option<std::sync::Arc<std::sync::Mutex<dyn FrameCallback>>>,
+        fills: &[moho_render_api::MarkerGpu],
+        outlines: &[moho_render_api::MarkerGpu],
     ) {
-        self.set_frame_callback_arc_inherent(cb);
+        self.enqueue_markers(fills, outlines);
     }
     fn add_point_light(
         &mut self,
@@ -229,8 +368,8 @@ impl<'a> RendererBackend for Renderer<'a> {
     fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         self.all_lights_as_descs()
     }
-    fn set_shadow_quality(&mut self, quality: u8) {
-        self.set_shadow_quality(quality);
+    fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        self.set_shadow_quality(quality)
     }
     fn set_ssao_quality(&mut self, quality: u8) {
         self.set_ssao_quality(quality);
@@ -245,35 +384,10 @@ pub fn create_renderer<'a>(
     let win = window
         .ok_or_else(|| Box::new(RendererInitError::MissingWindow) as Box<dyn std::error::Error>)?;
     let r = Renderer::new(win).map_err(|e| {
-        let msg = format!("{}", e);
+        let msg = format!("{e}");
         Box::new(RendererInitError::WgpuInit(msg)) as Box<dyn std::error::Error>
     })?;
     Ok(Box::new(r))
-}
-
-/// Convenience helper: create a renderer from an Arc<Window>.
-///
-/// The renderer borrows the provided `Window` for the lifetime of the returned trait object.
-/// Callers typically keep an `Arc<winit::window::Window>` and pass a reference here so the
-/// application retains ownership while the renderer uses a borrow.
-pub fn create_renderer_from_arc<'a>(
-    window: &'a std::sync::Arc<winit::window::Window>,
-) -> Result<Box<dyn RendererBackend + 'a>, Box<dyn std::error::Error>> {
-    create_renderer(Some(std::sync::Arc::as_ref(window)))
-}
-
-/// Callback trait for UI rendering. Implement this to composite UI elements
-/// into the renderer's command encoder.
-pub trait FrameCallback {
-    fn call(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        view: &wgpu::TextureView,
-        encoder: &mut wgpu::CommandEncoder,
-        surface_width: u32,
-        surface_height: u32,
-    );
 }
 
 /// Errors that can occur during renderer initialization.

@@ -1,85 +1,56 @@
 # moho_input
 
-Shared input mapping utilities for Moho. Provides consistent key code translation between `winit` physical keys and the internal binding system used throughout the engine.
+Engine input: the keys, mouse buttons and gamepad inputs the engine names, bindings a game declares as data,
+and the action map that hands the game one frame of actions per tick.
 
-## Purpose
+## Pieces
 
-This crate exists to ensure that both the main binary and `moho_ui` use identical key mappings. Without this shared crate, each would need to duplicate the mapping logic, creating potential inconsistencies.
-
-## Core Function
-
-### `physical_key_to_binding_code`
-
-Converts `winit::keyboard::PhysicalKey` to an internal `u32` binding code.
+- `Key`: platform-free key enum. `Key::from_winit` maps a winit `PhysicalKey`;
+  `name` is the persisted spelling, `parse` reads it back (case-insensitive, with
+  aliases such as `Up`, `Esc`, `Return`, `Space`, `Control` and punctuation glyphs;
+  prefs files need the word names, since `;`, `#`, `[` and `,` are special there),
+  `label` is the player-facing text.
+- `MouseButton`: `Left`, `Right`, `Middle`; persisted as `Mouse Left` etc.
+- `PadButton`, `Stick`, `StickDir`, `PadInput`: gamepad inputs, persisted as
+  `Pad South` or `Pad LeftStick Up`. A stick direction is held past
+  `STICK_DIRECTION_THRESHOLD`.
+- `Input`: one physical input (`Input::Key`, `Input::Mouse` or `Input::Pad`).
+- `Binding`: an `Input` plus a `Trigger` (`Press` or `Hold`); built with `Binding::key`,
+  `Binding::mouse`, `Binding::pad`, and `.held()` for a hold binding.
+- `Action`: trait a game implements on its own action enum: `ALL`, a stable lowercase `snake_case`
+  `name` used as the persisted id, and `default_bindings`, plus an optional `HOLD_TICKS`.
+- `ActionBindings<A>`: every action's current bindings. `load` reads a raw
+  `[bindings]` section (action name → comma-separated key names, `Unbound` or
+  empty for none) and returns warnings for unusable lines, which keep their
+  defaults; `to_section` writes every action back.
+- `ActionMap<A>`: owns the bindings, which bindings are down, this tick's edges and
+  the mouse-look accumulator, `LookSettings` (turn per count, smoothing on/off; `set_look`) and the smoothing state. Feed it with `key`, `mouse_button`,
+  `mouse_motion`, `pad_button`, `pad_axis`, `pad_disconnected` and `release_all`, or from winit through `action_map::handle_window_event`
+  / `handle_device_event`. `end_tick` reports a tick: it returns an `ActionFrame`
+  (`held`, `pressed`, `released` masks and `look`; plain `Copy` data, at most 64 actions).
+  `sample_frame(frame_dt)` turns the mouse counts since the last sample, plus the right stick at `PAD_LOOK_PER_SECOND` times its deflection per second, into a pending look (`pending_look`); `end_tick` returns it and zeroes it.
+- `Gamepads`: the only `gilrs` user. `Gamepads::new` returns `None` with one warning when
+  the backend can't start; `poll` drains pad events into an `ActionMap` (all pads feed one map).
 
 ```rust
-use moho_input::physical_key_to_binding_code;
-use winit::keyboard::{KeyCode, PhysicalKey};
+use moho_input::Action;
+use moho_input::bindings::{ActionBindings, Binding};
+use moho_input::key::Key;
 
-let key = PhysicalKey::Code(KeyCode::KeyW);
-let code = physical_key_to_binding_code(key);
-assert_eq!(code, 'W' as u32);
-```
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+enum MyAction { Jump }
 
-## Mapping Scheme
-
-- **Letters (A-Z)**: Mapped to ASCII character codes (`'A'` = 65, `'Z'` = 90)
-- **Space**: Mapped to ASCII space (`' '` = 32)
-- **Arrow Keys**: Mapped to 0x100-0x103 range
-  - Up: 0x100
-  - Down: 0x101
-  - Left: 0x102
-  - Right: 0x103
-- **Special Keys**: Mapped to 0x200+ range
-  - Escape: 0x200
-  - Tab: 0x201
-  - Backspace: 0x202
-  - Enter: 0x203
-  - Shift: 0x204
-  - Control: 0x205
-  - Alt: 0x206
-- **Function Keys (F1-F12)**: Mapped to 0x300-0x30B range
-- **Unmapped Keys**: Return 0
-
-## Usage in Other Crates
-
-**In moho_ui** (keybind capture):
-```rust
-use moho_input::physical_key_to_binding_code;
-
-// User presses a key, capture it for binding
-if let PhysicalKey::Code(key_code) = event.physical_key {
-    let binding_code = physical_key_to_binding_code(PhysicalKey::Code(key_code));
-    if binding_code != 0 {
-        // Save this binding
-    }
+impl Action for MyAction {
+    const ALL: &'static [Self] = &[MyAction::Jump];
+    fn name(self) -> &'static str { "jump" }
+    fn default_bindings(self) -> &'static [Binding] { &[Binding::key(Key::Space)] }
 }
+
+let section = [("jump".to_string(), "F".to_string())].into();
+let (bindings, warnings) = ActionBindings::<MyAction>::load(&section);
+assert!(warnings.is_empty());
+assert_eq!(bindings.get(MyAction::Jump), [Binding::key(Key::F)]);
 ```
 
-**In main binary** (input routing):
-```rust
-use moho_input::physical_key_to_binding_code;
-
-// Check if pressed key matches a bound action
-let code = physical_key_to_binding_code(event.physical_key);
-if code == settings.forward_key {
-    // Handle forward movement
-}
-```
-
-## Why This Design?
-
-The `u32` binding code scheme allows:
-1. Fast equality comparisons (no string parsing)
-2. Serialization to configuration files as simple integers
-3. Range-based grouping (letters, arrows, special keys)
-4. Extension to gamepad buttons (0x400+ range reserved)
-
-## Testing
-
-Run tests with:
-```bash
-cargo test --package moho_input
-```
-
-Tests verify that common keys (letters, space, arrows, special keys) map correctly and consistently.
+`ActionBindings` takes the raw section rather than `Prefs`, so this crate does not
+depend on `moho_core`. The strategy game's actions live in `flagstone_ui::actions`.

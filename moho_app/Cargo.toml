@@ -1,0 +1,23 @@
+[package]
+name = "moho_app"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+glam = { workspace = true }
+winit = { workspace = true }
+moho_renderer = { path = "../moho_renderer" }
+moho_audio = { path = "../moho_audio" }
+moho_input = { path = "../moho_input" }
+serde = { workspace = true, features = ["derive"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+postcard = { workspace = true }
+proptest = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true

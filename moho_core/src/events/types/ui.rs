@@ -2,7 +2,7 @@ use crate::events::Event;
 use std::any::Any;
 use std::path::PathBuf;
 
-/// Window display mode — mirrors `moho_ui::prefs::WindowMode` without a dependency.
+/// Window display mode — mirrors `flagstone_ui::prefs::WindowMode` without a dependency.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowMode {
     Windowed,
@@ -37,6 +37,12 @@ pub enum UiEvent {
 
     /// Exit requested
     ExitRequested,
+
+    /// Resume from the pause window requested
+    ResumeRequested,
+
+    /// Return to the main menu requested
+    MainMenuRequested,
 
     /// Window/display settings changed (emitted after saving video prefs)
     WindowSettingsChanged {

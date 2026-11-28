@@ -110,7 +110,7 @@ impl EventBus {
         E: Event,
         F: Fn(&E) + Send + Sync + 'static,
     {
-        self.subscribe_with_priority(handler, 0)
+        self.subscribe_with_priority(handler, 0);
     }
 
     /// Subscribe with custom priority (lower = higher priority).
@@ -189,16 +189,18 @@ impl EventBus {
 
         // Add to history if enabled
         if self.history_enabled && event.should_record() {
-            let mut history = self.history.lock().unwrap();
-            history.push_back(format!("{:?}", event));
-
-            // Limit history size
-            while history.len() > self.max_history {
-                history.pop_front();
-            }
+            self.record(format!("{event:?}"));
         }
 
         self.dispatch_to_handlers(&event);
+    }
+
+    /// Append an entry to the history, dropping the oldest beyond `max_history`.
+    fn record(&self, entry: String) {
+        let mut history = self.history.lock().unwrap();
+        history.push_back(entry);
+        let excess = history.len().saturating_sub(self.max_history);
+        history.drain(..excess);
     }
 
     /// Dispatch an event to all registered synchronous handlers.
@@ -252,11 +254,7 @@ impl EventBus {
         // Record history at defer time so the event is visible even before
         // process_deferred() runs.
         if self.history_enabled && event.should_record() {
-            let mut history = self.history.lock().unwrap();
-            history.push_back(format!("{:?}", event));
-            while history.len() > self.max_history {
-                history.pop_front();
-            }
+            self.record(format!("{event:?}"));
         }
 
         let deferred = DeferredEvent {
@@ -281,7 +279,7 @@ impl EventBus {
         };
 
         for deferred in events {
-            log::debug!("Processing deferred event: {}", deferred.type_name);
+            tracing::debug!(event_type = deferred.type_name, "Processing deferred event");
             (deferred.dispatch)(self);
         }
     }
@@ -301,28 +299,12 @@ impl EventBus {
         }
     }
 
-    /// Clear event history
-    ///
-    /// Removes all events from the debug history buffer.
-    pub fn clear_history(&self) {
-        let mut history = self.history.lock().unwrap();
-        history.clear();
-    }
-
     /// Get event history (for debugging)
     ///
     /// Returns all events currently in the history buffer.
     pub fn history(&self) -> Vec<String> {
         let history = self.history.lock().unwrap();
         history.iter().cloned().collect()
-    }
-
-    /// Get last N events from history
-    ///
-    /// Returns up to N most recent events from the history buffer.
-    pub fn recent_history(&self, n: usize) -> Vec<String> {
-        let history = self.history.lock().unwrap();
-        history.iter().rev().take(n).cloned().collect()
     }
 }
 
@@ -334,8 +316,8 @@ impl Default for EventBus {
 
 impl fmt::Debug for EventBus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let handler_count = self.sync_handlers.read().map(|h| h.len()).unwrap_or(0);
-        let queue_size = self.deferred_queue.lock().map(|q| q.len()).unwrap_or(0);
+        let handler_count = self.sync_handlers.read().map_or(0, |h| h.len());
+        let queue_size = self.deferred_queue.lock().map_or(0, |q| q.len());
         f.debug_struct("EventBus")
             .field("handler_types", &handler_count)
             .field("deferred_queue_size", &queue_size)

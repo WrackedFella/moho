@@ -1,0 +1,200 @@
+//! UI state management for screens, overlays, and modals.
+//!
+//! This module separates UI state management from rendering concerns,
+//! making the adapter lighter and the state easier to test and maintain.
+
+use crate::console_commands::{self, StrategyConsoleCommand};
+use crate::modal::ModalManager;
+use crate::overlays::{ChunkDebugOverlay, DebugHud, FpsHud, GameplayHud, OverlayManager, RtsHud};
+use crate::screens::Menu;
+use moho_ui_shell::Console;
+use std::collections::HashMap;
+
+/// Manages the lifecycle and state of all UI components
+pub struct UiStateManager {
+    /// Collection of all available screens (menus, forms, etc.)
+    screens: HashMap<String, Box<dyn Menu>>,
+
+    /// Currently active screen (if any)
+    active_screen: Option<String>,
+
+    /// Modal dialog manager
+    pub modal_manager: ModalManager,
+
+    /// Debug console overlay (separate from screens)
+    pub console: Console<StrategyConsoleCommand>,
+
+    /// Overlay layer manager (FPS HUD, RTS HUD, Debug HUD, etc.)
+    pub overlay_manager: OverlayManager,
+
+    /// Whether UI menus are currently visible
+    pub visible: bool,
+}
+
+/// The console with the strategy commands registered. A bad `console` binding or a command
+/// name clash is logged, and the console still works.
+fn strategy_console(prefs: &moho_core::prefs::Prefs) -> Console<StrategyConsoleCommand> {
+    let (mut console, warnings) = Console::new(prefs.bindings());
+    for warning in warnings {
+        tracing::warn!(?warning, "console binding");
+    }
+    if let Err(error) = console_commands::register(&mut console) {
+        tracing::error!(%error, "strategy console command refused");
+    }
+    console
+}
+
+impl UiStateManager {
+    /// Create a new UI state manager with default screens
+    pub fn new(prefs: moho_core::prefs::Prefs) -> Self {
+        // Register default screens
+        use crate::screens::{NewWorldMenu, PauseMenu, SettingsMenu, StartMenu};
+        let console = strategy_console(&prefs);
+        let mut screens: HashMap<String, Box<dyn Menu>> = HashMap::new();
+
+        screens.insert("start".to_string(), Box::new(StartMenu::new()));
+        screens.insert("pause".to_string(), Box::new(PauseMenu::new()));
+        screens.insert(
+            "settings".to_string(),
+            Box::new(SettingsMenu::with_prefs(prefs)),
+        );
+        screens.insert("new_world".to_string(), Box::new(NewWorldMenu::new()));
+
+        // Register default overlay layers
+        let mut overlay_manager = OverlayManager::new();
+        overlay_manager.register(Box::new(FpsHud::new()));
+        overlay_manager.register(Box::new(RtsHud::new()));
+        overlay_manager.register(Box::new(DebugHud::new()));
+        overlay_manager.register(Box::new(GameplayHud::new()));
+        overlay_manager.register(Box::new(ChunkDebugOverlay::new()));
+
+        Self {
+            screens,
+            active_screen: Some("start".to_string()),
+            modal_manager: ModalManager::new(),
+            console,
+            overlay_manager,
+            visible: true,
+        }
+    }
+
+    /// Add a new screen to the manager
+    pub fn add_screen(&mut self, name: String, screen: Box<dyn Menu>) {
+        self.screens.insert(name, screen);
+    }
+
+    /// Show a specific screen by name
+    pub fn show_screen(&mut self, name: &str) -> bool {
+        if !self.screens.contains_key(name) {
+            return false;
+        }
+
+        // Call on_hide for current screen
+        if let Some(current) = &self.active_screen
+            && let Some(screen) = self.screens.get_mut(current)
+        {
+            screen.on_hide();
+        }
+
+        // Activate new screen
+        self.active_screen = Some(name.to_string());
+        if let Some(screen) = self.screens.get_mut(name) {
+            screen.on_show();
+        }
+
+        self.visible = true;
+        true
+    }
+
+    /// Hide all screens
+    pub fn hide_all(&mut self) {
+        if let Some(current) = &self.active_screen
+            && let Some(screen) = self.screens.get_mut(current)
+        {
+            screen.on_hide();
+        }
+        self.active_screen = None;
+        self.visible = false;
+    }
+
+    /// Get the currently active screen (mutable)
+    pub fn active_screen_mut(&mut self) -> Option<&mut Box<dyn Menu>> {
+        if let Some(name) = &self.active_screen {
+            self.screens.get_mut(name)
+        } else {
+            None
+        }
+    }
+
+    /// Get the currently active screen (immutable)
+    pub fn active_screen(&self) -> Option<&dyn Menu> {
+        if let Some(name) = &self.active_screen {
+            self.screens.get(name).map(std::convert::AsRef::as_ref)
+        } else {
+            None
+        }
+    }
+
+    /// Get the name of the active screen
+    pub fn active_screen_name(&self) -> Option<&str> {
+        self.active_screen.as_deref()
+    }
+
+    /// Check if a specific screen is active
+    pub fn is_screen_active(&self, name: &str) -> bool {
+        self.active_screen.as_deref() == Some(name)
+    }
+
+    /// Get a specific screen by name (mutable)
+    pub fn get_screen_mut(&mut self, name: &str) -> Option<&mut Box<dyn Menu>> {
+        self.screens.get_mut(name)
+    }
+
+    /// Get a specific screen by name (immutable)
+    pub fn get_screen(&self, name: &str) -> Option<&dyn Menu> {
+        self.screens.get(name).map(std::convert::AsRef::as_ref)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::SettingsMenu;
+    use moho_core::prefs::Prefs;
+    use moho_input::bindings::Binding;
+    use moho_input::key::Key;
+
+    #[test]
+    fn pause_screen_is_registered() {
+        let mut manager = UiStateManager::new(Prefs::default());
+
+        assert!(
+            manager.get_screen("pause").is_some(),
+            "pause screen is registered"
+        );
+        assert!(manager.show_screen("pause"));
+        assert_eq!(manager.active_screen_name(), Some("pause"));
+    }
+
+    #[test]
+    fn injected_prefs_reach_the_settings_screen() {
+        let mut prefs = Prefs::default();
+        prefs.set_bindings(
+            [("move_forward".to_string(), "Q".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let mut manager = UiStateManager::new(prefs);
+
+        assert!(manager.show_screen("settings"));
+
+        let menu = manager
+            .active_screen()
+            .and_then(|screen| screen.as_any().downcast_ref::<SettingsMenu>())
+            .expect("settings screen is a SettingsMenu");
+        assert_eq!(
+            menu.get_staged_binding(0).first(),
+            Some(&Binding::key(Key::Q))
+        );
+    }
+}

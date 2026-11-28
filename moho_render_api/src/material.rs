@@ -5,6 +5,8 @@ use bytemuck::{Pod, Zeroable};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialGpu {
+    /// `xyz` is the colour. `w` is, for world meshes (object_type 0), gloss 0..1
+    /// with 0 = matte; for other objects it is unused.
     pub albedo: [f32; 4],
     pub params: [f32; 4],
 }
@@ -34,10 +36,28 @@ pub struct MaterialKey {
 /// Trait representing types that can be converted into a GPU-ready material
 /// descriptor and a stable dedup key.
 ///
-/// Implemented by game-domain material types (e.g. `MaterialType`) so the
+/// Implemented by a game line's material types so the
 /// renderer's `MaterialTable` can deduplicate and upload materials without
 /// naming those concrete types.
 pub trait RenderMaterial {
     fn to_gpu(&self) -> MaterialGpu;
     fn dedup_key(&self) -> MaterialKey;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MaterialGpu;
+
+    fn with_params2(value: f32) -> MaterialGpu {
+        MaterialGpu {
+            albedo: [1.0; 4],
+            params: [0.0, 0.0, value, 0.0],
+        }
+    }
+
+    #[test]
+    fn is_transparent_only_when_params2_positive() {
+        assert!(!with_params2(0.0).is_transparent());
+        assert!(with_params2(0.5).is_transparent());
+    }
 }

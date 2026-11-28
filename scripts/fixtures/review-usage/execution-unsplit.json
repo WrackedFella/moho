@@ -1,0 +1,11 @@
+[
+  {
+    "type": "result",
+    "subtype": "success",
+    "duration_ms": 139316,
+    "num_turns": 28,
+    "total_cost_usd": 0.4306661,
+    "usage": {"input_tokens": 40, "output_tokens": 5000, "cache_read_input_tokens": 300000, "cache_creation_input_tokens": 20000},
+    "modelUsage": {"claude-sonnet-5-5": {"contextWindow": 1000000, "maxOutputTokens": 128000}}
+  }
+]

@@ -1,0 +1,57 @@
+name: Work item
+description: A card from _todo/ published as its accepted spec. Title format "[ID] title".
+title: "[ID] "
+labels: []
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One to three sentences on what this does and why.
+    validations:
+      required: true
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Deliverables
+      description: Checkable outcomes, not tasks.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Gherkin scenarios in a ```gherkin fence, or a checklist for refactors and upgrades.
+  - type: textarea
+    id: tech-spec
+    attributes:
+      label: Tech spec
+      description: Crates and interfaces touched, out of scope, test map (scenario → test, gate class), ADR links.
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Manual steps, only for behavior observable in-game.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Only a gotcha that would be re-litigated. Refer to other items as #N, never by _todo/ path.
+  - type: dropdown
+    id: gate-class
+    attributes:
+      label: Gate class
+      description: "domain: failing tests need human review before implementation. glue: tests and code together."
+      options:
+        - domain
+        - glue
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: |
+        This issue is the record of the work item: edit this body when scope changes and put
+        deviations and decisions in comments; no card in _todo/ copies it. Add a
+        `line:engine|strategy|fps` label, link this issue as a sub-issue of its feature's
+        parent issue, add it to the Moho project board, and set Status there (Ready plus
+        Agent-eligible Yes makes it available to the orchestrator).

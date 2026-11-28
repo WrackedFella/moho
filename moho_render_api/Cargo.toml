@@ -2,8 +2,11 @@
 name = "moho_render_api"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
-bincode = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 bytemuck = { workspace = true, features = ["derive"] }
-glam = { workspace = true }
+
+[lints]
+workspace = true

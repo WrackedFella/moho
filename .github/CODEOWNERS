@@ -1,0 +1,12 @@
+# Files that define the gate and the agents' rules; changes need the owner's eyes.
+/.github/        @WrackedFella
+/.claude/        @WrackedFella
+/justfile        @WrackedFella
+/deny.toml       @WrackedFella
+/rust-toolchain.toml @WrackedFella
+/.cargo/         @WrackedFella
+/.config/        @WrackedFella
+/scripts/        @WrackedFella
+/Cargo.toml      @WrackedFella
+/CLAUDE.md       @WrackedFella
+/_todo/_STANDARDS.md @WrackedFella

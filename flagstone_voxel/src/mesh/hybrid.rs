@@ -1,0 +1,1651 @@
+//! Full-detail chunk meshing: the terrain surface from a density field in which structure
+//! blocks are air, plus one cube per structure block (ADR-0037).
+
+use super::super::face::FaceDirection;
+use super::super::grid::{BlockPos, VoxelGrid};
+use super::VoxelMesh;
+use super::blocky::BlockyMeshGenerator;
+use super::contact_ao::contact_ao;
+use super::marching_cubes::{MarchingCubes, SurfaceSample};
+use glam::{IVec3, Vec3};
+use std::cell::Cell;
+
+// Shift from marching-cubes field-index space to world space (excluding the chunk origin).
+// Without it smooth terrain sits half a unit off-centre, misaligned with the blocky
+// path and the grid used by raycasting. Two offsets fold into one `-0.5`:
+// 1. `terrain_density_field` pads by one cell, so index `i` is block `base + i - 1`.
+// 2. A density sample stands for the whole block, so it belongs at the block centre (`+ 0.5`).
+pub(crate) const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
+
+/// Edge length, in blocks, of a coarse (LOD 1) cell.
+pub(crate) const COARSE_STRIDE: i32 = 2;
+
+/// Whether the coarse cell `cell` of the chunk whose first block is `base` holds any
+/// solid block. Samples into neighbouring chunks for cells outside `0..8`, so faces
+/// between chunks cull correctly.
+pub(crate) fn coarse_cell_solid(grid: &VoxelGrid, base: IVec3, cell: IVec3) -> bool {
+    let origin = base + cell * COARSE_STRIDE;
+    (0..COARSE_STRIDE).any(|dx| {
+        (0..COARSE_STRIDE).any(|dy| {
+            (0..COARSE_STRIDE).any(|dz| grid.is_solid_at(origin + IVec3::new(dx, dy, dz)))
+        })
+    })
+}
+
+/// The material a face of coarse cell `cell` (of the chunk whose first block is `base`)
+/// shows: the face material of the first solid block, in x-then-z-then-y order, in the
+/// 2x2 layer of the cell touching `face`; when that layer is empty, of the opposite layer.
+pub(crate) fn coarse_face_material(
+    grid: &VoxelGrid,
+    base: IVec3,
+    cell: IVec3,
+    face: FaceDirection,
+) -> u32 {
+    let origin = base + cell * COARSE_STRIDE;
+    let axis = face.axis();
+    // The layer's two free axes, slowest first: x, then z, then y.
+    let (slow, fast) = match axis {
+        0 => (2, 1),
+        1 => (0, 2),
+        _ => (0, 1),
+    };
+    for inner in [false, true] {
+        let layer = if face.is_positive() == inner {
+            0
+        } else {
+            COARSE_STRIDE - 1
+        };
+        for i in 0..COARSE_STRIDE {
+            for j in 0..COARSE_STRIDE {
+                let mut offset = IVec3::ZERO;
+                offset[axis] = layer;
+                offset[slow] = i;
+                offset[fast] = j;
+                if let Some(material) = grid.face_material_at(origin + offset) {
+                    return material;
+                }
+            }
+        }
+    }
+    unreachable!("a solid coarse cell has a solid block in one of its two face layers")
+}
+
+/// How many blocks past each chunk face the padded density field reaches.
+pub(crate) const SAMPLE_REACH: i32 = 1;
+
+/// Samples per axis of a chunk's padded density field.
+const DENSITY_FIELD_SIZE: usize = 16 + SAMPLE_REACH as usize + SAMPLE_REACH as usize;
+
+/// The block that field sample `sample` of chunk `chunk_base`'s padded density field stands
+/// for: the field is padded by [`SAMPLE_REACH`] blocks, so sample `i` is block
+/// `chunk_base + i - SAMPLE_REACH`.
+fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
+    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::splat(SAMPLE_REACH)
+}
+
+/// The face material of the block that field sample `sample` of chunk `chunk_base`'s
+/// padded density field stands for (see [`sample_block`]).
+///
+/// # Panics
+/// If the sample is air: only solid samples are looked up.
+pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: [usize; 3]) -> u32 {
+    grid.face_material_at(sample_block(chunk_base, sample))
+        .expect("marching cubes asks for the material of solid samples only")
+}
+
+/// Position of field sample `sample` in a flat array of the 18³ padded field.
+fn sample_slot(sample: [usize; 3]) -> usize {
+    (sample[0] * 18 + sample[1]) * 18 + sample[2]
+}
+
+/// How many blocks past a sampled air block the contact AO ring reads (it covers the 26
+/// neighbours).
+const AO_RING_REACH: i32 = 1;
+
+/// The chunks whose mesh geometry reads `block`: its own chunk plus a neighbour on each axis
+/// where the block is within reach of that edge.
+///
+/// - Negative neighbour: its padded density field reaches [`SAMPLE_REACH`] blocks past its
+///   far edge, and the contact AO of the air blocks up to there reads a further
+///   [`AO_RING_REACH`]. So a block within `SAMPLE_REACH + AO_RING_REACH` of the negative
+///   edge is read.
+/// - Positive neighbour: its AO ring reaches back [`AO_RING_REACH`] blocks into the chunk's
+///   last blocks (its padded field reaches no further), so a block within that of the
+///   positive edge is read.
+///
+/// Yields 1, 2, 4 or 8 chunks for a `chunk_size` over `SAMPLE_REACH + 2 * AO_RING_REACH`.
+pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
+    let own = VoxelGrid::get_chunk_pos(block, chunk_size);
+    let local = block.rem_euclid(IVec3::splat(chunk_size));
+    let near_negative = local.cmplt(IVec3::splat(SAMPLE_REACH + AO_RING_REACH));
+    let near_positive = local.cmpge(IVec3::splat(chunk_size - AO_RING_REACH));
+    (0..27i32).filter_map(move |index| {
+        let step = IVec3::new(index % 3 - 1, index / 3 % 3 - 1, index / 9 - 1);
+        let allowed = step.cmpeq(IVec3::ZERO)
+            | (step.cmplt(IVec3::ZERO) & near_negative)
+            | (step.cmpgt(IVec3::ZERO) & near_positive);
+        allowed.all().then_some(own + step)
+    })
+}
+
+/// Whether `lod` is meshed at full detail (LOD 0) rather than coarse; the one LOD rule
+/// shared by chunk meshing and the cut caps.
+pub(crate) fn is_fine_lod(lod: u8) -> bool {
+    lod == 0
+}
+
+/// Whether the block at `pos` is a structure block, drawn as a cube. Structure blocks are
+/// air to the terrain surface wherever they sit.
+pub(crate) fn is_structure_at(grid: &VoxelGrid, pos: IVec3) -> bool {
+    grid.is_smooth_at(pos) == Some(false)
+}
+
+/// Whether the block at `pos` is a terrain block, the only kind solid to the terrain
+/// surface.
+fn is_terrain_at(grid: &VoxelGrid, pos: IVec3) -> bool {
+    grid.is_smooth_at(pos) == Some(true)
+}
+
+/// Hybrid mesh generator: a smooth terrain surface plus blocky structures.
+pub struct HybridMeshGenerator;
+
+impl HybridMeshGenerator {
+    /// Generate a mesh for a chunk: the terrain surface from the terrain density field
+    /// (structure blocks are air to it), then one cube per structure block in the chunk.
+    /// A chunk with no blocks still draws the terrain faces its one-block padding reaches,
+    /// so the mesh is empty only when neither the chunk nor its padding holds terrain and
+    /// the chunk holds no structures.
+    ///
+    /// # Arguments
+    /// * `grid` - The voxel grid
+    /// * `chunk_pos` - Chunk position in chunk coordinates
+    /// * `chunk_size` - Size of chunks (typically 16)
+    pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        let mut mesh = Self::generate_terrain_mesh(grid, chunk_pos, chunk_size);
+        let base_pos = chunk_pos * chunk_size;
+
+        for x in 0..chunk_size {
+            for y in 0..chunk_size {
+                for z in 0..chunk_size {
+                    let pos = base_pos + IVec3::new(x, y, z);
+                    if is_structure_at(grid, pos) {
+                        let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
+                        Self::append_mesh(&mut mesh, &block_mesh, pos);
+                    }
+                }
+            }
+        }
+
+        mesh
+    }
+
+    /// Marching Cubes terrain surface, in world space.
+    fn generate_terrain_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        let density_field = Self::terrain_density_field(grid, chunk_pos, chunk_size);
+        let base = chunk_pos * chunk_size;
+        // Cells sharing an edge ask for the same air sample; occlusion costs 26 lookups.
+        let occlusion: Vec<Cell<Option<f32>>> = vec![Cell::new(None); 18 * 18 * 18];
+        let mut mesh = MarchingCubes::generate_mesh(
+            &density_field,
+            chunk_size as usize,
+            |s| sample_face_material(grid, base, s),
+            |s| {
+                let block = sample_block(base, s);
+                let cached = &occlusion[sample_slot(s)];
+                let ambient_occlusion = cached.get().unwrap_or_else(|| {
+                    let ao = contact_ao(|p| grid.is_solid_at(p), block);
+                    cached.set(Some(ao));
+                    ao
+                });
+                SurfaceSample {
+                    block_light: grid.block_light_rgb_at(block),
+                    sky_exposed: grid.sky_exposed_at(block),
+                    ambient_occlusion,
+                }
+            },
+        );
+
+        let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);
+        for vertex in &mut mesh.vertices {
+            *vertex = (Vec3::from(*vertex) + offset).to_array();
+        }
+
+        mesh
+    }
+
+    /// The density field of the chunk's terrain blocks, padded by one block on every side.
+    /// Structure blocks are air to it, inside the chunk and in its padding.
+    pub(crate) fn terrain_density_field(
+        grid: &VoxelGrid,
+        chunk_pos: IVec3,
+        chunk_size: i32,
+    ) -> [[[f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE] {
+        let mut field = [[[0.0f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE];
+        let base_pos = chunk_pos * chunk_size;
+
+        // Sample with padding (-1 to chunk_size+1)
+        for (x, plane) in field.iter_mut().enumerate() {
+            for (y, row) in plane.iter_mut().enumerate() {
+                for (z, col) in row.iter_mut().enumerate() {
+                    let world_pos = sample_block(base_pos, [x, y, z]);
+
+                    *col = if is_terrain_at(grid, world_pos) {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                }
+            }
+        }
+
+        field
+    }
+
+    /// Append a block mesh to the chunk mesh with world space transform
+    fn append_mesh(target: &mut VoxelMesh, source: &VoxelMesh, block_pos: BlockPos) {
+        let base_index = target.vertices.len() as u32;
+
+        // Add vertices with world space offset
+        for &vertex in &source.vertices {
+            target.vertices.push([
+                vertex[0] + block_pos.x as f32,
+                vertex[1] + block_pos.y as f32,
+                vertex[2] + block_pos.z as f32,
+            ]);
+        }
+
+        // Copy normals, AO, geometry type, and light data
+        target.normals.extend_from_slice(&source.normals);
+        target
+            .ambient_occlusion
+            .extend_from_slice(&source.ambient_occlusion);
+        target
+            .geometry_type
+            .extend_from_slice(&source.geometry_type);
+        target.light_level.extend_from_slice(&source.light_level);
+        target
+            .block_light_rgb
+            .extend_from_slice(&source.block_light_rgb);
+        target.sky_exposed.extend_from_slice(&source.sky_exposed);
+        target.material.extend_from_slice(&source.material);
+
+        // Add indices with offset
+        for &index in &source.indices {
+            target.indices.push(base_index + index);
+        }
+    }
+
+    /// Generate a coarse (LOD 1) blocky mesh by sampling every 2 blocks.
+    ///
+    /// Each 2×2×2 block region is treated as a single coarse voxel. If any block in
+    /// the region is solid the cell is solid, giving an 8³ effective resolution for a
+    /// 16³ chunk. Face culling works against adjacent coarse cells (including cells in
+    /// neighbouring chunks). Skirt quads are appended along the four vertical chunk
+    /// edges to prevent seam cracks at LOD boundaries.
+    pub fn generate_coarse_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        const STRIDE: i32 = COARSE_STRIDE;
+        let coarse_size = chunk_size / STRIDE; // 8 for chunk_size == 16
+        let base = chunk_pos * chunk_size;
+        let mut mesh = VoxelMesh::empty();
+        let cell_solid =
+            |cx: i32, cy: i32, cz: i32| coarse_cell_solid(grid, base, IVec3::new(cx, cy, cz));
+        let face_material = |cx: i32, cy: i32, cz: i32, face: FaceDirection| {
+            coarse_face_material(grid, base, IVec3::new(cx, cy, cz), face)
+        };
+
+        for cx in 0..coarse_size {
+            for cy in 0..coarse_size {
+                for cz in 0..coarse_size {
+                    if !cell_solid(cx, cy, cz) {
+                        continue;
+                    }
+
+                    let wx = base.x + cx * STRIDE;
+                    let wy = base.y + cy * STRIDE;
+                    let wz = base.z + cz * STRIDE;
+
+                    // +X
+                    if !cell_solid(cx + 1, cy, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx + STRIDE, wy, wz],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [1.0, 0.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::PosX),
+                        );
+                        if cx == coarse_size - 1 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx + STRIDE, wy - STRIDE, wz],
+                                [wx + STRIDE, wy, wz],
+                                [wx + STRIDE, wy, wz + STRIDE],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE],
+                                [1.0, 0.0, 0.0],
+                                face_material(cx, cy, cz, FaceDirection::PosX),
+                            );
+                        }
+                    }
+                    // -X
+                    if !cell_solid(cx - 1, cy, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy, wz + STRIDE],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [wx, wy + STRIDE, wz],
+                            [wx, wy, wz],
+                            [-1.0, 0.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::NegX),
+                        );
+                        if cx == 0 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx, wy - STRIDE, wz + STRIDE],
+                                [wx, wy, wz + STRIDE],
+                                [wx, wy, wz],
+                                [wx, wy - STRIDE, wz],
+                                [-1.0, 0.0, 0.0],
+                                face_material(cx, cy, cz, FaceDirection::NegX),
+                            );
+                        }
+                    }
+                    // +Y
+                    if !cell_solid(cx, cy + 1, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy + STRIDE, wz],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [0.0, 1.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::PosY),
+                        );
+                    }
+                    // -Y
+                    if !cell_solid(cx, cy - 1, cz) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy, wz],
+                            [wx + STRIDE, wy, wz],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx, wy, wz + STRIDE],
+                            [0.0, -1.0, 0.0],
+                            face_material(cx, cy, cz, FaceDirection::NegY),
+                        );
+                    }
+                    // +Z
+                    if !cell_solid(cx, cy, cz + 1) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx, wy, wz + STRIDE],
+                            [wx + STRIDE, wy, wz + STRIDE],
+                            [wx + STRIDE, wy + STRIDE, wz + STRIDE],
+                            [wx, wy + STRIDE, wz + STRIDE],
+                            [0.0, 0.0, 1.0],
+                            face_material(cx, cy, cz, FaceDirection::PosZ),
+                        );
+                        if cz == coarse_size - 1 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx, wy - STRIDE, wz + STRIDE],
+                                [wx + STRIDE, wy - STRIDE, wz + STRIDE],
+                                [wx + STRIDE, wy, wz + STRIDE],
+                                [wx, wy, wz + STRIDE],
+                                [0.0, 0.0, 1.0],
+                                face_material(cx, cy, cz, FaceDirection::PosZ),
+                            );
+                        }
+                    }
+                    // -Z
+                    if !cell_solid(cx, cy, cz - 1) {
+                        Self::emit_coarse_quad(
+                            &mut mesh,
+                            [wx + STRIDE, wy, wz],
+                            [wx, wy, wz],
+                            [wx, wy + STRIDE, wz],
+                            [wx + STRIDE, wy + STRIDE, wz],
+                            [0.0, 0.0, -1.0],
+                            face_material(cx, cy, cz, FaceDirection::NegZ),
+                        );
+                        if cz == 0 {
+                            Self::emit_coarse_quad(
+                                &mut mesh,
+                                [wx + STRIDE, wy - STRIDE, wz],
+                                [wx, wy - STRIDE, wz],
+                                [wx, wy, wz],
+                                [wx + STRIDE, wy, wz],
+                                [0.0, 0.0, -1.0],
+                                face_material(cx, cy, cz, FaceDirection::NegZ),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        mesh
+    }
+
+    /// Emit a single quad (2 triangles) into a VoxelMesh with no AO and full brightness.
+    fn emit_coarse_quad(
+        mesh: &mut VoxelMesh,
+        v0: [i32; 3],
+        v1: [i32; 3],
+        v2: [i32; 3],
+        v3: [i32; 3],
+        normal: [f32; 3],
+        material: u32,
+    ) {
+        let base = mesh.vertices.len() as u32;
+        for v in [v0, v1, v2, v3] {
+            mesh.vertices.push([v[0] as f32, v[1] as f32, v[2] as f32]);
+            mesh.normals.push(normal);
+            mesh.ambient_occlusion.push(1.0);
+            mesh.geometry_type.push(1);
+            mesh.light_level.push(1.0);
+            mesh.block_light_rgb.push([0.0, 0.0, 0.0]);
+            mesh.sky_exposed.push(1.0);
+            mesh.material.push(material);
+        }
+        mesh.indices.push(base);
+        mesh.indices.push(base + 1);
+        mesh.indices.push(base + 2);
+        mesh.indices.push(base);
+        mesh.indices.push(base + 2);
+        mesh.indices.push(base + 3);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn every_field_sample_has_its_own_slot() {
+        let mut taken = vec![false; 18 * 18 * 18];
+        for x in 0..18 {
+            for y in 0..18 {
+                for z in 0..18 {
+                    let slot = sample_slot([x, y, z]);
+                    assert!(!taken[slot], "slot {slot} is shared by [{x}, {y}, {z}]");
+                    taken[slot] = true;
+                }
+            }
+        }
+    }
+
+    fn meshed_from_sized(block: [i32; 3], chunk_size: i32) -> Vec<[i32; 3]> {
+        let mut chunks: Vec<[i32; 3]> = chunks_meshed_from(IVec3::from(block), chunk_size)
+            .map(|chunk| chunk.to_array())
+            .collect();
+        chunks.sort_unstable();
+        chunks
+    }
+
+    fn meshed_from(block: [i32; 3]) -> Vec<[i32; 3]> {
+        meshed_from_sized(block, 16)
+    }
+
+    #[test]
+    fn chunks_meshed_from_counts_one_two_four_or_eight_chunks() {
+        type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
+        let rows: Vec<Row> = vec![
+            ("interior", [5, 5, 5], 16, vec![[0, 0, 0]]),
+            (
+                "far corner of own chunk",
+                [15, 15, 15],
+                16,
+                vec![
+                    [0, 0, 0],
+                    [0, 0, 1],
+                    [0, 1, 0],
+                    [0, 1, 1],
+                    [1, 0, 0],
+                    [1, 0, 1],
+                    [1, 1, 0],
+                    [1, 1, 1],
+                ],
+            ),
+            ("x face", [0, 5, 5], 16, vec![[-1, 0, 0], [0, 0, 0]]),
+            ("y face", [5, 0, 5], 16, vec![[0, -1, 0], [0, 0, 0]]),
+            ("z face", [5, 5, 0], 16, vec![[0, 0, -1], [0, 0, 0]]),
+            (
+                "xy edge",
+                [0, 0, 5],
+                16,
+                vec![[-1, -1, 0], [-1, 0, 0], [0, -1, 0], [0, 0, 0]],
+            ),
+            (
+                "xz edge",
+                [0, 5, 0],
+                16,
+                vec![[-1, 0, -1], [-1, 0, 0], [0, 0, -1], [0, 0, 0]],
+            ),
+            (
+                "yz edge",
+                [5, 0, 0],
+                16,
+                vec![[0, -1, -1], [0, -1, 0], [0, 0, -1], [0, 0, 0]],
+            ),
+            (
+                "corner",
+                [0, 0, 0],
+                16,
+                vec![
+                    [-1, -1, -1],
+                    [-1, -1, 0],
+                    [-1, 0, -1],
+                    [-1, 0, 0],
+                    [0, -1, -1],
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [0, 0, 0],
+                ],
+            ),
+            (
+                "x face with 32-block chunks",
+                [32, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+        ];
+
+        for (name, block, chunk_size, expected) in rows {
+            assert_eq!(meshed_from_sized(block, chunk_size), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn chunks_meshed_from_reaches_back_from_a_block_on_a_chunk_face() {
+        assert_eq!(meshed_from([16, 5, 5]), vec![[0, 0, 0], [1, 0, 0]]);
+        assert_eq!(meshed_from([5, 32, 5]), vec![[0, 1, 0], [0, 2, 0]]);
+        assert_eq!(meshed_from([5, 5, 16]), vec![[0, 0, 0], [0, 0, 1]]);
+        assert_eq!(
+            meshed_from([16, 16, 5]),
+            vec![[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]]
+        );
+    }
+
+    #[test]
+    fn chunks_meshed_from_covers_the_contact_ao_ring() {
+        type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
+        let rows: Vec<Row> = vec![
+            (
+                "local 1 reaches the negative neighbour",
+                [1, 5, 5],
+                16,
+                vec![[-1, 0, 0], [0, 0, 0]],
+            ),
+            ("local 2 does not", [2, 5, 5], 16, vec![[0, 0, 0]]),
+            (
+                "local 15 reaches the positive neighbour",
+                [15, 5, 5],
+                16,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+            ("local 14 does not", [14, 5, 5], 16, vec![[0, 0, 0]]),
+            (
+                "y axis, local 1",
+                [5, 17, 5],
+                16,
+                vec![[0, 0, 0], [0, 1, 0]],
+            ),
+            (
+                "z axis, local 15",
+                [5, 5, 15],
+                16,
+                vec![[0, 0, 0], [0, 0, 1]],
+            ),
+            (
+                "negative on x, positive on y",
+                [1, 15, 5],
+                16,
+                vec![[-1, 0, 0], [-1, 1, 0], [0, 0, 0], [0, 1, 0]],
+            ),
+            (
+                "negative coordinates, local 15",
+                [-1, -11, -11],
+                16,
+                vec![[-1, -1, -1], [0, -1, -1]],
+            ),
+            (
+                "32-block chunks, local 1",
+                [33, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+            (
+                "32-block chunks, local 31",
+                [31, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+        ];
+
+        for (name, block, chunk_size, expected) in rows {
+            assert_eq!(meshed_from_sized(block, chunk_size), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn chunks_meshed_from_handles_negative_world_coordinates() {
+        assert_eq!(meshed_from([-11, -11, -11]), vec![[-1, -1, -1]]);
+        assert_eq!(
+            meshed_from([-16, -11, -11]),
+            vec![[-2, -1, -1], [-1, -1, -1]]
+        );
+        assert_eq!(
+            meshed_from([-16, -11, -32]),
+            vec![[-2, -1, -3], [-2, -1, -2], [-1, -1, -3], [-1, -1, -2]]
+        );
+    }
+
+    #[test]
+    fn test_generate_empty_chunk() {
+        let grid = VoxelGrid::new(16);
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, 16);
+
+        assert_eq!(mesh.vertices.len(), 0);
+        assert_eq!(mesh.indices.len(), 0);
+    }
+
+    #[test]
+    fn blocky_chunk_mesh_sits_at_its_chunk_origin() {
+        let mut grid = VoxelGrid::new(16);
+        grid.place_block(IVec3::new(17, 3, -14), 100, None);
+
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(1, 0, -1), 16);
+
+        assert_eq!(mesh.vertices.len(), 24);
+        let min = mesh
+            .vertices
+            .iter()
+            .fold(Vec3::splat(f32::MAX), |acc, v| acc.min(Vec3::from(*v)));
+        let max = mesh
+            .vertices
+            .iter()
+            .fold(Vec3::splat(f32::MIN), |acc, v| acc.max(Vec3::from(*v)));
+        assert_eq!(min, Vec3::new(17.0, 3.0, -14.0));
+        assert_eq!(max, Vec3::new(18.0, 4.0, -13.0));
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_empty_grid() {
+        let grid = VoxelGrid::new(16);
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+        assert_eq!(mesh.vertices.len(), 0);
+        assert_eq!(mesh.indices.len(), 0);
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_solid_chunk_has_geometry() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..16 {
+            for y in 0..16 {
+                for z in 0..16 {
+                    grid.place_block(IVec3::new(x, y, z), 0, None);
+                }
+            }
+        }
+
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+
+        assert_eq!(mesh.vertices.len(), 2560);
+        assert_eq!(mesh.indices.len(), 3840);
+        assert!(mesh.indices.iter().all(|&i| (i as usize) < 2560));
+        let facing_pos_x = mesh
+            .normals
+            .iter()
+            .filter(|n| **n == [1.0, 0.0, 0.0])
+            .count();
+        assert_eq!(facing_pos_x, 4 * 128, "128 quads facing +X");
+    }
+
+    #[test]
+    fn test_generate_coarse_mesh_uses_stride2() {
+        let mut single = VoxelGrid::new(16);
+        single.place_block(IVec3::new(1, 1, 1), 0, None);
+        let mut full_cell = VoxelGrid::new(16);
+        for dx in 0..2 {
+            for dy in 0..2 {
+                for dz in 0..2 {
+                    full_cell.place_block(IVec3::new(dx, dy, dz), 0, None);
+                }
+            }
+        }
+
+        let sparse = HybridMeshGenerator::generate_coarse_mesh(&single, IVec3::ZERO, 16);
+        let dense = HybridMeshGenerator::generate_coarse_mesh(&full_cell, IVec3::ZERO, 16);
+
+        assert!(!sparse.vertices.is_empty());
+        assert_eq!(sparse.vertices, dense.vertices);
+        assert_eq!(sparse.indices, dense.indices);
+    }
+
+    type Quad = ([i32; 3], [i32; 3], [i32; 3]);
+
+    /// The 2x2-block quads covering the outside of the box `lo..hi`, as (normal, min, max).
+    fn box_quads(lo: [i32; 3], hi: [i32; 3]) -> Vec<Quad> {
+        let mut quads = Vec::new();
+        for axis in 0..3 {
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            for sign in [-1, 1] {
+                let plane = if sign < 0 { lo[axis] } else { hi[axis] };
+                for a in (lo[u]..hi[u]).step_by(2) {
+                    for b in (lo[v]..hi[v]).step_by(2) {
+                        let (mut normal, mut min, mut max) = ([0; 3], [0; 3], [0; 3]);
+                        normal[axis] = sign;
+                        (min[axis], max[axis]) = (plane, plane);
+                        (min[u], max[u]) = (a, a + 2);
+                        (min[v], max[v]) = (b, b + 2);
+                        quads.push((normal, min, max));
+                    }
+                }
+            }
+        }
+        quads
+    }
+
+    fn mesh_quads(mesh: &VoxelMesh) -> Vec<Quad> {
+        assert_eq!(mesh.vertices.len() % 4, 0);
+        let mut quads: Vec<Quad> = mesh
+            .vertices
+            .chunks(4)
+            .zip(mesh.normals.chunks(4))
+            .map(|(verts, normals)| {
+                assert!(normals.iter().all(|n| *n == normals[0]));
+                let mut min = [i32::MAX; 3];
+                let mut max = [i32::MIN; 3];
+                for v in verts {
+                    for a in 0..3 {
+                        assert_eq!(v[a].fract(), 0.0, "vertex {v:?} off the integer lattice");
+                        min[a] = min[a].min(v[a] as i32);
+                        max[a] = max[a].max(v[a] as i32);
+                    }
+                }
+                let mut corners: Vec<[i32; 3]> =
+                    verts.iter().map(|v| v.map(|c| c as i32)).collect();
+                assert!(
+                    corners
+                        .iter()
+                        .all(|c| (0..3).all(|a| c[a] == min[a] || c[a] == max[a])),
+                    "quad {verts:?} has a vertex off its bounding rectangle's corners"
+                );
+                corners.sort_unstable();
+                corners.dedup();
+                assert_eq!(corners.len(), 4, "quad {verts:?} repeats a corner");
+                (normals[0].map(|c| c as i32), min, max)
+            })
+            .collect();
+        quads.sort_unstable();
+        quads
+    }
+
+    fn assert_coarse_fixture_in_chunk(chunk_pos: IVec3) {
+        let origin = chunk_pos * 16;
+        let mut grid = VoxelGrid::new(16);
+        let mut place = |local: [i32; 3]| {
+            grid.place_block(origin + IVec3::from(local), 0, None);
+        };
+        for x in 4..8 {
+            for y in 4..8 {
+                for z in 4..8 {
+                    place([x, y, z]);
+                }
+            }
+        }
+        place([11, 11, 11]);
+        // Blocks against each horizontal chunk edge, where a skirt quad hangs one cell below.
+        place([0, 8, 8]);
+        place([15, 8, 8]);
+        place([8, 8, 15]);
+        place([8, 8, 0]);
+
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, chunk_pos, 16);
+
+        let mut expected = box_quads([4, 4, 4], [8, 8, 8]);
+        expected.extend(box_quads([10, 10, 10], [12, 12, 12]));
+        expected.extend(box_quads([0, 8, 8], [2, 10, 10]));
+        expected.extend(box_quads([14, 8, 8], [16, 10, 10]));
+        expected.extend(box_quads([8, 8, 14], [10, 10, 16]));
+        expected.extend(box_quads([8, 8, 0], [10, 10, 2]));
+        expected.push(([-1, 0, 0], [0, 6, 8], [0, 8, 10]));
+        expected.push(([1, 0, 0], [16, 6, 8], [16, 8, 10]));
+        expected.push(([0, 0, 1], [8, 6, 16], [10, 8, 16]));
+        expected.push(([0, 0, -1], [8, 6, 0], [10, 8, 0]));
+        let o = origin.to_array();
+        let mut expected: Vec<Quad> = expected
+            .into_iter()
+            .map(|(n, min, max)| {
+                (
+                    n,
+                    [0, 1, 2].map(|a| min[a] + o[a]),
+                    [0, 1, 2].map(|a| max[a] + o[a]),
+                )
+            })
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(mesh_quads(&mesh), expected);
+        assert_eq!(mesh.indices.len(), mesh.vertices.len() / 4 * 6);
+    }
+
+    #[test]
+    fn coarse_mesh_emits_exposed_faces_on_the_stride_lattice() {
+        assert_coarse_fixture_in_chunk(IVec3::ZERO);
+    }
+
+    #[test]
+    fn coarse_mesh_offsets_quads_by_the_chunk_origin() {
+        assert_coarse_fixture_in_chunk(IVec3::new(1, 0, -1));
+    }
+
+    type Block = ([i32; 3], u32, Option<u32>);
+
+    fn grid_with(blocks: impl IntoIterator<Item = Block>) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for (pos, material, resource) in blocks {
+            grid.place_block(IVec3::from(pos), material, resource);
+        }
+        grid
+    }
+
+    /// Blocks `lo..=hi` on every axis, all of one material.
+    fn solid_box(lo: [i32; 3], hi: [i32; 3], material: u32) -> Vec<Block> {
+        let mut blocks = Vec::new();
+        for x in lo[0]..=hi[0] {
+            for y in lo[1]..=hi[1] {
+                for z in lo[2]..=hi[2] {
+                    blocks.push(([x, y, z], material, None));
+                }
+            }
+        }
+        blocks
+    }
+
+    /// Each triangle's centroid, its vertex normal's y, and its three vertex materials.
+    fn triangles(mesh: &VoxelMesh) -> Vec<(Vec3, f32, [u32; 3])> {
+        assert_eq!(
+            mesh.material.len(),
+            mesh.vertices.len(),
+            "one material per vertex"
+        );
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|tri| {
+                let at = |k: usize| Vec3::from(mesh.vertices[tri[k] as usize]);
+                (
+                    (at(0) + at(1) + at(2)) / 3.0,
+                    mesh.normals[tri[0] as usize][1],
+                    tri.map(|i| mesh.material[i as usize]),
+                )
+            })
+            .collect()
+    }
+
+    fn chunk_mesh(grid: &VoxelGrid) -> VoxelMesh {
+        HybridMeshGenerator::generate_chunk_mesh(grid, IVec3::ZERO, 16)
+    }
+
+    #[test]
+    fn exposed_smooth_block_carries_its_face_material() {
+        let rows = [
+            ("soil", 1, None, 1, 2),
+            ("stone", 2, None, 2, 1),
+            ("stone with iron ore", 2, Some(1), 3, 1),
+        ];
+
+        for (name, material, resource, expected, slab) in rows {
+            let mut blocks = solid_box([2, 0, 2], [13, 7, 13], slab);
+            blocks.push(([8, 8, 8], material, resource));
+            let mesh = chunk_mesh(&grid_with(blocks));
+            let probe = Vec3::splat(8.5);
+
+            let all = triangles(&mesh);
+            let near: Vec<_> = all
+                .iter()
+                .filter(|(c, ..)| c.distance(probe) < 0.4)
+                .collect();
+            let far: Vec<_> = all
+                .iter()
+                .filter(|(c, ..)| c.distance(probe) > 2.0)
+                .collect();
+
+            assert!(!near.is_empty(), "{name}: triangles around the block");
+            for (c, _, materials) in &near {
+                assert_eq!(*materials, [expected; 3], "{name}: triangle at {c:?}");
+            }
+            assert!(!far.is_empty(), "{name}: triangles on the slab");
+            for (c, _, materials) in &far {
+                assert_eq!(*materials, [slab; 3], "{name}: slab triangle at {c:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn upward_triangles_over_grass_carry_grass() {
+        let mut blocks = solid_box([2, 0, 2], [13, 5, 13], 2);
+        blocks.extend(solid_box([2, 6, 2], [9, 6, 13], 2));
+        blocks.extend(solid_box([2, 7, 2], [9, 7, 13], 0));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        let flat_up = |height: f32| {
+            triangles(&mesh)
+                .into_iter()
+                .filter(|(c, normal_y, _)| *normal_y > 0.9 && (c.y - height).abs() < 1e-3)
+                .collect::<Vec<_>>()
+        };
+        let plateau: Vec<_> = flat_up(8.0)
+            .into_iter()
+            .filter(|(c, ..)| (3.0..9.0).contains(&c.x))
+            .collect();
+        let lower: Vec<_> = flat_up(6.0)
+            .into_iter()
+            .filter(|(c, ..)| c.x > 11.0)
+            .collect();
+
+        assert!(!plateau.is_empty(), "the grass top has flat triangles");
+        for (c, _, materials) in &plateau {
+            assert_eq!(*materials, [0; 3], "grass top at {c:?}");
+        }
+        assert!(!lower.is_empty(), "the lower ground has flat triangles");
+        for (c, _, materials) in &lower {
+            assert_eq!(*materials, [2; 3], "stone top at {c:?}");
+        }
+    }
+
+    #[test]
+    fn mining_soil_exposes_stone_material() {
+        let soil = IVec3::new(8, 6, 8);
+        let mut blocks = solid_box([2, 0, 2], [13, 5, 13], 2);
+        blocks.push(([8, 6, 8], 1, None));
+        let mut grid = grid_with(blocks);
+        let before = chunk_mesh(&grid);
+        assert!(before.material.contains(&1), "the soil block draws as soil");
+
+        assert!(grid.clear_block(soil));
+        let after = chunk_mesh(&grid);
+
+        assert!(!after.material.contains(&1), "no vertex still carries soil");
+        let over_hole: Vec<_> = triangles(&after)
+            .into_iter()
+            .filter(|(c, ..)| (c.x - 8.5).abs() < 0.7 && (c.z - 8.5).abs() < 0.7 && c.y >= 5.9)
+            .collect();
+        assert!(!over_hole.is_empty(), "the hole has a floor");
+        for (c, _, materials) in &over_hole {
+            assert_eq!(*materials, [2; 3], "exposed face at {c:?}");
+        }
+        assert!(after.material.iter().all(|&m| m == 2));
+    }
+
+    #[test]
+    fn border_triangles_take_the_material_of_a_neighbouring_chunks_block() {
+        let grid = grid_with([([15, 8, 8], 1, None), ([16, 8, 8], 2, None)]);
+
+        let mesh = chunk_mesh(&grid);
+
+        let all = triangles(&mesh);
+        let soil_side: Vec<_> = all.iter().filter(|(c, ..)| c.x < 15.999).collect();
+        let stone_side: Vec<_> = all.iter().filter(|(c, ..)| c.x > 16.001).collect();
+        assert!(
+            !soil_side.is_empty(),
+            "the block inside the chunk is meshed"
+        );
+        assert!(
+            !stone_side.is_empty(),
+            "the border cell reaches the padding block"
+        );
+        for (c, _, materials) in soil_side {
+            assert_eq!(*materials, [1; 3], "triangle at {c:?}");
+        }
+        for (c, _, materials) in stone_side {
+            assert_eq!(*materials, [2; 3], "triangle at {c:?}");
+        }
+    }
+
+    #[test]
+    fn smooth_triangles_in_a_chunk_off_the_origin_carry_their_own_blocks_material() {
+        let chunk = IVec3::new(1, 1, 0);
+        let grid = grid_with([([20, 20, 4], 2, None), ([21, 20, 4], 1, None)]);
+
+        let mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, chunk, 16);
+
+        let all = triangles(&mesh);
+        let stone: Vec<_> = all.iter().filter(|(c, ..)| c.x < 20.99).collect();
+        let soil: Vec<_> = all.iter().filter(|(c, ..)| c.x > 21.01).collect();
+        assert!(!stone.is_empty() && !soil.is_empty());
+        for (c, _, materials) in stone {
+            assert_eq!(*materials, [2; 3], "triangle at {c:?}");
+        }
+        for (c, _, materials) in soil {
+            assert_eq!(*materials, [1; 3], "triangle at {c:?}");
+        }
+    }
+
+    #[test]
+    fn smooth_triangles_in_a_mixed_chunk_never_carry_a_blocky_blocks_material() {
+        let mut blocks = solid_box([2, 0, 2], [10, 3, 10], 2);
+        blocks.push(([6, 4, 6], 100, None));
+        blocks.push(([7, 4, 6], 101, None));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        assert!(mesh.geometry_type.contains(&0) && mesh.geometry_type.contains(&1));
+        for (material, geometry) in mesh.material.iter().zip(&mesh.geometry_type) {
+            match geometry {
+                0 => assert_eq!(*material, 2, "smooth vertex"),
+                _ => assert!([100, 101].contains(material), "blocky vertex {material}"),
+            }
+        }
+    }
+
+    fn cell(cx: i32, cy: i32, cz: i32) -> IVec3 {
+        IVec3::new(cx, cy, cz)
+    }
+
+    /// The block of coarse cell `(0, 0, 0)` at `offset` (each 0 or 1).
+    fn cell_block(offset: [i32; 3], material: u32, resource: Option<u32>) -> Block {
+        (offset, material, resource)
+    }
+
+    /// The two blocks of the 2x2 layer of cell `(0, 0, 0)` touching `face`, as offsets.
+    fn layer_offsets(face: FaceDirection, inner: bool) -> Vec<[i32; 3]> {
+        let (axis, positive) = match face {
+            FaceDirection::PosX => (0, true),
+            FaceDirection::NegX => (0, false),
+            FaceDirection::PosY => (1, true),
+            FaceDirection::NegY => (1, false),
+            FaceDirection::PosZ => (2, true),
+            FaceDirection::NegZ => (2, false),
+        };
+        let layer = i32::from(positive != inner);
+        let mut offsets = Vec::new();
+        for a in 0..2 {
+            for b in 0..2 {
+                let mut offset = [0; 3];
+                offset[axis] = layer;
+                offset[(axis + 1) % 3] = a;
+                offset[(axis + 2) % 3] = b;
+                offsets.push(offset);
+            }
+        }
+        offsets
+    }
+
+    const FACES: [FaceDirection; 6] = [
+        FaceDirection::PosX,
+        FaceDirection::NegX,
+        FaceDirection::PosY,
+        FaceDirection::NegY,
+        FaceDirection::PosZ,
+        FaceDirection::NegZ,
+    ];
+
+    #[test]
+    fn coarse_face_takes_the_first_solid_block_of_its_face_layer() {
+        for face in FACES {
+            let touching = layer_offsets(face, false);
+            let opposite = layer_offsets(face, true);
+            let mut blocks: Vec<Block> = opposite
+                .iter()
+                .map(|&offset| cell_block(offset, 1, None))
+                .collect();
+            blocks.push(cell_block(touching[2], 2, None));
+            blocks.push(cell_block(touching[3], 100, None));
+            let grid = grid_with(blocks);
+
+            let material = coarse_face_material(&grid, IVec3::ZERO, cell(0, 0, 0), face);
+
+            assert_eq!(material, 2, "{face:?}: skips the empty blocks of the layer");
+        }
+        let ore_on_top = grid_with([cell_block([1, 1, 0], 2, Some(1))]);
+        assert_eq!(
+            coarse_face_material(&ore_on_top, IVec3::ZERO, cell(0, 0, 0), FaceDirection::PosY),
+            3,
+            "an ore block gives its resource's material"
+        );
+    }
+
+    #[test]
+    fn coarse_face_falls_back_to_the_inner_layer() {
+        for face in FACES {
+            let opposite = layer_offsets(face, true);
+            let grid = grid_with([cell_block(opposite[3], 2, None)]);
+
+            let material = coarse_face_material(&grid, IVec3::ZERO, cell(0, 0, 0), face);
+
+            assert_eq!(material, 2, "{face:?}: the touching layer is empty");
+        }
+    }
+
+    #[test]
+    fn coarse_face_layer_order_is_x_then_z_then_y() {
+        let grid = grid_with([
+            cell_block([1, 1, 0], 1, None),
+            cell_block([0, 1, 1], 2, None),
+        ]);
+
+        let top = coarse_face_material(&grid, IVec3::ZERO, cell(0, 0, 0), FaceDirection::PosY);
+
+        assert_eq!(top, 2, "x varies slowest: (0, 1) comes before (1, 0)");
+        let column = grid_with([
+            cell_block([0, 1, 0], 1, None),
+            cell_block([0, 0, 1], 2, None),
+        ]);
+        let side = coarse_face_material(&column, IVec3::ZERO, cell(0, 0, 0), FaceDirection::NegX);
+        assert_eq!(
+            side, 1,
+            "within a layer on x, z before y: (z 0, y 1) comes before (z 1, y 0)"
+        );
+    }
+
+    #[test]
+    fn coarse_face_reads_the_cell_at_its_chunk_offset() {
+        let grid = grid_with([([18, -14, 5], 2, None), ([19, -13, 5], 1, None)]);
+        let base = IVec3::new(16, -16, 0);
+
+        let top = coarse_face_material(&grid, base, cell(1, 1, 2), FaceDirection::PosY);
+        let bottom = coarse_face_material(&grid, base, cell(1, 1, 2), FaceDirection::NegY);
+
+        assert_eq!(top, 1);
+        assert_eq!(bottom, 2);
+    }
+
+    #[test]
+    fn coarse_quads_and_skirts_carry_their_faces_material() {
+        let grid = grid_with([([14, 0, 0], 1, None), ([15, 1, 1], 2, None)]);
+
+        let mesh = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+
+        assert_eq!(mesh.material.len(), mesh.vertices.len());
+        assert!(!mesh.vertices.is_empty());
+        for (normal, material) in mesh.normals.iter().zip(&mesh.material) {
+            let positive = normal.iter().sum::<f32>() > 0.0;
+            assert_eq!(*material, if positive { 2 } else { 1 }, "normal {normal:?}");
+        }
+        let skirts = mesh
+            .vertices
+            .iter()
+            .zip(&mesh.normals)
+            .filter(|(v, n)| **n == [1.0, 0.0, 0.0] && v[1] < 0.0)
+            .count();
+        assert!(skirts > 0, "the +X skirt hangs below the cell");
+    }
+
+    fn block_strategy() -> impl Strategy<Value = Block> {
+        (
+            (0..7i32, 0..7i32, 0..7i32),
+            prop::sample::select(vec![1u32, 2, 100, 101]),
+            prop::sample::select(vec![None, Some(1u32)]),
+        )
+            .prop_map(|((x, y, z), material, resource)| ([x, y, z], material, resource))
+    }
+
+    fn face_materials(grid: &VoxelGrid, blocks: &[Block]) -> Vec<u32> {
+        blocks
+            .iter()
+            .map(|(_, material, resource)| {
+                grid.material_registry.face_material(*material, *resource)
+            })
+            .collect()
+    }
+
+    fn assert_one_material_per_triangle(
+        mesh: &VoxelMesh,
+        allowed: &[u32],
+    ) -> Result<(), TestCaseError> {
+        prop_assert_eq!(mesh.material.len(), mesh.vertices.len());
+        for (k, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+            let materials = tri.map(|i| mesh.material[i as usize]);
+            prop_assert!(
+                materials[0] == materials[1] && materials[1] == materials[2],
+                "triangle {} mixes {:?}",
+                k,
+                materials
+            );
+            prop_assert!(
+                allowed.contains(&materials[0]),
+                "triangle {} carries {}, not the face material of any placed block {:?}",
+                k,
+                materials[0],
+                allowed
+            );
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn every_triangle_has_one_material(
+            blocks in prop::collection::vec(block_strategy(), 1..120),
+            cut in 0.0f32..7.0,
+        ) {
+            let grid = grid_with(blocks.clone());
+            let allowed = face_materials(&grid, &blocks);
+
+            let fine = chunk_mesh(&grid);
+            let coarse = HybridMeshGenerator::generate_coarse_mesh(&grid, IVec3::ZERO, 16);
+            let caps = [0u8, 1].map(|lod| crate::mesh::cut_cap_mesh(&grid, IVec3::ZERO, lod, cut));
+
+            assert_one_material_per_triangle(&fine, &allowed)?;
+            assert_one_material_per_triangle(&coarse, &allowed)?;
+            for cap in &caps {
+                assert_one_material_per_triangle(cap, &allowed)?;
+            }
+        }
+    }
+
+    fn assert_vertex_light(
+        mesh: &VoxelMesh,
+        i: usize,
+        rgb: [u8; 3],
+        sky: bool,
+        why: &str,
+    ) -> Result<(), TestCaseError> {
+        let want_rgb = rgb.map(|c| f32::from(c) / 15.0);
+        let want_sky = if sky { 1.0f32 } else { 0.0 };
+        for (got, want) in mesh.block_light_rgb[i].iter().zip(&want_rgb) {
+            prop_assert!(
+                (got - want).abs() < 1e-6,
+                "{}: vertex {:?} block light {:?}, expected {:?}",
+                why,
+                mesh.vertices[i],
+                mesh.block_light_rgb[i],
+                want_rgb
+            );
+        }
+        prop_assert_eq!(
+            mesh.sky_exposed[i],
+            want_sky,
+            "{}: vertex {:?} sky exposure",
+            why,
+            mesh.vertices[i]
+        );
+        let combined = (want_rgb[0].max(want_rgb[1]).max(want_rgb[2]) + want_sky * 0.1).min(1.0);
+        prop_assert!(
+            (mesh.light_level[i] - combined).abs() < 1e-6,
+            "{}: vertex {:?} light level {}, expected {}",
+            why,
+            mesh.vertices[i],
+            mesh.light_level[i],
+            combined
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn smooth_vertices_under_a_cover_block_are_not_sky_exposed() {
+        let mut blocks = solid_box([2, 0, 2], [13, 7, 13], 1);
+        blocks.extend(solid_box([8, 9, 8], [9, 9, 9], 100));
+        let mut grid = grid_with(blocks);
+        for x in 1..=14 {
+            for z in 1..=14 {
+                for y in 0..=12 {
+                    let pos = IVec3::new(x, y, z);
+                    let under_cover = (8..=9).contains(&x) && (8..=9).contains(&z) && y == 8;
+                    grid.set_sky_exposed(pos, y >= 8 && !under_cover && !grid.is_solid_at(pos));
+                }
+            }
+        }
+
+        let mesh = chunk_mesh(&grid);
+
+        let mut covered = 0;
+        let mut open = 0;
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            let on_ground_top = mesh.geometry_type[i] == 0
+                && (v[1] - 8.0).abs() < 1e-3
+                && (3.0..12.0).contains(&v[0])
+                && (3.0..12.0).contains(&v[2]);
+            if !on_ground_top {
+                continue;
+            }
+            let under_cover = [8.5, 9.5].contains(&v[0]) && [8.5, 9.5].contains(&v[2]);
+            if under_cover {
+                covered += 1;
+                assert_eq!(mesh.sky_exposed[i], 0.0, "covered ground at {v:?}");
+            } else {
+                open += 1;
+                assert_eq!(mesh.sky_exposed[i], 1.0, "open ground at {v:?}");
+            }
+        }
+        assert!(covered >= 4, "ground under the cover is meshed: {covered}");
+        assert!(open > 0, "open ground beside it is meshed");
+    }
+
+    #[test]
+    fn smooth_vertices_carry_the_light_of_their_air_sample() {
+        let pocket = 7..=9;
+        let mut grid = grid_with(solid_box([3, 3, 3], [12, 12, 12], 1));
+        for x in 3..=12 {
+            for y in 3..=12 {
+                for z in 3..=12 {
+                    let pos = IVec3::new(x, y, z);
+                    grid.set_block_light_rgb(pos, [15, 15, 15]);
+                    grid.set_sky_exposed(pos, true);
+                }
+            }
+        }
+        for x in pocket.clone() {
+            for y in pocket.clone() {
+                for z in pocket.clone() {
+                    let pos = IVec3::new(x, y, z);
+                    assert!(grid.clear_block(pos));
+                    grid.set_block_light_rgb(
+                        pos,
+                        [
+                            ((x - 6) * 3) as u8,
+                            ((y - 6) * 3) as u8,
+                            ((z - 6) * 3) as u8,
+                        ],
+                    );
+                    grid.set_sky_exposed(pos, (x + y + z) % 2 == 0);
+                }
+            }
+        }
+
+        let mesh = chunk_mesh(&grid);
+
+        let mut walls = 0;
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            if !v.iter().all(|c| (7.0 - 1e-3..=10.0 + 1e-3).contains(c)) {
+                continue;
+            }
+            walls += 1;
+            let air = v.map(|c| (c.floor() as i32).clamp(7, 9));
+            let rgb = [(air[0] - 6) * 3, (air[1] - 6) * 3, (air[2] - 6) * 3].map(|c| c as u8);
+            let sky = (air[0] + air[1] + air[2]) % 2 == 0;
+            assert_vertex_light(
+                &mesh,
+                i,
+                rgb,
+                sky,
+                &format!("pocket wall, air voxel {air:?}"),
+            )
+            .unwrap();
+        }
+        assert!(walls >= 54, "the pocket's walls are meshed: {walls}");
+    }
+
+    #[test]
+    fn smooth_vertices_on_a_chunk_edge_read_the_diagonal_chunk() {
+        let mut grid = grid_with(solid_box([2, 0, 2], [15, 16, 13], 1));
+        let edge_air = IVec3::new(16, 16, 8);
+        grid.set_block_light_rgb(edge_air, [9, 4, 2]);
+        grid.set_sky_exposed(edge_air, false);
+
+        let mesh = chunk_mesh(&grid);
+
+        let edge_vertices: Vec<usize> = (0..mesh.vertices.len())
+            .filter(|&i| mesh.vertices[i] == [16.0, 16.5, 8.5])
+            .collect();
+        assert!(!edge_vertices.is_empty(), "the chunk meshes the edge voxel");
+        for i in edge_vertices {
+            assert_vertex_light(&mesh, i, [9, 4, 2], false, "voxel in the diagonal chunk").unwrap();
+        }
+    }
+
+    /// The voxel on the air side of the edge `vertex` lies on: smooth vertices sit at
+    /// block centres on two axes and on a block boundary along the edge's axis.
+    fn air_voxel_of(grid: &VoxelGrid, vertex: [f32; 3]) -> IVec3 {
+        let edge_axis = (0..3)
+            .find(|&a| (vertex[a] - vertex[a].round()).abs() < 1e-3)
+            .expect("a vertex lies on a block boundary along its edge");
+        let lower = IVec3::from(vertex.map(|c| c.floor() as i32));
+        let mut upper = lower;
+        let boundary = vertex[edge_axis].round() as i32;
+        upper[edge_axis] = boundary;
+        let mut below = lower;
+        below[edge_axis] = boundary - 1;
+        let air: Vec<IVec3> = [below, upper]
+            .into_iter()
+            .filter(|&p| grid.is_smooth_at(p) != Some(true))
+            .collect();
+        assert_eq!(air.len(), 1, "one air sample on the edge of {vertex:?}");
+        air[0]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn prop_every_vertex_light_comes_from_an_air_sample(
+            cells in prop::collection::vec((0..16i32, 0..16i32, 0..16i32), 1..120),
+            lights in prop::collection::vec(
+                ((-1..=16i32, -1..=16i32, -1..=16i32), (0..=15u8, 0..=15u8, 0..=15u8), any::<bool>()),
+                0..400,
+            ),
+        ) {
+            let mut grid = grid_with(cells.iter().map(|&(x, y, z)| ([x, y, z], 1, None)));
+            for ((x, y, z), (r, g, b), sky) in lights {
+                let pos = IVec3::new(x, y, z);
+                grid.set_block_light_rgb(pos, [r, g, b]);
+                grid.set_sky_exposed(pos, sky);
+            }
+
+            let mesh = chunk_mesh(&grid);
+
+            prop_assert_eq!(mesh.block_light_rgb.len(), mesh.vertices.len());
+            for (i, vertex) in mesh.vertices.iter().enumerate() {
+                let air = air_voxel_of(&grid, *vertex);
+                assert_vertex_light(
+                    &mesh,
+                    i,
+                    grid.block_light_rgb_at(air),
+                    grid.sky_exposed_at(air),
+                    &format!("air voxel {air:?}"),
+                )?;
+            }
+        }
+    }
+
+    fn smooth_vertices_at_height(mesh: &VoxelMesh, y: f32) -> Vec<([f32; 3], f32)> {
+        assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
+        mesh.vertices
+            .iter()
+            .zip(&mesh.ambient_occlusion)
+            .zip(&mesh.geometry_type)
+            .filter(|((v, _), geometry)| **geometry == 0 && (v[1] - y).abs() < 1e-3)
+            .map(|((v, ao), _)| (*v, *ao))
+            .collect()
+    }
+
+    fn ao_where(vertices: &[([f32; 3], f32)], keep: impl Fn([f32; 3]) -> bool) -> Vec<f32> {
+        vertices
+            .iter()
+            .filter(|(v, _)| keep(*v))
+            .map(|(_, ao)| *ao)
+            .collect()
+    }
+
+    fn min_of(values: &[f32]) -> f32 {
+        values.iter().copied().fold(f32::INFINITY, f32::min)
+    }
+
+    fn max_of(values: &[f32]) -> f32 {
+        values.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    #[test]
+    fn smooth_crevice_floor_is_darker_than_open_ground() {
+        let mut blocks = solid_box([0, 0, 0], [15, 5, 15], 1);
+        blocks.extend(solid_box([0, 6, 0], [6, 10, 15], 1));
+        blocks.extend(solid_box([8, 6, 0], [10, 10, 15], 1));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        let ground = smooth_vertices_at_height(&mesh, 6.0);
+        let floor = ao_where(&ground, |v| (v[0] - 7.5).abs() < 1e-3);
+        let open = ao_where(&ground, |v| v[0] > 12.0);
+
+        assert!(!floor.is_empty(), "the crevice floor is meshed");
+        assert!(!open.is_empty(), "the open ground is meshed");
+        assert!(
+            max_of(&floor) < min_of(&open),
+            "floor AO up to {}, open ground AO down to {}",
+            max_of(&floor),
+            min_of(&open)
+        );
+    }
+
+    #[test]
+    fn smooth_open_ground_vertices_have_ao_one() {
+        let mesh = chunk_mesh(&grid_with(solid_box([2, 0, 2], [13, 5, 13], 1)));
+
+        let top = smooth_vertices_at_height(&mesh, 6.0);
+
+        assert!(top.len() >= 144, "the slab's top face is meshed");
+        for (v, ao) in top {
+            assert_eq!(ao, 1.0, "top vertex {v:?}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn prop_convex_boxes_are_unoccluded(
+            lo in (2..6i32, 2..6i32, 2..6i32),
+            size in (1..=8i32, 1..=8i32, 1..=8i32),
+        ) {
+            let hi = [lo.0 + size.0 - 1, lo.1 + size.1 - 1, lo.2 + size.2 - 1];
+
+            let mesh = chunk_mesh(&grid_with(solid_box([lo.0, lo.1, lo.2], hi, 1)));
+
+            prop_assert!(!mesh.vertices.is_empty());
+            prop_assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
+            for (v, ao) in mesh.vertices.iter().zip(&mesh.ambient_occlusion) {
+                prop_assert_eq!(*ao, 1.0, "vertex {:?} of the box {:?}..{:?}", v, lo, hi);
+            }
+        }
+    }
+
+    #[test]
+    fn crevice_across_a_chunk_border_has_equal_ao_on_both_sides() {
+        let mut blocks = solid_box([0, 0, 0], [31, 5, 15], 1);
+        blocks.extend(solid_box([0, 6, 2], [31, 10, 6], 1));
+        blocks.extend(solid_box([0, 6, 8], [31, 10, 12], 1));
+        let grid = grid_with(blocks);
+
+        let west = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, 16);
+        let east = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(1, 0, 0), 16);
+
+        // Both chunks emit the vertices of the voxel column at x = 16.
+        let shared = |mesh: &VoxelMesh, z: f32| {
+            ao_where(&smooth_vertices_at_height(mesh, 6.0), |v| {
+                (v[0] - 16.5).abs() < 1e-3 && (v[2] - z).abs() < 1e-3
+            })
+        };
+        for (side, mesh) in [("west", &west), ("east", &east)] {
+            let floor = shared(mesh, 7.5);
+            let open = shared(mesh, 14.5);
+            assert!(!floor.is_empty(), "{side}: the border floor is meshed");
+            assert!(!open.is_empty(), "{side}: the border open ground is meshed");
+            assert!(
+                max_of(&floor) < min_of(&open),
+                "{side}: floor AO {floor:?} not darker than open ground {open:?}"
+            );
+        }
+        assert_eq!(shared(&west, 7.5), shared(&east, 7.5));
+        assert_eq!(shared(&west, 14.5), shared(&east, 14.5));
+    }
+
+    /// A slab with a one-wide crevice between two walls in the chunk, with `extra` blocks
+    /// on the open ground beside it, all offset by `origin`.
+    fn crevice_terrain(origin: IVec3, extra: &[(i32, i32, i32)]) -> VoxelGrid {
+        let mut blocks = solid_box([1, 0, 1], [14, 5, 14], 1);
+        blocks.extend(solid_box([1, 6, 1], [5, 10, 14], 1));
+        blocks.extend(solid_box([7, 6, 1], [9, 10, 14], 1));
+        blocks.extend(extra.iter().map(|&(x, y, z)| ([x, y, z], 1, None)));
+        grid_with(blocks.into_iter().map(|(pos, material, resource)| {
+            ((IVec3::from(pos) + origin).to_array(), material, resource)
+        }))
+    }
+
+    fn sorted_ao_bits(mesh: &VoxelMesh) -> Vec<u32> {
+        let mut bits: Vec<u32> = mesh
+            .ambient_occlusion
+            .iter()
+            .map(|ao| ao.to_bits())
+            .collect();
+        bits.sort_unstable();
+        bits
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(24))]
+
+        #[test]
+        fn prop_shifting_terrain_by_a_chunk_does_not_change_ao(
+            extra in prop::collection::vec((11..14i32, 0..9i32, 2..14i32), 0..30),
+            shift in (-3..=3i32, -3..=3i32, -3..=3i32),
+        ) {
+            let shift = IVec3::new(shift.0, shift.1, shift.2);
+            prop_assume!(shift != IVec3::ZERO);
+            let home = crevice_terrain(IVec3::ZERO, &extra);
+            let moved = crevice_terrain(shift * 16, &extra);
+
+            let at_home = HybridMeshGenerator::generate_chunk_mesh(&home, IVec3::ZERO, 16);
+            let shifted = HybridMeshGenerator::generate_chunk_mesh(&moved, shift, 16);
+
+            let bits = sorted_ao_bits(&at_home);
+            prop_assert!(!bits.is_empty());
+            prop_assert!(
+                min_of(&at_home.ambient_occlusion) < max_of(&at_home.ambient_occlusion),
+                "the crevice is darker than the open ground"
+            );
+            prop_assert_eq!(bits, sorted_ao_bits(&shifted));
+        }
+    }
+
+    #[test]
+    fn blocky_block_beside_smooth_ground_occludes_it() {
+        let mut blocks = solid_box([2, 0, 2], [13, 5, 13], 1);
+        blocks.extend(solid_box([8, 6, 2], [8, 9, 13], 100));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        assert!(mesh.geometry_type.contains(&0) && mesh.geometry_type.contains(&1));
+        let ground = smooth_vertices_at_height(&mesh, 6.0);
+        let beside = ao_where(&ground, |v| {
+            (v[0] - 7.5).abs() < 1e-3 && (4.0..12.0).contains(&v[2])
+        });
+        let far = ao_where(&ground, |v| v[0] < 5.0 && (4.0..12.0).contains(&v[2]));
+
+        assert!(!beside.is_empty(), "the ground beside the wall is meshed");
+        assert!(!far.is_empty(), "the ground away from the wall is meshed");
+        assert!(
+            max_of(&beside) < min_of(&far),
+            "beside the wall AO up to {}, away from it down to {}",
+            max_of(&beside),
+            min_of(&far)
+        );
+        assert!(far.iter().all(|&ao| ao == 1.0), "open ground {far:?}");
+    }
+
+    /// A chunk holding only terrain meshes a neighbouring chunk's structure block as air, so
+    /// its walls close on the same cell the neighbour's own mesh leaves open. Ambient
+    /// occlusion still sees the structure, so only geometry is compared.
+    #[test]
+    fn an_all_terrain_chunk_meshes_a_neighbours_structure_as_air() {
+        let structure = [16, 4, 8];
+        let ground = || solid_box([0, 0, 0], [31, 7, 15], 1);
+        let mut with_structure = ground();
+        with_structure.push((structure, 100, None));
+        let with_structure = grid_with(with_structure);
+        let mut without_structure = grid_with(ground());
+        assert!(without_structure.clear_block(IVec3::from(structure)));
+
+        let meshed = chunk_mesh(&with_structure);
+        let reference = chunk_mesh(&without_structure);
+
+        assert!(
+            !reference.indices.is_empty(),
+            "the all-terrain chunk is meshed"
+        );
+        assert_eq!(meshed.vertices, reference.vertices, "vertices");
+        assert_eq!(meshed.indices, reference.indices, "indices");
+    }
+}

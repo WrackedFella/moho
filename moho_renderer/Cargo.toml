@@ -2,24 +2,26 @@
 name = "moho_renderer"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
-moho_core = { path = "../moho_core" }
 moho_render_api = { path = "../moho_render_api" }
 bytemuck = { workspace = true, features = ["derive"] }
 wgpu = { workspace = true }
 winit = { workspace = true }
-pollster = { workspace = true }
 glam = { workspace = true }
-legion = { workspace = true }
-bincode = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-moho_game = { path = "../moho_game" }
+moho_level = { path = "../moho_level" }
+moho_physics = { workspace = true }
+proptest = { workspace = true }
 naga = { workspace = true, features = ["wgsl-in"] }
-tempfile = "3.5"
+tracing-subscriber = { workspace = true }
 
 [features]
 wgpu-experimental = []
+
+[lints]
+workspace = true

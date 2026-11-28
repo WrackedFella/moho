@@ -1,9 +1,13 @@
-//! Core engine primitives: event bus, voxel grid, materials, input, preferences.
+//! Core engine primitives: event bus, preferences, persistence, seeded RNG.
 
+pub mod assets;
+pub mod content;
 pub mod events;
-pub mod input;
-pub mod materials;
+pub mod install;
+pub mod persist;
+pub mod pointer;
 pub mod prefs;
-pub mod voxel;
+pub mod rng;
+pub mod sim_math;
 
 pub use events::{Event, EventBus};

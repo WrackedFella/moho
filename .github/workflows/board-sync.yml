@@ -1,0 +1,152 @@
+name: Board sync
+
+# Keeps the project board Status in step with PR and issue events, so agents running
+# without GraphQL access (cloud sessions) need not write it. Status moves forward only.
+# Labeling a work item `agent-ready` starts a remote run, so it moves to In progress then;
+# the PR it opens would otherwise be the first event and the item would skip from Ready
+# to In review. Agent-eligible stays human-set.
+#
+# A work item may also carry a `<!-- board: gate=domain; eligible=yes; priority=P2 -->`
+# header in its body; the Fields job applies it when the issue is opened or its body is
+# edited, so nobody sets those fields by hand. The same job moves a card to Ready once its
+# body carries a tech spec and its header a gate (.github/scripts/board-lib.sh).
+#
+# Run the workflow by hand for the Backfill job: it moves every item forward to the Status
+# its issue implies, for drift the event-driven jobs missed. Every job logs the token's
+# remaining quota.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List the moves without making them
+        type: boolean
+        default: true
+  pull_request:
+    types: [opened, reopened, ready_for_review, converted_to_draft, closed]
+  issues:
+    types: [closed, labeled, opened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  sync:
+    name: Sync
+    if: >-
+      github.event_name == 'pull_request'
+      || github.event.action == 'closed'
+      || (github.event.label.name == 'agent-ready'
+          && !contains(github.event.issue.labels.*.name, 'feature'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Quota before
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+        run: '[[ -z $GH_TOKEN ]] || .github/scripts/rate-log.sh "Before sync"'
+      - name: Move linked issues
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [[ -z $GH_TOKEN ]]; then
+            echo "BOARD_TOKEN secret is not set; skipping"
+            exit 0
+          fi
+          source .github/scripts/gh-retry.sh
+          if [[ $EVENT == issues ]]; then
+            status=Done
+            if [[ $ACTION == labeled ]]; then
+              status="In progress"
+            fi
+            exec .github/scripts/board-sync.sh "$status" "$ISSUE_NUMBER"
+          fi
+          if [[ $ACTION == closed ]]; then
+            [[ $PR_MERGED == true ]] || { echo "PR closed unmerged; unchanged"; exit 0; }
+            status=Done
+          elif [[ $PR_DRAFT == true ]]; then
+            status="In progress"
+          else
+            status="In review"
+          fi
+          issues=$(gh api graphql -F n="$PR_NUMBER" -f o="${GITHUB_REPOSITORY%/*}" \
+            -f r="${GITHUB_REPOSITORY#*/}" -f query='
+            query($o:String!,$r:String!,$n:Int!){ repository(owner:$o,name:$r){
+              pullRequest(number:$n){ closingIssuesReferences(first:20){ nodes{ number } } } } }' \
+            -q '.data.repository.pullRequest.closingIssuesReferences.nodes[].number')
+          [[ -n $issues ]] || { echo "no linked issues"; exit 0; }
+          # shellcheck disable=SC2086
+          .github/scripts/board-sync.sh "$status" $issues
+      - name: Quota after
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+        run: '[[ -z $GH_TOKEN ]] || .github/scripts/rate-log.sh "After sync"'
+
+  fields:
+    name: Fields
+    # Only people and bots that file cards may set board fields from an issue body.
+    if: >-
+      github.event_name == 'issues'
+      && (github.event.action == 'opened' || (github.event.action == 'edited' && github.event.changes.body))
+      && contains(github.event.issue.body, '<!-- board:')
+      && contains(fromJSON('["WrackedFella","claude[bot]","github-actions[bot]"]'), github.event.sender.login)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: board-fields-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Apply board header
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          if [[ -z $GH_TOKEN ]]; then
+            echo "BOARD_TOKEN secret is not set; skipping"
+            exit 0
+          fi
+          source .github/scripts/gh-retry.sh
+          .github/scripts/rate-log.sh "Before fields"
+          .github/scripts/board-fields.sh "$ISSUE_NODE_ID"
+          .github/scripts/rate-log.sh "After fields"
+
+  backfill:
+    name: Backfill
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: board-backfill
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Move items forward
+        env:
+          GH_TOKEN: ${{ secrets.BOARD_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [[ -z $GH_TOKEN ]]; then
+            echo "BOARD_TOKEN secret is not set; skipping"
+            exit 0
+          fi
+          source .github/scripts/gh-retry.sh
+          .github/scripts/rate-log.sh "Before backfill"
+          if [[ $DRY_RUN == true ]]; then
+            .github/scripts/board-backfill.sh --dry-run
+          else
+            .github/scripts/board-backfill.sh
+          fi | tee -a "$GITHUB_STEP_SUMMARY"
+          .github/scripts/rate-log.sh "After backfill"

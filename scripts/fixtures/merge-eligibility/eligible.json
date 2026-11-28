@@ -1,0 +1,28 @@
+{
+  "scope": "glue",
+  "repo": "WrackedFella/moho",
+  "reviewer": "moho-reviewer[bot]",
+  "domain": ["moho_core/**", "moho_physics/src/movement.rs"],
+  "advisory": ["copilot-pull-request-reviewer[bot]", "Copilot"],
+  "pr": {
+    "number": 900,
+    "state": "open",
+    "draft": false,
+    "author": "claude[bot]",
+    "head_repo": "WrackedFella/moho",
+    "base": "dev",
+    "head_sha": "bbb",
+    "labels": []
+  },
+  "files": ["flagstone_ui/src/hud.rs", "moho_physics/src/movementXrs", "wiki/engine/ui.md"],
+  "reviews": [
+    {"login": "moho-reviewer[bot]", "assoc": "NONE", "state": "COMMENTED", "commit_id": "aaa", "submitted_at": "2026-11-21T10:00:00Z", "head": "Verdict: reject\nRoute: fix\nSign-off: agent\nHead: aaa   Tier: light   Round: 1"},
+    {"login": "moho-reviewer[bot]", "assoc": "NONE", "state": "COMMENTED", "commit_id": "bbb", "submitted_at": "2026-11-21T11:00:00Z", "head": "Verdict: approve\nRoute: none\nSign-off: agent\nHead: bbb   Tier: light   Round: 2"}
+  ],
+  "comments": [
+    {"login": "github-actions[bot]", "assoc": "CONTRIBUTOR"},
+    {"login": "WrackedFella", "assoc": "OWNER"}
+  ],
+  "issue": {"number": 899, "state": "open", "labels": ["agent-ready"]},
+  "base_ci": {"sha": "ccc", "conclusion": "success"}
+}

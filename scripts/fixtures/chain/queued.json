@@ -1,0 +1,22 @@
+{
+  "cap": 1,
+  "active": 0,
+  "items": [
+    {
+      "number": 721,
+      "labels": ["line:fps", "agent-queued"],
+      "eligible": "yes",
+      "open_blockers": 0,
+      "blockers": [{"number": 720, "state": "closed", "state_reason": "completed"}],
+      "markers": []
+    },
+    {
+      "number": 722,
+      "labels": ["line:fps", "agent-queued"],
+      "eligible": "yes",
+      "open_blockers": 1,
+      "blockers": [{"number": 721, "state": "open", "state_reason": null}],
+      "markers": []
+    }
+  ]
+}

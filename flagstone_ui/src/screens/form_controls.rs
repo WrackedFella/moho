@@ -1,0 +1,501 @@
+/// Reusable UI controls for creating consistent form elements across the application.
+///
+/// This module encapsulates common UI patterns for settings forms, including:
+/// - Keybind controls with conflict detection and listening state
+/// - Volume sliders with drag values and dirty state indicators
+/// - Consistent styling and layout
+///
+/// # Example
+/// ```ignore
+/// let dirty = FormControls::volume_slider(ui, "Volume:", &mut value, original_value, 150.0);
+/// if dirty {
+///     dirty_fields.insert(Field::Volume);
+/// }
+/// ```
+pub struct FormControls;
+
+impl FormControls {
+    /// Renders a styled main-menu button with hover highlight.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `label` - Button label text
+    /// * `enabled` - Whether the button is interactive
+    ///
+    /// # Returns
+    /// The egui Response for the button widget
+    pub fn menu_button(ui: &mut egui::Ui, label: &str, enabled: bool) -> egui::Response {
+        let btn = egui::Button::new(egui::RichText::new(label).size(15.0))
+            .min_size(egui::vec2(160.0, 36.0));
+
+        let resp = ui.add_enabled(enabled, btn);
+
+        if resp.hovered() {
+            let hover_color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 100);
+            ui.painter().rect_filled(resp.rect, 4.0, hover_color);
+        }
+
+        resp
+    }
+
+    /// Renders a keybind control with a label, current binding display, and listen button.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `label` - The label text for this keybind
+    /// * `binding_text` - The text to display on the button (e.g., "W", "Spacebar")
+    /// * `is_dirty` - Whether this control has unsaved changes
+    /// * `is_listening` - Whether this control is currently listening for input
+    /// * `label_width` - The width allocated for the label area
+    ///
+    /// # Returns
+    /// `true` if the listen button was clicked this frame
+    pub fn keybind_control(
+        ui: &mut egui::Ui,
+        label: &str,
+        binding_text: &str,
+        is_dirty: bool,
+        is_listening: bool,
+        label_width: f32,
+    ) -> bool {
+        let mut was_clicked = false;
+
+        ui.horizontal(|ui| {
+            // Label area
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, 28.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(label);
+                },
+            );
+
+            // Control area (right-aligned)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let button_text = if is_listening {
+                    "Press any key..."
+                } else {
+                    binding_text
+                };
+
+                let button =
+                    ui.add(egui::Button::new(button_text).min_size(egui::vec2(120.0, 28.0)));
+                if button.clicked() {
+                    was_clicked = true;
+                }
+
+                // Paint dirty indicator if binding has changed
+                if is_dirty {
+                    Self::paint_dirty_decor(ui, &button);
+                }
+            });
+        });
+
+        was_clicked
+    }
+
+    /// Renders a volume slider control with both a slider and drag value input.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `label` - The label text for this volume control
+    /// * `value` - Mutable reference to the volume value (will be modified by UI)
+    /// * `original_value` - The original (saved) volume value for dirty checking
+    /// * `label_width` - The width allocated for the label area
+    ///
+    /// # Returns
+    /// `true` if the value differs from the original (is dirty), `false` otherwise
+    pub fn volume_slider(
+        ui: &mut egui::Ui,
+        label: &str,
+        value: &mut f32,
+        original_value: f32,
+        label_width: f32,
+    ) -> bool {
+        let is_dirty = (*value - original_value).abs() > f32::EPSILON;
+
+        ui.horizontal(|ui| {
+            // Label area
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, 28.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(label);
+                },
+            );
+
+            // Control area (right-aligned)
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Slider
+                ui.allocate_ui_with_layout(
+                    egui::vec2(120.0, 20.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().slider_width = 120.0;
+                        let slider = ui.add(
+                            egui::Slider::new(value, 0.0..=10.0)
+                                .step_by(0.1)
+                                .show_value(false),
+                        );
+                        if is_dirty {
+                            Self::paint_dirty_decor(ui, &slider);
+                        }
+                    },
+                );
+
+                ui.add_space(8.0);
+
+                // Drag value
+                let drag = ui.add(
+                    egui::DragValue::new(value)
+                        .range(0.0..=10.0)
+                        .speed(0.1)
+                        .min_decimals(1)
+                        .max_decimals(1),
+                );
+                if is_dirty {
+                    Self::paint_dirty_decor(ui, &drag);
+                }
+            });
+        });
+
+        is_dirty
+    }
+
+    /// Paints a colored border around a widget to indicate it has unsaved changes.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `response` - The widget response to decorate
+    fn paint_dirty_decor(ui: &egui::Ui, response: &egui::Response) {
+        let rect = response.rect;
+        let color = egui::Color32::from_rgba_premultiplied(150, 150, 150, 60);
+        ui.painter().rect_filled(rect, 4.0, color);
+    }
+
+    /// Standard three-panel layout for form screens.
+    ///
+    /// This helper reduces duplication by providing a consistent layout pattern:
+    /// - Top panel: centered title with spacing
+    /// - Bottom panel: right-aligned action buttons
+    /// - Central panel: scrollable content area with horizontal margins
+    ///
+    /// # Arguments
+    /// * `ui` - The root ui the three panels are shown inside
+    /// * `title` - The screen title text
+    /// * `panel_id_prefix` - Unique prefix for panel IDs (e.g., "settings", "new_world")
+    /// * `render_buttons` - Closure to render bottom panel buttons, returns (primary_clicked, secondary_clicked)
+    /// * `render_content` - Closure to render the central scrollable content
+    ///
+    /// # Returns
+    /// Tuple of (primary_button_clicked, secondary_button_clicked)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let (save_clicked, back_clicked) = FormControls::standard_screen_layout(
+    ///     ui,
+    ///     "Settings",
+    ///     "settings",
+    ///     |ui| {
+    ///         let save = ui.button("Save");
+    ///         ui.add_space(12.0);
+    ///         let back = ui.button("Back");
+    ///         (save.clicked(), back.clicked())
+    ///     },
+    ///     |ui| {
+    ///         ui.label("Content here");
+    ///     }
+    /// );
+    /// ```
+    pub fn standard_screen_layout<FB, FC>(
+        ui: &mut egui::Ui,
+        title: &str,
+        panel_id_prefix: &str,
+        mut render_buttons: FB,
+        mut render_content: FC,
+    ) -> (bool, bool)
+    where
+        FB: FnMut(&mut egui::Ui) -> (bool, bool),
+        FC: FnMut(&mut egui::Ui),
+    {
+        let mut button_results = (false, false);
+
+        // Top panel: title area
+        egui::Panel::top(format!("{panel_id_prefix}_top")).show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(16.0);
+                ui.heading(title);
+                ui.add_space(12.0);
+            });
+        });
+
+        // Bottom panel: action buttons
+        egui::Panel::bottom(format!("{panel_id_prefix}_bottom")).show(ui, |ui| {
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    button_results = render_buttons(ui);
+                });
+            });
+            ui.add_space(16.0);
+        });
+
+        // Central panel: scrollable content
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    let gutter: f32 = 20.0;
+                    let avail = ui.available_width();
+                    ui.horizontal(|ui| {
+                        ui.add_space(gutter);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2((avail - 2.0 * gutter).max(0.0), 0.0),
+                            egui::Layout::top_down(egui::Align::Min),
+                            |ui| {
+                                render_content(ui);
+                            },
+                        );
+                        ui.add_space(gutter);
+                    });
+                });
+        });
+
+        button_results
+    }
+
+    /// Calculate responsive gutter size based on available width and percentage.
+    ///
+    /// This helper enables percentage-based layouts similar to WinForms or CSS,
+    /// working around egui's lack of native percentage support.
+    ///
+    /// # Arguments
+    /// * `available_width` - The total available width (from `ui.available_width()`)
+    /// * `gutter_percent` - Percentage of width to use for each gutter (0.0 to 1.0)
+    ///
+    /// # Returns
+    /// The calculated gutter size in pixels
+    ///
+    /// # Example
+    /// ```ignore
+    /// let gutter = FormControls::calculate_gutter(ui.available_width(), 0.30);
+    /// // Creates 30% gutters on each side, 40% content width
+    /// ```
+    pub fn calculate_gutter(available_width: f32, gutter_percent: f32) -> f32 {
+        (available_width * gutter_percent).max(20.0)
+    }
+
+    /// Renders a horizontal tab bar and returns the index of the selected tab.
+    ///
+    /// This creates a row of tab buttons styled to indicate active/inactive state.
+    /// The active tab appears elevated with lighter background, while inactive tabs
+    /// are darker and recessed.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `tabs` - Slice of tab label strings
+    /// * `active_index` - Index of the currently active tab (0-based)
+    ///
+    /// # Returns
+    /// The index of the selected tab (may be unchanged if no tab was clicked)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let tabs = ["Controls", "Audio", "Graphics"];
+    /// let new_index = FormControls::tab_bar(ui, &tabs, self.active_tab_index);
+    /// if new_index != self.active_tab_index {
+    ///     self.active_tab_index = new_index;
+    /// }
+    /// ```
+    pub fn tab_bar(ui: &mut egui::Ui, tabs: &[&str], active_index: usize) -> usize {
+        let mut selected = active_index;
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+
+            for (i, &label) in tabs.iter().enumerate() {
+                let is_active = i == active_index;
+
+                // Style the button based on active state
+                let button = if is_active {
+                    egui::Button::new(label)
+                        .fill(egui::Color32::from_rgb(60, 60, 60))
+                        .min_size(egui::vec2(100.0, 32.0))
+                } else {
+                    egui::Button::new(label)
+                        .fill(egui::Color32::from_rgb(40, 40, 40))
+                        .min_size(egui::vec2(100.0, 32.0))
+                };
+
+                let response = ui.add(button);
+
+                // Update selection if clicked
+                if response.clicked() {
+                    selected = i;
+                }
+
+                // Add subtle visual feedback on hover for inactive tabs
+                if !is_active && response.hovered() {
+                    ui.painter().rect_filled(
+                        response.rect,
+                        4.0,
+                        egui::Color32::from_rgba_premultiplied(50, 50, 50, 30),
+                    );
+                }
+            }
+        });
+
+        selected
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::test_support::{click_at, input, rect_of};
+
+    fn layout_result(
+        events: Vec<egui::Event>,
+        ctx: &egui::Context,
+    ) -> ((bool, bool), egui::FullOutput) {
+        let mut result = (false, false);
+        let output = crate::overlays::test_support::run_ui(ctx, input(events), |ui| {
+            result = FormControls::standard_screen_layout(
+                ui,
+                "Title",
+                "t",
+                |ui| {
+                    let primary = ui.button("Primary");
+                    let secondary = ui.button("Secondary");
+                    (primary.clicked(), secondary.clicked())
+                },
+                |_| {},
+            );
+        });
+        (result, output)
+    }
+
+    #[test]
+    fn standard_screen_layout_reports_which_button_was_clicked() {
+        let ctx = egui::Context::default();
+        let _ = layout_result(Vec::new(), &ctx);
+        let (idle, output) = layout_result(Vec::new(), &ctx);
+        let primary = rect_of(&output, "Primary").center();
+        let secondary = rect_of(&output, "Secondary").center();
+
+        let (clicked_primary, _) = layout_result(click_at(primary), &ctx);
+        let _ = layout_result(Vec::new(), &ctx);
+        let (clicked_secondary, _) = layout_result(click_at(secondary), &ctx);
+
+        assert_eq!(idle, (false, false));
+        assert_eq!(clicked_primary, (true, false));
+        assert_eq!(clicked_secondary, (false, true));
+    }
+
+    #[test]
+    fn menu_button_smoke_enabled() {
+        let ctx = egui::Context::default();
+        let _ = crate::overlays::test_support::run_ui(&ctx, egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let resp = FormControls::menu_button(ui, "Play", true);
+                assert!(resp.rect.width() >= 160.0);
+            });
+        });
+    }
+
+    #[test]
+    fn gutter_is_percent_with_min_20() {
+        assert_eq!(FormControls::calculate_gutter(1000.0, 0.3), 300.0);
+        assert_eq!(FormControls::calculate_gutter(50.0, 0.3), 20.0);
+    }
+
+    fn volume_frame(ctx: &egui::Context, events: Vec<egui::Event>, value: &mut f32) {
+        let _ = crate::overlays::test_support::run_ui(ctx, input(events), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                FormControls::volume_slider(ui, "Vol", value, 5.0, 60.0);
+            });
+        });
+    }
+
+    #[test]
+    fn volume_slider_reaches_zero() {
+        let ctx = egui::Context::default();
+        let mut value = 5.0_f32;
+        volume_frame(&ctx, Vec::new(), &mut value);
+        volume_frame(&ctx, Vec::new(), &mut value);
+        let at = |x: f32| egui::pos2(x, 20.0);
+        let button = |x: f32, pressed| egui::Event::PointerButton {
+            pos: at(x),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        volume_frame(&ctx, vec![egui::Event::PointerMoved(at(700.0))], &mut value);
+        volume_frame(&ctx, vec![button(700.0, true)], &mut value);
+        assert!((value - 5.0).abs() > 0.05, "press did not hit the slider");
+        volume_frame(
+            &ctx,
+            vec![egui::Event::PointerMoved(at(-500.0))],
+            &mut value,
+        );
+        volume_frame(&ctx, vec![button(-500.0, false)], &mut value);
+
+        assert_eq!(value, 0.0);
+    }
+
+    #[test]
+    fn volume_slider_steps_by_tenths() {
+        for press_x in [688.4_f32, 700.3, 765.2, 777.1] {
+            let ctx = egui::Context::default();
+            // smart_aim snaps within 1/ppp points, so only HiDPI exposes non-tenth values.
+            ctx.set_pixels_per_point(4.0);
+            let mut value = 5.0_f32;
+            volume_frame(&ctx, Vec::new(), &mut value);
+            volume_frame(&ctx, Vec::new(), &mut value);
+            let at = |x: f32| egui::pos2(x, 20.0);
+            let button = |x: f32, pressed| egui::Event::PointerButton {
+                pos: at(x),
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+
+            volume_frame(
+                &ctx,
+                vec![egui::Event::PointerMoved(at(press_x))],
+                &mut value,
+            );
+            volume_frame(&ctx, vec![button(press_x, true)], &mut value);
+            // A DragValue does not jump on press; the slider does.
+            assert!(
+                (value - 5.0).abs() > 0.05,
+                "press {press_x}: press did not hit the slider"
+            );
+            let mut samples = vec![value];
+            for step in 1..=4 {
+                let x = press_x + 3.3 * step as f32;
+                volume_frame(&ctx, vec![egui::Event::PointerMoved(at(x))], &mut value);
+                samples.push(value);
+                let tenths = value * 10.0;
+                assert!(
+                    (tenths - tenths.round()).abs() < 1e-3,
+                    "press {press_x}, step {step}: value {value} is not a tenth"
+                );
+            }
+            volume_frame(&ctx, vec![button(press_x + 13.2, false)], &mut value);
+
+            assert!(
+                samples
+                    .iter()
+                    .any(|v| (v * 2.0 - (v * 2.0).round()).abs() > 1e-3),
+                "press {press_x}: every sample {samples:?} is on a coarser grid than 0.1"
+            );
+
+            assert!(
+                (value - 5.0).abs() > 0.05,
+                "press {press_x}: slider did not move"
+            );
+        }
+    }
+}

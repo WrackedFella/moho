@@ -21,46 +21,63 @@
 //! - `layouts`: Bind group and pipeline layout creation
 //! - `mod`: Pipeline orchestration and render pipeline creation
 //!
-//! # Example
-//!
-//! ```no_run
-//! # use moho_renderer::pipeline::PipelineSetup;
-//! # use wgpu::{Device, SurfaceConfiguration};
-//! # fn example(device: &Device, config: &SurfaceConfiguration) {
-//! let pipeline_setup = PipelineSetup::new(device, config).unwrap();
-//! let main_pipeline = pipeline_setup.main_pipeline();
-//! let skybox_pipeline = pipeline_setup.skybox_pipeline();
-//! # }
-//! ```
+//! Outside the crate only the shader sources and the two vertex-attribute tables are
+//! public, for shader validation.
 
-mod layouts;
+pub(crate) mod layouts;
+mod marker;
 mod shaders;
+
+pub use shaders::{
+    bloom_shader_source, main_shader_source, skin_shader_source, skybox_shader_source,
+    tonemap_shader_source, ui_shader_source,
+};
 
 use crate::types::{GpuInstance, Vertex};
 
+/// Per-vertex attributes of the main pipeline; order must match `types::Vertex`.
+pub const MAIN_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32,
+    3 => Uint32,
+    10 => Float32, // 10+ to avoid the instance buffer's 4-9
+    11 => Float32x3,
+    12 => Float32,
+    13 => Uint32,
+    14 => Float32x2,
+];
+
+/// Per-instance attributes of the main pipeline; order must match `types::GpuInstance`.
+pub const MAIN_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    4 => Float32x4,
+    5 => Float32x4,
+    6 => Float32x4,
+    7 => Float32x4,
+    8 => Uint32,
+    9 => Uint32,
+];
+
 /// Error type for pipeline initialization failures.
 #[derive(Debug)]
-pub enum PipelineInitError {
-    /// Failed to load skybox shader from disk
-    SkyboxShaderLoad(String),
+pub(crate) enum PipelineInitError {
     /// Camera buffer size calculation failed
-    CameraBufferSize(String),
+    CameraBuffer(String),
     /// Lighting buffer size calculation failed
-    LightingBufferSize(String),
+    LightingBuffer(String),
     /// Shadow matrix buffer size calculation failed
-    ShadowMatrixSize(String),
+    ShadowMatrix(String),
     /// CSM matrix buffer size calculation failed
-    CsmMatrixSize(String),
+    CsmMatrix(String),
 }
 
 impl std::fmt::Display for PipelineInitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SkyboxShaderLoad(msg) => write!(f, "Failed to load skybox shader: {}", msg),
-            Self::CameraBufferSize(msg) => write!(f, "Camera buffer size error: {}", msg),
-            Self::LightingBufferSize(msg) => write!(f, "Lighting buffer size error: {}", msg),
-            Self::ShadowMatrixSize(msg) => write!(f, "Shadow matrix size error: {}", msg),
-            Self::CsmMatrixSize(msg) => write!(f, "CSM matrix size error: {}", msg),
+            Self::CameraBuffer(msg) => write!(f, "Camera buffer size error: {msg}"),
+            Self::LightingBuffer(msg) => write!(f, "Lighting buffer size error: {msg}"),
+            Self::ShadowMatrix(msg) => write!(f, "Shadow matrix size error: {msg}"),
+            Self::CsmMatrix(msg) => write!(f, "CSM matrix size error: {msg}"),
         }
     }
 }
@@ -72,7 +89,7 @@ impl std::error::Error for PipelineInitError {}
 /// This struct holds compiled shaders, bind group layouts, pipeline layouts,
 /// and render pipelines. It's created once during initialization and provides
 /// immutable access to these resources throughout the renderer's lifetime.
-pub struct PipelineSetup {
+pub(crate) struct PipelineSetup {
     // Shaders (kept for potential future use - hot reloading, debugging)
     #[allow(dead_code)]
     main_shader: wgpu::ShaderModule,
@@ -82,10 +99,7 @@ pub struct PipelineSetup {
     // Bind group layouts
     camera_bgl: wgpu::BindGroupLayout,
     shadow_bgl: wgpu::BindGroupLayout,
-    #[allow(dead_code)]
-    _shadow_pass_bgl: wgpu::BindGroupLayout, // Legacy, kept for compatibility
-    #[allow(dead_code)]
-    _csm_pass_bgl: wgpu::BindGroupLayout, // Phase 3: CSM support
+    texture_bgl: wgpu::BindGroupLayout,
 
     // Pipeline layouts (kept for potential future use - additional pipelines)
     #[allow(dead_code)]
@@ -96,6 +110,8 @@ pub struct PipelineSetup {
     // Render pipelines
     main_pipeline: wgpu::RenderPipeline,
     skybox_pipeline: wgpu::RenderPipeline,
+    marker_pipeline: wgpu::RenderPipeline,
+    marker_outline_pipeline: wgpu::RenderPipeline,
 
     // Configuration
     depth_format: wgpu::TextureFormat,
@@ -106,8 +122,9 @@ impl PipelineSetup {
     ///
     /// This performs the complete pipeline initialization:
     /// 1. Load and compile shaders (main: 3 files concatenated, skybox: from disk)
-    /// 2. Create bind group layouts (camera with 3 bindings, shadow with 3 bindings)
-    /// 3. Create pipeline layouts (main: 2 bind groups, skybox: 1 bind group)
+    /// 2. Create bind group layouts (camera with 3 bindings, shadow with 3 bindings,
+    ///    base-colour texture with 2 bindings)
+    /// 3. Create pipeline layouts (main: 3 bind groups, skybox: 1 bind group)
     /// 4. Create render pipelines (main: with depth and blend, skybox: no depth write)
     ///
     /// # Arguments
@@ -120,33 +137,21 @@ impl PipelineSetup {
     /// Returns `PipelineInitError` if:
     /// - Skybox shader file cannot be read
     /// - Buffer size calculations fail (should never happen with valid types)
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use moho_renderer::pipeline::PipelineSetup;
-    /// # use wgpu::{Device, SurfaceConfiguration};
-    /// # fn example(device: &Device, config: &SurfaceConfiguration) {
-    /// let pipeline = PipelineSetup::new(device, config).unwrap();
-    /// // Use pipeline.main_pipeline(), pipeline.camera_bind_group_layout(), etc.
-    /// # }
-    /// ```
     pub fn new(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
     ) -> Result<Self, PipelineInitError> {
         // 1. Load and compile shaders
-        let (main_shader, skybox_shader) = shaders::load_shaders(device)?;
+        let (main_shader, skybox_shader) = shaders::load_shaders(device);
 
         // 2. Create bind group layouts
         let camera_bgl = layouts::create_camera_bind_group_layout(device)?;
         let shadow_bgl = layouts::create_shadow_bind_group_layout(device)?;
-        let shadow_pass_bgl = layouts::create_shadow_pass_bind_group_layout(device)?;
-        let csm_pass_bgl = layouts::create_csm_pass_bind_group_layout(device)?;
+        let texture_bgl = layouts::create_texture_bind_group_layout(device);
 
         // 3. Create pipeline layouts
         let main_pipeline_layout =
-            layouts::create_main_pipeline_layout(device, &camera_bgl, &shadow_bgl);
+            layouts::create_main_pipeline_layout(device, &camera_bgl, &shadow_bgl, &texture_bgl);
         let skybox_pipeline_layout = layouts::create_skybox_pipeline_layout(device, &camera_bgl);
 
         // 4. Create render pipelines
@@ -155,15 +160,29 @@ impl PipelineSetup {
             device,
             &main_shader,
             &main_pipeline_layout,
-            config.format,
+            crate::tone_map::HDR_FORMAT,
             depth_format,
         );
         let skybox_pipeline = Self::create_skybox_render_pipeline(
             device,
             &skybox_shader,
             &skybox_pipeline_layout,
+            crate::tone_map::HDR_FORMAT,
+            depth_format,
+        );
+        let marker_pipeline = marker::create_marker_pipeline(
+            device,
+            &skybox_pipeline_layout,
             config.format,
             depth_format,
+            wgpu::PrimitiveTopology::TriangleList,
+        );
+        let marker_outline_pipeline = marker::create_marker_pipeline(
+            device,
+            &skybox_pipeline_layout,
+            config.format,
+            depth_format,
+            wgpu::PrimitiveTopology::LineList,
         );
 
         Ok(Self {
@@ -171,12 +190,13 @@ impl PipelineSetup {
             skybox_shader,
             camera_bgl,
             shadow_bgl,
-            _shadow_pass_bgl: shadow_pass_bgl,
-            _csm_pass_bgl: csm_pass_bgl,
+            texture_bgl,
             main_pipeline_layout,
             skybox_pipeline_layout,
             main_pipeline,
             skybox_pipeline,
+            marker_pipeline,
+            marker_outline_pipeline,
             depth_format,
         })
     }
@@ -192,7 +212,7 @@ impl PipelineSetup {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        surface_format: wgpu::TextureFormat,
+        color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -201,46 +221,31 @@ impl PipelineSetup {
             vertex: wgpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[
                     // Vertex positions + normals + AO + geometry type + light level +
                     // block light RGB + sky exposure. Attribute order below must match
                     // `types::Vertex`'s field order exactly — `vertex_attr_array!`
                     // computes each offset by summing the preceding attributes' sizes.
-                    wgpu::VertexBufferLayout {
+                    Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![
-                            0 => Float32x3,  // position
-                            1 => Float32x3,  // normal
-                            2 => Float32,    // ao
-                            3 => Uint32,     // geometry_type
-                            10 => Float32,   // light_level (10+ to avoid the instance buffer's 4-9)
-                            11 => Float32x3, // block_light_rgb
-                            12 => Float32,   // sky_exposed
-                        ],
-                    },
+                        attributes: &MAIN_VERTEX_ATTRIBUTES,
+                    }),
                     // Per-instance data: model matrix (4x vec4) + material(u32) + object_type(u32)
-                    wgpu::VertexBufferLayout {
+                    Some(wgpu::VertexBufferLayout {
                         array_stride: std::mem::size_of::<GpuInstance>() as wgpu::BufferAddress,
                         step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![
-                            4 => Float32x4,
-                            5 => Float32x4,
-                            6 => Float32x4,
-                            7 => Float32x4,
-                            8 => Uint32,
-                            9 => Uint32,
-                        ],
-                    },
+                        attributes: &MAIN_INSTANCE_ATTRIBUTES,
+                    }),
                 ],
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: color_format,
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent {
                             src_factor: wgpu::BlendFactor::SrcAlpha,
@@ -289,7 +294,7 @@ impl PipelineSetup {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        surface_format: wgpu::TextureFormat,
+        color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -298,19 +303,19 @@ impl PipelineSetup {
             vertex: wgpu::VertexState {
                 module: shader,
                 entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[wgpu::VertexBufferLayout {
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                }],
+                })],
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader,
                 entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: color_format,
                     blend: None, // No blending for skybox
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -349,6 +354,15 @@ impl PipelineSetup {
         &self.skybox_pipeline
     }
 
+    pub fn marker_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.marker_pipeline
+    }
+
+    /// Get the marker pipeline that draws box edges as lines.
+    pub fn marker_outline_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.marker_outline_pipeline
+    }
+
     /// Get the camera bind group layout.
     pub fn camera_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.camera_bgl
@@ -359,34 +373,13 @@ impl PipelineSetup {
         &self.shadow_bgl
     }
 
+    /// Get the base-colour texture bind group layout (group 2 of the main pipeline).
+    pub fn texture_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.texture_bgl
+    }
+
     /// Get the depth texture format.
     pub fn depth_format(&self) -> wgpu::TextureFormat {
         self.depth_format
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_pipeline_init_error_display() {
-        let err = PipelineInitError::SkyboxShaderLoad("file not found".to_string());
-        assert_eq!(
-            format!("{}", err),
-            "Failed to load skybox shader: file not found"
-        );
-
-        let err = PipelineInitError::CameraBufferSize("zero size".to_string());
-        assert_eq!(format!("{}", err), "Camera buffer size error: zero size");
-
-        let err = PipelineInitError::LightingBufferSize("invalid".to_string());
-        assert_eq!(format!("{}", err), "Lighting buffer size error: invalid");
-
-        let err = PipelineInitError::ShadowMatrixSize("bad size".to_string());
-        assert_eq!(format!("{}", err), "Shadow matrix size error: bad size");
-
-        let err = PipelineInitError::CsmMatrixSize("csm error".to_string());
-        assert_eq!(format!("{}", err), "CSM matrix size error: csm error");
     }
 }

@@ -2,20 +2,25 @@
 
 # Moho — A Modular Voxel Game Engine (Rust)
 
-## Overview
+## 1 Overview
 
-Moho is a modular Rust workspace containing engine components designed for voxel-based games:
+Moho is a modular Rust workspace containing engine components and the games built on them.
 
-- **moho_core** - Event bus, voxel types, camera, materials, core utilities
+Engine:
+
+- **moho_core** - Event bus, preferences, persistence
 - **moho_renderer** - WGPU-based rendering backend  
 - **moho_audio** - Audio playback (rodio-based)
-- **moho_ui** - egui integration for menus and overlays
 - **moho_input** - Input mapping and state management
-- **moho_sim** - Deterministic headless simulation for testing and multiplayer
+
+Flagstone (the strategy game):
+
+- **flagstone_voxel** - Voxel terrain for the flagstone line: grid, meshing, lighting, streaming
+- **flagstone_ui** - egui integration for menus and overlays
 
 The project emphasizes **separation of concerns** between simulation and rendering, making testing, snapshots, and future multiplayer functionality easier.
 
-### Key Features
+### 1.1 Key Features
 
 ✅ **Day/Night Cycle** - 24-hour clock with moving sun/moon, dynamic sky colors, and moonlight  
 ✅ **Event Bus System** - Type-safe pub/sub for decoupled system communication  
@@ -25,19 +30,19 @@ The project emphasizes **separation of concerns** between simulation and renderi
 ✅ **ECS Architecture** - Legion-based entity component system  
 ✅ **Cross-platform** - Windows, macOS, Linux support via WGPU
 
-## Quick Start
+## 2 Quick Start
 
-### Prerequisites
+### 2.1 Prerequisites
 - Rust toolchain (stable 2024 edition or later)
 - Vulkan/WGPU-compatible graphics drivers
 
-### Running the Game
+### 2.2 Running the Game
 
 ```sh
-cargo run
+cargo run -p flagstone
 ```
 
-### Testing
+### 2.3 Testing
 
 ```sh
 # Run all tests
@@ -45,12 +50,9 @@ cargo test --workspace
 
 # Run specific crate tests
 cargo test --package moho_core
-
-# Run integration tests
-cargo test --test event_bus_integration
 ```
 
-### Performance Benchmarks
+### 2.4 Performance Benchmarks
 
 ```sh
 # Run benchmarks (requires criterion)
@@ -60,7 +62,7 @@ cargo bench --bench event_bus_bench
 start target/criterion/report/index.html
 ```
 
-### Code Quality
+### 2.5 Code Quality
 
 ```sh
 # Format code
@@ -70,29 +72,29 @@ cargo fmt --all
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-## Documentation
+## 3 Documentation
 
-### Library Documentation
+### 3.1 Library Documentation
 Each workspace crate has comprehensive documentation in its README:
-- **[moho_core/README.md](moho_core/README.md)** - Event bus, game clock, voxels, camera
+- **[moho_core/README.md](moho_core/README.md)** - Event bus, preferences, persistence
+- **[flagstone_voxel/README.md](flagstone_voxel/README.md)** - Voxel grid, chunks, meshing
 - **[moho_renderer/README.md](moho_renderer/README.md)** - WGPU rendering, CSM shadows, lighting
 - **[moho_audio/README.md](moho_audio/README.md)** - Audio playback and event handling
-- **[moho_ui/README.md](moho_ui/README.md)** - egui menus, settings, console, overlays
+- **[flagstone_ui/README.md](flagstone_ui/README.md)** - egui menus, settings, console, overlays
 - **[moho_input/README.md](moho_input/README.md)** - Input mapping and key bindings
-- **[moho_sim/README.md](moho_sim/README.md)** - Deterministic simulation and snapshots
 
-### Architecture Documentation
-- **[Event Bus Best Practices](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md)** - Usage patterns and common pitfalls
-- **[Event Bus Performance](docs/engine_core/EVENT_BUS_PERFORMANCE.md)** - Benchmark results (11M events/sec)
-- **[Console Architecture](docs/CONSOLE_ARCHITECTURE.md)** - Debug console system design
-- **[Adding Console Commands](docs/ADDING_CONSOLE_COMMANDS.md)** - Extending the console
+### 3.2 Architecture Documentation
+- **[Event Bus Best Practices](wiki/reference/event-bus-best-practices.md)** - Usage patterns and common pitfalls
+- **[Event Bus Performance](wiki/reference/event-bus-performance.md)** - Benchmark results (11M events/sec)
+- **[Console Architecture](wiki/architecture/console.md)** - Debug console system design
+- **[Adding Console Commands](wiki/guides/adding-console-commands.md)** - Extending the console
 
-### Technical Reference
-- **[GPU ABI](docs/gpu_abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
-- **[Preferences Format](docs/prefs_format.md)** - Configuration file structure
-- **[Documentation Index](docs/README.md)** - Complete documentation overview
+### 3.3 Technical Reference
+- **[GPU ABI](wiki/reference/gpu-abi.md)** - Shader/CPU data layout requirements (Material, Camera, Lighting, CSM)
+- **[Preferences Format](wiki/reference/prefs-format.md)** - Configuration file structure
+- **[Documentation Index](wiki/README.md)** - Complete documentation overview
 
-### Day/Night Cycle
+### 3.4 Day/Night Cycle
 
 The game features a complete day/night cycle with realistic celestial mechanics:
 
@@ -117,7 +119,7 @@ let spec = moho_core::scene_builders::WorldSpec {
 
 See [moho_core/README.md](moho_core/README.md) for GameClock API details.
 
-### Debug Console (Developer)
+### 3.5 Debug Console (Developer)
 
 - Toggle: Press the backtick (`) while in the Playing state to open the debug console overlay; press Escape to close it.
 - Purpose: Lightweight in-game console for diagnostics, executing debug commands, and publishing events to the application's `EventBus`.
@@ -135,27 +137,26 @@ bus.subscribe(|evt: &moho_core::events::DebugEvent| {
 });
 ```
 
-See `docs/CONSOLE_ARCHITECTURE.md` and `docs/ADDING_CONSOLE_COMMANDS.md` for architecture and extension guidance.
+See `wiki/architecture/console.md` and `wiki/guides/adding-console-commands.md` for architecture and extension guidance.
 
-## Architecture
+## 4 Architecture
 
-### Workspace Structure
+### 4.1 Workspace Structure
 
 ```
 moho/
-├── benches/              # Performance benchmarks
-├── docs/                 # Documentation
-├── src/                  # Main application
+├── wiki/                 # Project documentation
+├── flagstone/            # Flagstone binary (the strategy game)
 ├── tests/                # Integration tests
-├── moho_core/            # Core types, events, voxels
+├── moho_core/            # Core types, events
+├── flagstone_voxel/      # Voxel terrain (flagstone line)
 ├── moho_renderer/        # WGPU rendering
 ├── moho_audio/           # Audio playback
-├── moho_ui/              # egui UI
-├── moho_input/           # Input handling
-└── moho_sim/             # Deterministic simulation
+├── flagstone_ui/         # egui UI
+└── moho_input/           # Input handling
 ```
 
-### Event Bus System
+### 4.2 Event Bus System
 
 The event bus provides type-safe, decoupled communication between systems:
 
@@ -175,87 +176,20 @@ bus.publish(UiEvent::MenuShown { name: "main".to_string() });
 
 **Performance**: <1% frame budget at 60 FPS, 11.4M events/second throughput
 
-See [EVENT_BUS_BEST_PRACTICES.md](docs/engine_core/EVENT_BUS_BEST_PRACTICES.md) for detailed usage patterns.
+See [EVENT_BUS_BEST_PRACTICES.md](wiki/reference/event-bus-best-practices.md) for detailed usage patterns.
 
-## Build & Release
+## 5 Build & Release
 
-### Development Build
+### 5.1 Development Build
 ```sh
 cargo build
 ```
 
-### Release Build
+### 5.2 Release Build
 ```sh
 cargo build --release
 ```
 
-## Docker / CI
-- Build the CI Docker image (used by GitHub Actions; local debugging):
-
-```sh
-docker build -f .github/docker/Dockerfile -t moho-ci:latest .
-```
-
-- Run a container (example, Linux/macOS):
-
-```sh
-docker run --rm -it -v "$(pwd)":/workspace -w /workspace moho-ci:latest bash
-```
-
-On Windows (PowerShell), replace the volume mount syntax with an absolute path, for example:
-
-```ps1
-docker run --rm -it -v C:\path\to\repo:/workspace -w /workspace moho-ci:latest bash
-```
-
-Developer setup (short)
-These steps help you run hermetic builds locally and reproduce CI behavior.
-
-1) Local docker-compose (quick start)
-
-- There is a helper compose file at `.github/docker/docker-compose.yml` for local experimentation. To build and run the CI image locally:
-
-```sh
-docker compose -f .github/docker/docker-compose.yml build
-docker compose -f .github/docker/docker-compose.yml run --rm builder
-```
-
-Replace `docker compose` with `docker-compose` if your Docker installation uses the legacy CLI.
-
-2) cargo-chef prepare/cook (hermetic Rust caching)
-
-- Generate a recipe that captures dependency recipes (run once or when `Cargo.toml` changes):
-
-```sh
-cargo chef prepare --recipe-path recipe.json --recipe-cache target/recipe-cache
-```
-
-- Use the recipe to cook dependencies in a hermetic environment (this mirrors CI `cook` step):
-
-```sh
-cargo chef cook --recipe-path recipe.json --target-dir target/chef
-```
-
-3) Build and optionally publish the CI Docker image
-
-- Build locally:
-
-```sh
-docker build -f .github/docker/Dockerfile -t moho-ci:latest .
-```
-
-- Publish to GitHub Container Registry (GHCR) — replace `OWNER`/`REPO` and authenticate first (see GHCR docs):
-
-```sh
-docker tag moho-ci:latest ghcr.io/OWNER/moho-ci:latest
-docker push ghcr.io/OWNER/moho-ci:latest
-```
-
-Notes
-- For faster local iteration you can combine `cargo chef prepare` + `docker build` so that CI image contains pre-cooked dependencies.
-- If you use Windows, prefer absolute paths for docker volume mounts. Use WSL (Windows Subsystem for Linux) for a POSIX-like experience.
-
-Notes & pointers
-- For detailed design notes and development guides, see the `docs/` folder.
-- The `moho_sim` crate contains the headless simulation, deterministic tests, and snapshot/restore utilities (bincode + CRC).
-- CI caching and build details: `.github/CICACHE.md` and `.github/workflows/ci.yml`.
+## 6 CI
+- `.github/workflows/ci.yml` runs the same `just` recipes as local work (`just check`, `just deny`, `just mutants`, `just cov`), with `Swatinem/rust-cache` caching dependencies. PRs into `dev` run the gate on Linux only; `main` and `gh workflow run CI --ref <branch>` run it on all three OSes.
+- For detailed design notes and development guides, see the `wiki/` folder.

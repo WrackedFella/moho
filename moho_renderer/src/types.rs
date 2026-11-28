@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 /// Vertex data for rendering.
 ///
 /// Field order here is load-bearing: `pipeline::create_main_render_pipeline`'s
@@ -17,7 +19,14 @@ pub struct Vertex {
     pub block_light_rgb: [f32; 3],
     /// Per-vertex sky-exposure factor (0.0 = underground, 1.0 = open sky).
     pub sky_exposed: f32,
+    /// Material-table index; `NO_VERTEX_MATERIAL` defers to the instance's material.
+    pub material: u32,
+    /// Base-colour texture coordinates; `[0, 0]` samples white on the default texture.
+    pub uv: [f32; 2],
 }
+
+/// Vertex `material` value meaning "draw in the instance's material".
+pub(crate) const NO_VERTEX_MATERIAL: u32 = u32::MAX;
 
 /// GPU-side per-instance data: model matrix + material index + object type
 #[repr(C)]
@@ -29,6 +38,87 @@ pub struct GpuInstance {
     pub padding: [u32; 2],
 }
 
+/// Where a draw reads its vertices from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VertexSource {
+    /// The mesh's own vertex buffer.
+    Mesh,
+    /// The frame vertex arena, from vertex `first_vertex`: the mesh skinned in a placement's pose.
+    Arena { first_vertex: u32 },
+}
+
+impl VertexSource {
+    /// The bytes of the frame arena holding `vertex_count` vertices of this source; `None`
+    /// for a draw that reads the mesh buffer.
+    pub(crate) fn arena_bytes(&self, vertex_count: u32) -> Option<Range<u64>> {
+        match *self {
+            Self::Mesh => None,
+            Self::Arena { first_vertex } => {
+                let stride = size_of::<Vertex>() as u64;
+                let start = u64::from(first_vertex) * stride;
+                Some(start..start + u64::from(vertex_count) * stride)
+            }
+        }
+    }
+}
+
+/// Which passes a draw is in. An enum rather than two flags, so "in no pass" cannot be
+/// expressed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Passes {
+    /// Drawn in view and casts a shadow.
+    Both,
+    /// Drawn in view, casts no shadow.
+    MainOnly,
+    /// Casts a shadow, not drawn in view.
+    ShadowOnly,
+}
+
+impl Passes {
+    pub(crate) fn in_main_pass(self) -> bool {
+        matches!(self, Self::Both | Self::MainOnly)
+    }
+
+    pub(crate) fn in_shadow_pass(self) -> bool {
+        matches!(self, Self::Both | Self::ShadowOnly)
+    }
+}
+
+/// What a queued draw binds: its mesh (always the index buffer), the vertex source and the
+/// base-colour texture of the main pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawKey {
+    pub(crate) mesh: u32,
+    pub(crate) texture: u32,
+    pub(crate) source: VertexSource,
+    pub(crate) passes: Passes,
+}
+
+impl DrawKey {
+    /// A draw of `mesh` reading the arena from vertex `first_vertex`.
+    pub(crate) fn skinned(mesh: u32, texture: u32, first_vertex: u32) -> Self {
+        Self {
+            mesh,
+            texture,
+            source: VertexSource::Arena { first_vertex },
+            passes: Passes::Both,
+        }
+    }
+
+    /// The vertices this draw reads: the mesh's buffer, or its slice of `arena`. `None` when
+    /// the draw reads the arena and there is none.
+    pub(crate) fn vertex_slice<'a>(
+        &self,
+        mesh: &'a MeshEntry,
+        arena: Option<&'a wgpu::Buffer>,
+    ) -> Option<wgpu::BufferSlice<'a>> {
+        match self.source.arena_bytes(mesh.vertex_count) {
+            None => Some(mesh.buffer.slice(..)),
+            Some(bytes) => arena.map(|arena| arena.slice(bytes)),
+        }
+    }
+}
+
 /// Per-mesh GPU data with optional index buffer
 #[derive(Debug)]
 pub struct MeshEntry {
@@ -36,4 +126,77 @@ pub struct MeshEntry {
     pub vertex_count: u32,
     pub index_buffer: Option<wgpu::Buffer>,
     pub index_count: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::MAIN_VERTEX_ATTRIBUTES;
+    use std::mem::{offset_of, size_of};
+
+    #[test]
+    fn shadow_only_is_in_the_shadow_pass_and_not_the_main_pass() {
+        let passes = [
+            (Passes::Both, true, true),
+            (Passes::MainOnly, true, false),
+            (Passes::ShadowOnly, false, true),
+        ];
+
+        for (variant, main, shadow) in passes {
+            assert_eq!(variant.in_main_pass(), main, "{variant:?} in the main pass");
+            assert_eq!(
+                variant.in_shadow_pass(),
+                shadow,
+                "{variant:?} in the shadow pass"
+            );
+        }
+    }
+
+    #[test]
+    fn vertex_layout_matches_the_main_pipeline_attributes() {
+        let fields = [
+            (
+                0,
+                offset_of!(Vertex, position),
+                wgpu::VertexFormat::Float32x3,
+            ),
+            (1, offset_of!(Vertex, normal), wgpu::VertexFormat::Float32x3),
+            (2, offset_of!(Vertex, ao), wgpu::VertexFormat::Float32),
+            (
+                3,
+                offset_of!(Vertex, geometry_type),
+                wgpu::VertexFormat::Uint32,
+            ),
+            (
+                10,
+                offset_of!(Vertex, light_level),
+                wgpu::VertexFormat::Float32,
+            ),
+            (
+                11,
+                offset_of!(Vertex, block_light_rgb),
+                wgpu::VertexFormat::Float32x3,
+            ),
+            (
+                12,
+                offset_of!(Vertex, sky_exposed),
+                wgpu::VertexFormat::Float32,
+            ),
+            (13, offset_of!(Vertex, material), wgpu::VertexFormat::Uint32),
+            (14, offset_of!(Vertex, uv), wgpu::VertexFormat::Float32x2),
+        ];
+
+        let attributes: Vec<_> = MAIN_VERTEX_ATTRIBUTES
+            .iter()
+            .map(|a| (a.shader_location, a.offset as usize, a.format))
+            .collect();
+
+        assert_eq!(
+            size_of::<Vertex>(),
+            64,
+            "documented in the GPU ABI reference"
+        );
+        assert_eq!(offset_of!(Vertex, uv), 56, "the uv closes the vertex");
+        assert_eq!(attributes, fields);
+    }
 }

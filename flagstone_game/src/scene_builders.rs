@@ -1,0 +1,637 @@
+use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
+use crate::perlin::Perlin;
+use flagstone_voxel::{BlockPos, CRYSTAL_MATERIAL_ID};
+use serde::{Deserialize, Serialize};
+
+/// Parameters describing a new world request coming from the UI or other
+/// front-ends. Defined here so the generator and caller share a single type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorldSpec {
+    pub name: String,
+    pub seed: Option<u64>,
+    pub size_xz: u32,
+    /// Length of daytime in real-world seconds (e.g., 600.0 = 10 minute day)
+    pub day_length_seconds: f32,
+    /// Length of nighttime in real-world seconds (e.g., 300.0 = 5 minute night)
+    pub night_length_seconds: f32,
+    /// Initial time when world starts (0.0 = midnight, 6.0 = dawn, 12.0 = noon, 18.0 = dusk)
+    pub initial_time_of_day: f32,
+}
+
+impl Default for WorldSpec {
+    fn default() -> Self {
+        Self {
+            name: "New World".to_string(),
+            seed: None,
+            size_xz: 64,
+            day_length_seconds: 600.0,   // 10 minute days
+            night_length_seconds: 420.0, // 7 minute nights
+            initial_time_of_day: 6.0,    // Start at dawn
+        }
+    }
+}
+
+/// Terrain configuration for procedural generation.
+///
+/// Biomes replace the old single `terrain_type`: each column picks a biome
+/// from `enabled_biomes` via a low-frequency biome map, and terrain params
+/// are read from the biome's `BiomeParams`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerrainConfig {
+    pub seed: u32,
+    /// World size in blocks along the X/Z axes (full width). The generator
+    /// treats this as the total side length; internal code uses half this
+    /// value as the +/- loop bound when iterating from -size..size.
+    pub world_size: u32,
+    /// Biomes permitted in this world. Must be non-empty; the biome map
+    /// picks among these per column.
+    pub enabled_biomes: Vec<BiomeType>,
+    pub ore_layout: OreLayout,
+}
+
+impl Default for TerrainConfig {
+    fn default() -> Self {
+        TerrainConfig {
+            seed: 42,
+            world_size: 64,
+            enabled_biomes: vec![BiomeType::GentleHills],
+            ore_layout: OreLayout::default(),
+        }
+    }
+}
+
+/// Deterministic positional hash for use during terrain generation.
+/// Produces a value in [0.0, 1.0) that depends only on position and seed —
+/// no entropy-seeded RNG, so generation is a pure function of its inputs.
+pub(crate) fn pos_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
+    let mut h = u64::from(seed);
+    h ^= (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    h ^= (y as u64).wrapping_mul(0x6c62_272e_07bb_0142);
+    h ^= (z as u64).wrapping_mul(0x5177_2d3d_ec2c_0b05);
+    h = h.wrapping_mul(0x94d0_49bb_1331_11eb);
+    h ^= h >> 31;
+    (h & 0x00ff_ffff) as f32 / 0x0100_0000 as f32
+}
+
+/// Max block height for the terrain column (clamp for the legacy 32-tall range).
+pub(crate) const MAX_TERRAIN_HEIGHT: i32 = 128;
+pub(crate) const BASE_ELEVATION: f32 = 64.0;
+
+/// Continuous surface height at `(x, z)`. Multi-octave Perlin noise scaled
+/// by the biome's amplitude/frequency/octaves, shaped by `BiomeType::shape`,
+/// clamped to non-negative.
+pub(crate) fn sample_surface_height(
+    noise: &Perlin,
+    x: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> f32 {
+    let mut value = 0.0;
+    let mut amplitude = params.surface_amplitude;
+    let mut frequency = params.surface_frequency;
+
+    for _ in 0..params.octaves {
+        value +=
+            noise.sample(f64::from(x) * frequency, f64::from(z) * frequency) * f64::from(amplitude);
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+
+    biome.shape(value).max(0.0) as f32
+}
+
+/// Density at `(x, y, z)`. Positive means solid rock, negative means air.
+///
+/// Compares world-space y against the full surface height (BASE_ELEVATION +
+/// noise offset). Without BASE_ELEVATION here, `is_solid` would disagree with
+/// the column_height used in the terrain loops and reject every block above y≈8.
+pub(crate) fn density(
+    noise: &Perlin,
+    x: i32,
+    y: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> f32 {
+    let surface_h = BASE_ELEVATION + sample_surface_height(noise, x, z, biome, params);
+    let base = surface_h - y as f32;
+    // Cave carver hook (disabled until caves are enabled):
+    // base - cave_noise(noise, x, y, z) * params.cave_density
+    let _ = params.cave_density;
+    base
+}
+
+/// Whether the block centered at `(x, y, z)` should be filled.
+pub(crate) fn is_solid(
+    noise: &Perlin,
+    x: i32,
+    y: i32,
+    z: i32,
+    biome: &BiomeType,
+    params: &BiomeParams,
+) -> bool {
+    density(noise, x, y, z, biome, params) > 0.0
+}
+
+/// Determine material ID based on depth within the column, using the biome's materials.
+///
+/// The top solid block is at `column_height` when surface_h has a fractional
+/// part, or at `column_height - 1` when it is exactly integer (Perlin = 0 at
+/// origin). Checking `>= column_height - 1` covers both cases.
+pub(crate) fn determine_material_id(column_height: i32, y: i32, params: &BiomeParams) -> u32 {
+    if y >= column_height - 1 {
+        params.surface_material
+    } else if y > column_height - 4 {
+        params.subsurface_material
+    } else {
+        params.base_material
+    }
+}
+
+/// Determine resource ID based on depth (optional resources)
+pub(crate) fn determine_resource_id(
+    column_height: i32,
+    y: i32,
+    x: i32,
+    z: i32,
+    seed: u32,
+) -> Option<u32> {
+    // 10% chance of iron ore in mid-levels, determined by positional hash
+    if y > 5 && y < column_height - 3 && pos_hash(x, y, z, seed) < 0.1 {
+        Some(1) // Iron ore resource ID
+    } else {
+        None
+    }
+}
+
+/// Chance that a block inside the crystal depth band is a crystal.
+const CRYSTAL_CHANCE: f32 = 0.002;
+
+/// Mixed into the seed so the crystal roll is independent of the ore roll.
+const CRYSTAL_SALT: u32 = 0x5EED_C257;
+
+/// Whether the block at `(x, y, z)` in a column of `column_height` is a glowing crystal.
+pub(crate) fn determine_crystal(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> bool {
+    y > 5 && y < column_height - 8 && crystal_roll_hits(pos_hash(x, y, z, seed ^ CRYSTAL_SALT))
+}
+
+/// Whether a positional hash roll in `[0, 1)` lands inside the crystal chance.
+fn crystal_roll_hits(roll: f32) -> bool {
+    roll < CRYSTAL_CHANCE
+}
+
+/// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
+const CHUNK_SIZE: i32 = 16;
+
+/// Generate the solid blocks for a single 16³ chunk at `chunk_pos`.
+///
+/// Returns `(world_pos, material_id, resource_id)` for each solid block in the
+/// chunk, using the world seed from `config`.
+///
+/// Returns an empty `Vec` when the chunk lies entirely outside the world's XZ
+/// bounds (i.e., more than `world_size/2` blocks from the origin).
+pub fn generate_chunk(
+    config: &TerrainConfig,
+    chunk_pos: glam::IVec3,
+) -> Vec<(BlockPos, u32, Option<u32>)> {
+    let half = (config.world_size / 2) as i32;
+    let chunk_min = chunk_pos * CHUNK_SIZE;
+    let chunk_max = chunk_min + glam::IVec3::splat(CHUNK_SIZE);
+
+    let noise = Perlin::new(config.seed);
+    let biome_map = BiomeMap::new(config.seed);
+
+    // Clamped to the world, so a chunk outside it gets an empty range and no blocks.
+    let x_range = chunk_min.x.max(-half)..chunk_max.x.min(half);
+    let z_range = chunk_min.z.max(-half)..chunk_max.z.min(half);
+
+    let mut blocks = Vec::new();
+
+    for x in x_range {
+        for z in z_range.clone() {
+            let biome = biome_map.biome_at(x, z, &config.enabled_biomes);
+            let params = biome.params();
+            let surface_h = BASE_ELEVATION + sample_surface_height(&noise, x, z, &biome, &params);
+            let column_height = (surface_h as i32).clamp(0, MAX_TERRAIN_HEIGHT);
+
+            // Only emit blocks whose Y falls within this chunk's Y range.
+            let y_start = chunk_min.y.max(0);
+            let y_end = chunk_max.y.min(column_height + 1);
+
+            for y in y_start..y_end {
+                if !is_solid(&noise, x, y, z, &biome, &params) {
+                    continue;
+                }
+                if determine_crystal(column_height, y, x, z, config.seed) {
+                    blocks.push((BlockPos::new(x, y, z), CRYSTAL_MATERIAL_ID, None));
+                    continue;
+                }
+                let material_id = determine_material_id(column_height, y, &params);
+                let resource_id = determine_resource_id(column_height, y, x, z, config.seed);
+                blocks.push((BlockPos::new(x, y, z), material_id, resource_id));
+            }
+        }
+    }
+
+    blocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    type Block = (BlockPos, u32, Option<u32>);
+
+    fn small_config(seed: u32) -> TerrainConfig {
+        TerrainConfig {
+            seed,
+            world_size: 32,
+            ..TerrainConfig::default()
+        }
+    }
+
+    fn all_biome_config() -> TerrainConfig {
+        TerrainConfig {
+            seed: 7,
+            world_size: 64,
+            enabled_biomes: vec![
+                BiomeType::GentleHills,
+                BiomeType::Mountains,
+                BiomeType::Plains,
+                BiomeType::Cliffs,
+                BiomeType::Canyon,
+            ],
+            ..TerrainConfig::default()
+        }
+    }
+
+    /// Every chunk position that can hold terrain, with the blocks `generate_chunk` gives it.
+    fn world_chunks(config: &TerrainConfig) -> Vec<(glam::IVec3, Vec<Block>)> {
+        let half = (config.world_size / 2) as i32;
+        let lo = (-half).div_euclid(CHUNK_SIZE);
+        let hi = (half - 1).div_euclid(CHUNK_SIZE);
+        let mut chunks = Vec::new();
+        for cx in lo..=hi {
+            for cy in 0..=MAX_TERRAIN_HEIGHT / CHUNK_SIZE {
+                for cz in lo..=hi {
+                    let pos = glam::IVec3::new(cx, cy, cz);
+                    chunks.push((pos, generate_chunk(config, pos)));
+                }
+            }
+        }
+        chunks
+    }
+
+    fn world_blocks(config: &TerrainConfig) -> Vec<Block> {
+        let mut blocks: Vec<Block> = world_chunks(config)
+            .into_iter()
+            .flat_map(|(_, blocks)| blocks)
+            .collect();
+        blocks.sort_by_key(|(p, _, _)| (p.x, p.y, p.z));
+        blocks
+    }
+
+    /// 64-bit FNV-1a over the sorted blocks; `None` resources get a distinct tag byte.
+    fn fingerprint(blocks: &[Block]) -> u64 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut feed = |bytes: &[u8]| {
+            for &b in bytes {
+                hash ^= u64::from(b);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        for (p, material, resource) in blocks {
+            feed(&p.x.to_le_bytes());
+            feed(&p.y.to_le_bytes());
+            feed(&p.z.to_le_bytes());
+            feed(&material.to_le_bytes());
+            match resource {
+                None => feed(&[0]),
+                Some(n) => {
+                    feed(&[1]);
+                    feed(&n.to_le_bytes());
+                }
+            }
+        }
+        hash
+    }
+
+    fn ore_count(blocks: &[Block]) -> usize {
+        blocks.iter().filter(|(_, _, r)| *r == Some(1)).count()
+    }
+
+    fn crystal_count(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .count()
+    }
+
+    #[test]
+    fn seeded_world_has_crystal_only_below_its_surface() {
+        let blocks = world_blocks(&small_config(42));
+        let mut column_tops = std::collections::HashMap::new();
+        for (p, _, _) in &blocks {
+            let top = column_tops.entry((p.x, p.z)).or_insert(p.y);
+            *top = (*top).max(p.y);
+        }
+
+        let crystals: Vec<&Block> = blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .collect();
+
+        assert!(!crystals.is_empty(), "a seeded world holds crystal");
+        for (p, _, _) in crystals {
+            let top = column_tops[&(p.x, p.z)];
+            assert!(top > p.y, "crystal at {p:?} has solid block above it");
+            assert!(
+                top - p.y >= 8,
+                "crystal at {p:?} sits 8 or more below the column top {top}"
+            );
+        }
+    }
+
+    #[test]
+    fn crystal_blocks_carry_no_resource() {
+        let blocks = world_blocks(&small_config(42));
+
+        let crystals: Vec<&Block> = blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .collect();
+
+        assert!(!crystals.is_empty(), "a seeded world holds crystal");
+        for (p, _, resource) in crystals {
+            assert_eq!(*resource, None, "crystal at {p:?}");
+        }
+    }
+
+    const CRYSTAL_TEST_COLUMN: i32 = 20;
+
+    /// Crystal positions in the 64x64 scan of a column of `CRYSTAL_TEST_COLUMN`,
+    /// over the heights `ys`.
+    fn crystal_positions(ys: std::ops::RangeInclusive<i32>, seed: u32) -> Vec<(i32, i32, i32)> {
+        let mut found = Vec::new();
+        for x in 0..64 {
+            for z in 0..64 {
+                for y in ys.clone() {
+                    if determine_crystal(CRYSTAL_TEST_COLUMN, y, x, z, seed) {
+                        found.push((x, y, z));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn crystal_roll_excludes_the_chance_boundary() {
+        assert!(crystal_roll_hits(0.0));
+        assert!(crystal_roll_hits(CRYSTAL_CHANCE * 0.5));
+        assert!(!crystal_roll_hits(CRYSTAL_CHANCE));
+        assert!(!crystal_roll_hits(0.5));
+    }
+
+    #[test]
+    fn determine_crystal_never_fires_outside_the_depth_band() {
+        let near_bedrock = crystal_positions(0..=5, 42);
+        let near_surface = crystal_positions(CRYSTAL_TEST_COLUMN - 8..=CRYSTAL_TEST_COLUMN + 1, 42);
+
+        assert!(near_bedrock.is_empty(), "{near_bedrock:?}");
+        assert!(near_surface.is_empty(), "{near_surface:?}");
+    }
+
+    #[test]
+    fn determine_crystal_is_rare_but_present_inside_the_depth_band() {
+        let inside = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+
+        assert!(!inside.is_empty(), "crystal appears inside the band");
+        assert!(inside.len() < 100, "crystal stays rare: {}", inside.len());
+    }
+
+    #[test]
+    fn crystal_uses_its_own_hash_salt_not_the_ore_roll() {
+        let band = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+
+        let crystal_without_ore = band
+            .iter()
+            .any(|&(x, y, z)| determine_resource_id(CRYSTAL_TEST_COLUMN, y, x, z, 42).is_none());
+
+        assert!(!band.is_empty(), "crystal appears inside the band");
+        assert!(
+            crystal_without_ore,
+            "every crystal also rolled ore, so the hash salt is shared"
+        );
+    }
+
+    #[test]
+    fn crystal_positions_differ_between_seeds() {
+        let seed_42 = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+        let seed_43 = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 43);
+
+        assert!(!seed_42.is_empty(), "seed 42 has crystal");
+        assert!(!seed_43.is_empty(), "seed 43 has crystal");
+        assert_ne!(seed_42, seed_43);
+    }
+
+    #[test]
+    fn default_world_matches_its_pinned_fingerprint() {
+        let blocks = world_blocks(&small_config(42));
+
+        let measured = (
+            fingerprint(&blocks),
+            blocks.len(),
+            ore_count(&blocks),
+            crystal_count(&blocks),
+        );
+
+        assert_eq!(
+            measured,
+            (17_813_487_417_460_971_201, 67_114, 5_781, 98),
+            "world generation output changed; update these pins only when the change is deliberate"
+        );
+    }
+
+    #[test]
+    fn all_biome_world_matches_its_pinned_fingerprint() {
+        let blocks = world_blocks(&all_biome_config());
+
+        let measured = (
+            fingerprint(&blocks),
+            blocks.len(),
+            ore_count(&blocks),
+            crystal_count(&blocks),
+        );
+
+        assert_eq!(
+            measured,
+            (3_247_777_566_613_322_200, 265_476, 22_840, 414),
+            "world generation output changed; update these pins only when the change is deliberate"
+        );
+    }
+
+    #[test]
+    fn different_seeds_produce_different_grids() {
+        let a = world_blocks(&small_config(42));
+        let b = world_blocks(&small_config(43));
+
+        assert_ne!(a, b, "different seeds must produce different terrain");
+    }
+
+    #[test]
+    fn chunk_past_each_world_edge_is_empty() {
+        let cfg = small_config(42);
+
+        // (outside chunk, in-world neighbour), one edge at a time.
+        let edges = [
+            ((1, 4, 0), (0, 4, 0)),
+            ((-2, 4, 0), (-1, 4, 0)),
+            ((0, 4, 1), (0, 4, 0)),
+            ((0, 4, -2), (0, 4, -1)),
+        ];
+
+        for (outside, inside) in edges {
+            let outside = glam::IVec3::from(outside);
+            let inside = glam::IVec3::from(inside);
+            assert!(
+                generate_chunk(&cfg, outside).is_empty(),
+                "chunk {outside:?} lies past one edge and must be empty"
+            );
+            assert!(
+                !generate_chunk(&cfg, inside).is_empty(),
+                "chunk {inside:?} is in the world and must have blocks"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_chunk_blocks_within_chunk_bounds() {
+        let cfg = small_config(1);
+        let cp = glam::IVec3::new(0, 0, 0);
+        let chunk_min = cp * 16;
+        let chunk_max = chunk_min + glam::IVec3::splat(16);
+        for (pos, _, _) in generate_chunk(&cfg, cp) {
+            assert!(
+                pos.x >= chunk_min.x
+                    && pos.x < chunk_max.x
+                    && pos.y >= chunk_min.y
+                    && pos.y < chunk_max.y
+                    && pos.z >= chunk_min.z
+                    && pos.z < chunk_max.z,
+                "block {pos:?} outside chunk bounds {chunk_min:?}..{chunk_max:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn chunks_tile_the_world_without_overlap() {
+        use std::collections::HashSet;
+        let cfg = all_biome_config();
+        let half = (cfg.world_size / 2) as i32;
+        let mut seen = HashSet::new();
+        let mut columns = HashSet::new();
+
+        for (chunk, blocks) in world_chunks(&cfg) {
+            let min = chunk * CHUNK_SIZE;
+            let max = min + glam::IVec3::splat(CHUNK_SIZE);
+            for (p, _, _) in blocks {
+                assert!(
+                    (min.x..max.x).contains(&p.x)
+                        && (min.y..max.y).contains(&p.y)
+                        && (min.z..max.z).contains(&p.z),
+                    "block {p:?} lies outside its chunk {chunk:?}"
+                );
+                assert!(seen.insert((p.x, p.y, p.z)), "block {p:?} is in two chunks");
+                columns.insert((p.x, p.z));
+            }
+        }
+
+        for x in -half..half {
+            for z in -half..half {
+                assert!(columns.contains(&(x, z)), "column ({x}, {z}) has no blocks");
+            }
+        }
+    }
+
+    #[test]
+    fn block_at_zero_density_is_air() {
+        // Perlin noise is 0 at lattice point (0, 0), so the surface sits exactly at BASE_ELEVATION.
+        let noise = Perlin::new(42);
+        let biome = BiomeType::GentleHills;
+        let params = biome.params();
+        let surface_y = BASE_ELEVATION as i32;
+
+        let at_surface = density(&noise, 0, surface_y, 0, &biome, &params);
+
+        assert_eq!(at_surface, 0.0, "fixture: density at the surface must be 0");
+        assert!(
+            !is_solid(&noise, 0, surface_y, 0, &biome, &params),
+            "a block at zero density is air"
+        );
+        assert!(
+            is_solid(&noise, 0, surface_y - 1, 0, &biome, &params),
+            "the block below the surface is solid"
+        );
+    }
+
+    #[test]
+    fn terrain_column_layers_and_ore_band() {
+        let params = BiomeParams {
+            surface_material: 10,
+            subsurface_material: 20,
+            base_material: 30,
+            ..BiomeType::GentleHills.params()
+        };
+        let column_height = 70;
+
+        let materials: Vec<u32> = (66..=70)
+            .rev()
+            .map(|y| determine_material_id(column_height, y, &params))
+            .collect();
+
+        assert_eq!(materials, vec![10, 10, 20, 20, 30]);
+
+        // Ore seen at each band edge, so a narrowed band fails too.
+        let (mut ore_at_bottom, mut ore_at_top) = (false, false);
+        for seed in 0..4 {
+            for x in -8..8 {
+                for z in -8..8 {
+                    for y in 0..=column_height {
+                        let ore = determine_resource_id(column_height, y, x, z, seed);
+                        if (6..=66).contains(&y) {
+                            ore_at_bottom |= y == 6 && ore == Some(1);
+                            ore_at_top |= y == 66 && ore == Some(1);
+                        } else {
+                            assert_eq!(ore, None, "no ore expected at y={y}");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(ore_at_bottom, "expected ore somewhere at y=6");
+        assert!(ore_at_top, "expected ore somewhere at y=66");
+    }
+
+    #[test]
+    fn golden_surface_heights_are_pinned() {
+        let noise = Perlin::new(42);
+        let biome = BiomeType::GentleHills;
+        let params = biome.params();
+        let pinned = [
+            ((-33, 19), 1.372_482_3),
+            ((-19, 12), 3.875_477_3),
+            ((-12, 9), 5.168_122_3),
+            ((23, -8), 1.547_490_2),
+        ];
+
+        for ((x, z), expected) in pinned {
+            let h = sample_surface_height(&noise, x, z, &biome, &params);
+            assert!(
+                (h - expected).abs() < 1e-6,
+                "({x}, {z}) = {h}, pinned {expected}"
+            );
+        }
+    }
+}
