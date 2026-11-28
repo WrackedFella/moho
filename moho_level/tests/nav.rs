@@ -941,3 +941,468 @@ fn a_point_reaching_two_levels_snaps_to_the_one_with_the_smaller_vertical_gap() 
         );
     }
 }
+
+/// Cost-shaped routes over the navmesh cut into grid cells.
+mod cells {
+    use moho_level::{CellCost, CellMesh, CellMeshError, CostMultiplier, NavCell};
+
+    use super::*;
+
+    const SIZE: f32 = 1.0;
+    const START: Vec3 = Vec3::new(-6.0, 0.0, -4.0);
+    const GOAL: Vec3 = Vec3::new(6.0, 0.0, -4.0);
+    const PLAIN: CellCost = CellCost::Walkable(CostMultiplier::ONE);
+
+    /// A divider from the south edge to z = 2 on x = 0: the short way between `START` and
+    /// `GOAL` passes just north of its end, the longer way further north.
+    fn lane_world() -> Vec<WorldMesh> {
+        let divider = Rect {
+            min: [-0.25, -10.0],
+            max: [0.25, 2.0],
+        };
+        vec![floor(), block(divider, 3.0)]
+    }
+
+    static LANE: LazyLock<NavMesh> = LazyLock::new(|| build(&lane_world()));
+    static LANE_CELLS: LazyLock<CellMesh> =
+        LazyLock::new(|| CellMesh::build(&LANE, SIZE).expect("the lane fixture cuts"));
+    static WALLED_CELLS: LazyLock<CellMesh> =
+        LazyLock::new(|| CellMesh::build(&WALLED, SIZE).expect("the wall world cuts"));
+
+    fn multiplier(value: f32) -> CellCost {
+        CellCost::Walkable(CostMultiplier::new(value).expect("at least 1 and finite"))
+    }
+
+    /// Whether a corner or the centre of `cell` lies strictly inside |x| < 1.5, z < `z_limit`.
+    /// The lane is wider than a cell, so no cell straddles it unjudged.
+    fn in_lane(cell: NavCell<'_>, z_limit: f32) -> bool {
+        let inside = |p: Vec3| p.x.abs() < 1.5 && p.z < z_limit;
+        cell.corners().iter().any(|corner| inside(*corner)) || inside(cell.centre())
+    }
+
+    fn northmost(path: &[Vec3]) -> f32 {
+        path.iter().map(|p| p.z).fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    /// Points along `path` at most 5 cm apart, corners and the end included.
+    fn samples(path: &[Vec3]) -> Vec<Vec3> {
+        let mut points = vec![path[0]];
+        for pair in path.windows(2) {
+            let steps = (pair[0].distance(pair[1]) / 0.05).ceil().max(1.0) as u32;
+            for i in 1..=steps {
+                points.push(pair[0].lerp(pair[1], i as f32 / steps as f32));
+            }
+        }
+        points
+    }
+
+    /// Where `path` crosses x = 0.
+    fn crossing_z(path: &[Vec3]) -> f32 {
+        let pair = path
+            .windows(2)
+            .find(|pair| (pair[0].x <= 0.0) != (pair[1].x <= 0.0))
+            .expect("the route crosses x = 0");
+        let t = -pair[0].x / (pair[1].x - pair[0].x);
+        pair[0].z + t * (pair[1].z - pair[0].z)
+    }
+
+    /// Metres on the ground plane from `p` to a convex cell; 0 inside.
+    fn distance_to_cell(p: Vec3, corners: &[Vec3]) -> f32 {
+        let n = corners.len();
+        let edges = || (0..n).map(|i| (corners[i], corners[(i + 1) % n]));
+        let left_of = |a: Vec3, b: Vec3| (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
+        if edges().all(|(a, b)| left_of(a, b) >= 0.0) {
+            return 0.0;
+        }
+        edges()
+            .map(|(a, b)| {
+                let along = Vec3::new(b.x - a.x, 0.0, b.z - a.z);
+                let t = (((p.x - a.x) * along.x + (p.z - a.z) * along.z) / along.length_squared())
+                    .clamp(0.0, 1.0);
+                flat_gap(p, a + along * t)
+            })
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    /// A reproducible verdict per cell, about three in four walkable.
+    fn walks(seed: u64, cell: NavCell<'_>) -> bool {
+        let centre = cell.centre();
+        let mut hash = seed ^ 0x9E37_79B9_7F4A_7C15;
+        for bits in [centre.x.to_bits(), centre.z.to_bits()] {
+            hash = (hash ^ u64::from(bits)).wrapping_mul(0x0100_0000_01B3);
+            hash ^= hash >> 29;
+        }
+        hash % 4 != 0
+    }
+
+    fn near(cell: NavCell<'_>, p: Vec3, radius: f32) -> bool {
+        cell.corners()
+            .iter()
+            .any(|corner| flat_gap(*corner, p) <= radius)
+    }
+
+    #[test]
+    fn a_costly_short_way_is_avoided_for_the_longer_way() {
+        let control = LANE_CELLS
+            .path_by_cost(START, GOAL, |_| PLAIN)
+            .expect("the short way is open");
+
+        let route = LANE_CELLS
+            .path_by_cost(START, GOAL, |cell| {
+                if in_lane(cell, 5.0) {
+                    multiplier(20.0)
+                } else {
+                    PLAIN
+                }
+            })
+            .expect("the longer way is open");
+
+        assert!(
+            northmost(&control) < 5.0,
+            "without the lane the short way is taken: {control:?}"
+        );
+        assert!(northmost(&route) > 5.0, "{route:?}");
+        assert!(flat_gap(route[0], START) <= 0.05, "{route:?}");
+        assert!(
+            flat_gap(*route.last().expect("a route has corners"), GOAL) <= 0.05,
+            "{route:?}"
+        );
+    }
+
+    #[test]
+    fn a_ruled_out_lane_is_never_entered() {
+        let route = LANE_CELLS
+            .path_by_cost(START, GOAL, |cell| {
+                if in_lane(cell, 5.0) {
+                    CellCost::NotWalkable
+                } else {
+                    PLAIN
+                }
+            })
+            .expect("the longer way is open");
+
+        assert!(northmost(&route) > 5.0, "{route:?}");
+        for point in samples(&route) {
+            assert!(
+                !(point.x.abs() < 1.5 - 0.001 && point.z < 5.0 - 0.001),
+                "{point:?} lies in ruled-out area: {route:?}"
+            );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(16))]
+
+        #[test]
+        fn routes_stay_inside_cells_the_rule_passed(
+            seed in any::<u64>(),
+            ax in -9.0_f32..9.0, az in -9.0_f32..9.0,
+            bx in -9.0_f32..9.0, bz in -9.0_f32..9.0,
+        ) {
+            let a = Vec3::new(ax, 0.0, az);
+            let b = Vec3::new(bx, 0.0, bz);
+            let mut passed: Vec<Vec<Vec3>> = Vec::new();
+
+            let route = LANE_CELLS.path_by_cost(a, b, |cell| {
+                if walks(seed, cell) {
+                    passed.push(cell.corners().to_vec());
+                    PLAIN
+                } else {
+                    CellCost::NotWalkable
+                }
+            });
+
+            let Some(route) = route else { return Ok(()) };
+            for point in samples(&route) {
+                let nearest = passed
+                    .iter()
+                    .map(|corners| distance_to_cell(point, corners))
+                    .fold(f32::INFINITY, f32::min);
+                prop_assert!(nearest <= 0.001, "{point:?} is {nearest} m from passed cells");
+            }
+        }
+    }
+
+    #[test]
+    fn a_lane_across_every_way_gives_no_path() {
+        let blocked = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
+            if in_lane(cell, 10.0) {
+                CellCost::NotWalkable
+            } else {
+                PLAIN
+            }
+        });
+        let open = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
+            if in_lane(cell, 5.0) {
+                CellCost::NotWalkable
+            } else {
+                PLAIN
+            }
+        });
+
+        assert_eq!(blocked, None);
+        assert!(
+            open.is_some(),
+            "a lane that leaves the north open is passable"
+        );
+    }
+
+    #[test]
+    fn a_goal_in_ruled_out_area_gives_no_path_asking_only_the_ends() {
+        let mut asked = Vec::new();
+
+        let route = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
+            asked.push(cell.centre());
+            if near(cell, GOAL, 1.0) {
+                CellCost::NotWalkable
+            } else {
+                PLAIN
+            }
+        });
+
+        assert_eq!(route, None);
+        assert!(asked.len() <= 2, "asked {} cells: {asked:?}", asked.len());
+        assert!(
+            asked.iter().any(|c| flat_gap(*c, GOAL) <= 1.5),
+            "the goal's cell was never judged: {asked:?}"
+        );
+        for centre in &asked {
+            assert!(
+                flat_gap(*centre, START) <= 1.5 || flat_gap(*centre, GOAL) <= 1.5,
+                "asked about {centre:?}, away from both ends"
+            );
+        }
+        assert!(LANE_CELLS.path_by_cost(START, GOAL, |_| PLAIN).is_some());
+    }
+
+    #[test]
+    fn a_start_in_ruled_out_area_gives_no_path_asking_only_the_ends() {
+        let mut asked = Vec::new();
+
+        let route = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
+            asked.push(cell.centre());
+            if near(cell, START, 1.0) {
+                CellCost::NotWalkable
+            } else {
+                PLAIN
+            }
+        });
+
+        assert_eq!(route, None);
+        assert!(asked.len() <= 2, "asked {} cells: {asked:?}", asked.len());
+        assert!(
+            asked.iter().any(|c| flat_gap(*c, START) <= 1.5),
+            "the start's cell was never judged: {asked:?}"
+        );
+        for centre in &asked {
+            assert!(
+                flat_gap(*centre, START) <= 1.5 || flat_gap(*centre, GOAL) <= 1.5,
+                "asked about {centre:?}, away from both ends"
+            );
+        }
+    }
+
+    #[test]
+    fn equal_cost_goes_the_shortest_paths_way_within_six_percent() {
+        let cases = [
+            (
+                &*WALLED,
+                &*WALLED_CELLS,
+                Vec3::new(-5.0, 0.0, 2.0),
+                Vec3::new(5.0, 0.0, 1.0),
+            ),
+            (
+                &*WALLED,
+                &*WALLED_CELLS,
+                Vec3::new(-5.0, 0.0, -2.0),
+                Vec3::new(5.0, 0.0, -1.0),
+            ),
+            (&*LANE, &*LANE_CELLS, START, GOAL),
+        ];
+
+        for (navmesh, cell_mesh, a, b) in cases {
+            let shortest = navmesh
+                .path(a, b)
+                .expect("the obstacle can be walked around");
+            let shaped = cell_mesh
+                .path_by_cost(a, b, |_| PLAIN)
+                .expect("equal cost leaves the way open");
+
+            assert!(
+                crossing_z(&shortest) * crossing_z(&shaped) > 0.0
+                    && crossing_z(&shaped).abs() > 2.0,
+                "{a:?} to {b:?}: shortest crosses at {}, shaped at {}",
+                crossing_z(&shortest),
+                crossing_z(&shaped)
+            );
+            assert_eq!(shaped[0], shortest[0]);
+            assert_eq!(shaped.last(), shortest.last());
+            assert!(
+                flat_length(&shaped) <= flat_length(&shortest) * 1.06,
+                "{} m against the shortest {} m",
+                flat_length(&shaped),
+                flat_length(&shortest)
+            );
+        }
+    }
+
+    #[test]
+    fn two_asks_and_a_rebuild_give_identical_routes_and_questions() {
+        let ask = |cells: &CellMesh| {
+            let mut asked = Vec::new();
+            let route = cells.path_by_cost(START, GOAL, |cell| {
+                asked.push(cell.centre());
+                if in_lane(cell, 5.0) {
+                    multiplier(20.0)
+                } else {
+                    PLAIN
+                }
+            });
+            (route, asked)
+        };
+        let rebuilt = CellMesh::build(&build(&lane_world()), SIZE).expect("the lane fixture cuts");
+
+        let first = ask(&LANE_CELLS);
+        let second = ask(&LANE_CELLS);
+        let after_rebuild = ask(&rebuilt);
+
+        assert!(first.0.is_some(), "the longer way is open");
+        assert!(!first.1.is_empty(), "the rule was never asked");
+        assert_eq!(first, second);
+        assert_eq!(first, after_rebuild);
+    }
+
+    #[test]
+    fn the_rule_is_asked_at_most_once_per_cell() {
+        let room = |min: [f32; 2], max: [f32; 2]| block(Rect { min, max }, 3.0);
+        let world = vec![
+            floor(),
+            room([3.5, -2.5], [4.0, 2.5]),
+            room([8.0, -2.5], [8.5, 2.5]),
+            room([3.5, -2.5], [8.5, -2.0]),
+            room([3.5, 2.0], [8.5, 2.5]),
+        ];
+        let cells = CellMesh::build(&build(&world), SIZE).expect("the room world cuts");
+        let mut asked = Vec::new();
+
+        let route = cells.path_by_cost(
+            Vec3::new(-5.0, 0.0, 0.0),
+            Vec3::new(6.0, 0.0, 0.0),
+            |cell| {
+                let centre = cell.centre();
+                asked.push((centre.x.to_bits(), centre.y.to_bits(), centre.z.to_bits()));
+                PLAIN
+            },
+        );
+
+        let mut unique = asked.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(route, None, "the goal is inside a closed room");
+        assert!(
+            asked.len() > 100,
+            "the search reached only {} cells",
+            asked.len()
+        );
+        assert_eq!(asked.len(), unique.len(), "a cell was asked about twice");
+    }
+
+    #[test]
+    fn a_route_within_one_cell_is_start_and_goal() {
+        let cells = CellMesh::build(&build(&[floor()]), SIZE).expect("a floor cuts");
+        let a = Vec3::new(2.2, 0.0, 3.3);
+        let b = Vec3::new(2.7, 0.0, 3.6);
+
+        let plain = cells
+            .path_by_cost(a, b, |_| PLAIN)
+            .expect("one cell joins its points");
+        let costly = cells
+            .path_by_cost(a, b, |_| multiplier(20.0))
+            .expect("one cell joins its points");
+
+        assert_eq!(plain.len(), 2, "{plain:?}");
+        assert!(flat_gap(plain[0], a) <= 0.05, "{plain:?}");
+        assert!(flat_gap(plain[1], b) <= 0.05, "{plain:?}");
+        assert_eq!(plain, costly);
+    }
+
+    #[test]
+    fn an_end_off_the_mesh_gives_no_path_and_asks_nothing() {
+        let cells = CellMesh::build(&build(&[floor()]), SIZE).expect("a floor cuts");
+        let on = Vec3::new(2.0, 0.0, 3.0);
+        let off = Vec3::new(0.0, 0.0, 30.0);
+        let mut asked = 0;
+
+        let to_off = cells.path_by_cost(on, off, |_| {
+            asked += 1;
+            PLAIN
+        });
+        let from_off = cells.path_by_cost(off, on, |_| {
+            asked += 1;
+            PLAIN
+        });
+
+        assert_eq!(to_off, None);
+        assert_eq!(from_off, None);
+        assert_eq!(asked, 0);
+        assert!(
+            cells
+                .path_by_cost(on, Vec3::new(-2.0, 0.0, 1.0), |_| PLAIN)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_cell_size_not_finite_or_below_the_minimum_is_refused() {
+        let small = build(&[box_mesh(
+            Vec3::new(-2.0, -1.0, -2.0),
+            Vec3::new(2.0, 0.0, 2.0),
+        )]);
+
+        for size in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            0.0,
+            -1.0,
+            0.0499,
+        ] {
+            let result = CellMesh::build(&small, size);
+            assert!(
+                matches!(result, Err(CellMeshError::CellSize { .. })),
+                "size {size} gave {result:?}"
+            );
+        }
+
+        assert!(
+            CellMesh::build(&small, 0.05).is_ok(),
+            "the minimum size cuts"
+        );
+        assert!(CellMesh::build(&small, 1.0).is_ok());
+    }
+
+    #[test]
+    fn a_cell_size_that_would_cut_too_many_cells_is_refused() {
+        let big = build(&[box_mesh(
+            Vec3::new(-30.0, -1.0, -30.0),
+            Vec3::new(30.0, 0.0, 30.0),
+        )]);
+
+        let result = CellMesh::build(&big, 0.05);
+
+        assert!(
+            matches!(result, Err(CellMeshError::TooManyCells { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn an_empty_navmesh_cuts_to_no_cells_and_no_path() {
+        let cells =
+            CellMesh::build(&NavMesh::default(), SIZE).expect("nothing to cut is not a failure");
+
+        let route = cells.path_by_cost(START, GOAL, |_| PLAIN);
+
+        assert_eq!(route, None);
+    }
+}

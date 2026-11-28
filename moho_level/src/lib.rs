@@ -31,7 +31,10 @@ pub use model::{
     ModelSkin, load_model,
 };
 use moho_render_api::WorldMesh;
-pub use nav::{AgentProfile, NavBuildError, NavMesh};
+pub use nav::{
+    AgentProfile, CellCost, CellMesh, CellMeshError, CostMultiplier, CostMultiplierError,
+    NavBuildError, NavCell, NavMesh,
+};
 pub use socket::{Assembly, Posed, Released, SocketError};
 
 /// A loaded level: one mesh per triangle primitive and one marker per named,

@@ -2,7 +2,10 @@
 //! agent profile, and path queries over it.
 
 mod build;
+mod cells;
 mod query;
+
+pub use cells::{CellCost, CellMesh, CellMeshError, CostMultiplier, CostMultiplierError, NavCell};
 
 use glam::Vec3;
 use moho_render_api::WorldMesh;
