@@ -3,6 +3,7 @@
 
 pub mod aim;
 pub mod arena;
+pub mod body;
 pub mod brain;
 pub mod character;
 pub mod console_commands;
