@@ -353,6 +353,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dynamic_bodies_get_distinct_ids_that_track_their_own_body() {
+        let mut world = PhysicsWorld::new();
+        let low: crate::BodyId = world.add_dynamic_sphere(Vec3::new(0.0, 10.0, 0.0), 0.5);
+        let high: crate::BodyId = world.add_dynamic_sphere(Vec3::new(5.0, 20.0, 0.0), 0.5);
+
+        for _ in 0..30 {
+            world.step(1.0 / 60.0);
+        }
+
+        assert_ne!(low, high);
+        let low_pos = world.body_position(low).expect("low body is live");
+        let high_pos = world.body_position(high).expect("high body is live");
+        assert!(
+            (7.0..9.0).contains(&low_pos.y) && low_pos.x == 0.0,
+            "the low body falls about 2.25 m from 10, got {low_pos}"
+        );
+        assert!(
+            (17.0..19.0).contains(&high_pos.y) && high_pos.x == 5.0,
+            "the high body falls about 2.25 m from 20, got {high_pos}"
+        );
+    }
+
+    #[test]
+    fn counts_are_one_body_and_n_plus_one_colliders() {
+        const N: u64 = 4;
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 5.0, 0.0));
+        for id in 0..N {
+            world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32), TEST_TAG);
+        }
+
+        assert_eq!(world.body_count(), 1);
+        assert_eq!(world.collider_count(), N as usize + 1);
+
+        world.remove_world_mesh(WorldMeshId(0));
+
+        assert_eq!(world.body_count(), 1);
+        assert_eq!(world.collider_count(), N as usize);
+    }
+
     fn empty_mesh() -> WorldMesh {
         quad_mesh(&[], &[])
     }
