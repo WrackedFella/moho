@@ -68,7 +68,9 @@ struct Pending {
 /// What happened to a captured input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capture {
-    /// The requested slot now holds the plain press of the input.
+    /// The requested slot now holds the binding: from a capture, the input with the slot's kind
+    /// and modifiers (a press, a hold or a chord); from a pick, the slot's input with the new
+    /// kind and modifiers.
     Set,
     /// The action already holds the input in a slot or beyond them; nothing changed.
     Unchanged,

@@ -7466,6 +7466,52 @@ mod tests {
     }
 
     #[test]
+    fn a_conflict_dialog_names_the_full_binding_for_a_chord_and_a_hold() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::CheckMagazine,
+            Slot::Secondary,
+        );
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::CheckMagazine, KEY_Y);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Jump,
+            Slot::Secondary,
+        );
+
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::Jump, KEY_Y);
+        let chord = title(&game);
+        press_item(&mut game, &mut ctx, "Cancel", is_button("Cancel"));
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Reload);
+        step_kind(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Reload,
+            Slot::Primary,
+        );
+        let hold = title(&game);
+
+        assert_eq!(
+            chord.as_deref(),
+            Some("Ctrl+Y is used by Check magazine"),
+            "a capture into a chord slot"
+        );
+        assert_eq!(
+            hold.as_deref(),
+            Some("Hold R is used by Check magazine"),
+            "a pick into a hold"
+        );
+    }
+
+    #[test]
     fn backing_out_of_controls_discards_the_open_action_and_a_staged_pick() {
         let mut game = quiet_menu_game();
         let clock = GameClock::default();
