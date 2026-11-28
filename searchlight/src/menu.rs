@@ -274,11 +274,6 @@ pub fn settings_page(
     }
 }
 
-/// The Controls page's rows for `draft` with no action open.
-pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
-    controls_rows_with(draft, None)
-}
-
 /// The Controls page's rows for `draft`: one per action with its two slots, then Apply, Reset and
 /// Back. `open` is the action whose details are shown under its row.
 pub fn controls_rows_with(
