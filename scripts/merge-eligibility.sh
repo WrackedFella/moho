@@ -3,6 +3,8 @@
 #
 #   merge-eligibility.sh gather <pr>     prints the PR's facts as JSON (needs gh, GH_REPO,
 #                                        REVIEWER, PR_AUTOMERGE)
+#   merge-eligibility.sh base-ci <runs>  prints the base's last finished CI run from the
+#                                        workflow-runs API JSON (newest first)
 #   merge-eligibility.sh decide <facts>  prints `eligible <class>` and exits 0, or one
 #                                        `ineligible: <reason>` line per failed rule and
 #                                        exits 1
@@ -17,6 +19,12 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # Paths whose change always needs a person: what the gate checks, how agents run, and the
 # written rules a review judges against.
 DENY='^(\.github|\.claude|\.cargo|\.config|\.husky|\.gitnexus|scripts|_todo/adr|wiki/process)/|^[^/]*\.toml$|^(justfile|Cargo\.lock|\.mcp\.json)$|(^|/)CLAUDE\.md$|^_todo/(_STANDARDS|WORKFLOW)\.md$'
+
+# The newest push CI run of the base that finished with a verdict. A run a newer merge
+# superseded reports `cancelled` and says nothing about the base, so it is skipped.
+base_ci() {
+    jq -c '[.workflow_runs[] | select(.conclusion == "success" or .conclusion == "failure")][0] // {} | {sha: .head_sha, conclusion}'
+}
 
 gather() {
     local pr=$1 pull issue_no issue='null' comments base_ci domain advisory
@@ -34,8 +42,8 @@ gather() {
     if [[ -n $issue_no ]]; then
         issue=$(gh api "repos/$GH_REPO/issues/$issue_no" --jq '{number, state, labels: [.labels[].name]}')
     fi
-    base_ci=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?branch=$(jq -r .base.ref <<<"$pull")&event=push&status=completed&per_page=1" \
-        --jq '.workflow_runs[0] // {} | {sha: .head_sha, conclusion}')
+    base_ci=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?branch=$(jq -r .base.ref <<<"$pull")&event=push&status=completed&per_page=20" \
+        | base_ci)
     domain=$(scripts/domain-paths.sh | jq -R . | jq -s .)
     # The `Advisory reviewers` logins: the backticked items on that CLAUDE.md line.
     advisory=$(grep -m1 'Advisory reviewers:' CLAUDE.md | grep -o '`[^`]*`' | tr -d '`' | jq -R . | jq -s .)
@@ -111,5 +119,6 @@ decide() {
 case "${1:-}" in
     gather) gather "$2" ;;
     decide) decide "$2" ;;
-    *) echo "usage: $0 gather <pr> | decide <facts.json>" >&2; exit 2 ;;
+    base-ci) base_ci < "$2" ;;
+    *) echo "usage: $0 gather <pr> | decide <facts.json> | base-ci <runs.json>" >&2; exit 2 ;;
 esac

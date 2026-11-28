@@ -132,6 +132,12 @@ merge-eligibility-test:
             exit 1
         fi
     done < "$f/cases.txt"
+    # The base's last CI verdict skips cancelled runs, and reports none when all are.
+    runs() { jq -nc --argjson r "$1" '{workflow_runs: ($r | map({head_sha: ("s" + (. | tostring | .[0:1])), conclusion: .}))}'; }
+    ci() { runs "$1" > "$facts"; scripts/merge-eligibility.sh base-ci "$facts" | jq -r '.conclusion // "none"'; }
+    [[ $(ci '["cancelled","success","failure"]') == success ]] || { echo "merge-eligibility: base-ci kept a cancelled run" >&2; exit 1; }
+    [[ $(ci '["cancelled","failure","success"]') == failure ]] || { echo "merge-eligibility: base-ci skipped a failed run" >&2; exit 1; }
+    [[ $(ci '["cancelled","cancelled"]') == none ]] || { echo "merge-eligibility: base-ci trusted cancelled runs" >&2; exit 1; }
     echo "merge-eligibility: OK"
 
 # Self-test of the chain rules: each case edits two queued items' facts and expects
