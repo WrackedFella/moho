@@ -1032,7 +1032,7 @@ mod cells {
             hash = (hash ^ u64::from(bits)).wrapping_mul(0x0100_0000_01B3);
             hash ^= hash >> 29;
         }
-        hash % 4 != 0
+        !hash.is_multiple_of(4)
     }
 
     fn near(cell: NavCell<'_>, p: Vec3, radius: f32) -> bool {
@@ -1061,7 +1061,8 @@ mod cells {
             northmost(&control) < 5.0,
             "without the lane the short way is taken: {control:?}"
         );
-        assert!(northmost(&route) > 5.0, "{route:?}");
+        // The route may run along the lane's north edge (z = 5) with no margin, never inside it.
+        assert!(northmost(&route) >= 5.0 - 1e-3, "{route:?}");
         assert!(flat_gap(route[0], START) <= 0.05, "{route:?}");
         assert!(
             flat_gap(*route.last().expect("a route has corners"), GOAL) <= 0.05,
@@ -1081,7 +1082,7 @@ mod cells {
             })
             .expect("the longer way is open");
 
-        assert!(northmost(&route) > 5.0, "{route:?}");
+        assert!(northmost(&route) >= 5.0 - 1e-3, "{route:?}");
         for point in samples(&route) {
             assert!(
                 !(point.x.abs() < 1.5 - 0.001 && point.z < 5.0 - 0.001),
