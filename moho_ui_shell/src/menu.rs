@@ -1017,8 +1017,46 @@ impl<A> MenuStack<A> {
     }
 
     /// What each row fully in view of the top menu screen is to a reader, in row order.
-    pub(crate) fn row_nodes(&self, _size: [f32; 2]) -> Vec<RowNode> {
-        Vec::new()
+    pub(crate) fn row_nodes(&self, size: [f32; 2]) -> Vec<RowNode> {
+        let Some(Layer::Menu(open)) = self.screens.last() else {
+            return Vec::new();
+        };
+        let rects = open.rects(size);
+        open.visible(size)
+            .filter_map(|row| {
+                let (label, role) = match &open.screen.items[row] {
+                    MenuItem::Button { label, .. } => (label.clone(), RowRole::Button),
+                    MenuItem::Apply => ("Apply".to_owned(), RowRole::Button),
+                    MenuItem::GameSlider(slider) => (
+                        slider.label.clone(),
+                        RowRole::Slider {
+                            value: f64::from(open.game_value(slider)),
+                        },
+                    ),
+                    MenuItem::Setting(setting) => {
+                        let staged = open.staged.as_ref()?;
+                        let role = match setting.control() {
+                            Control::Toggle => RowRole::Checkbox {
+                                checked: staged.toggle_value(*setting),
+                            },
+                            Control::Slider { .. } => RowRole::Slider {
+                                value: f64::from(staged.slider_value(*setting)),
+                            },
+                            Control::Choice => RowRole::Choice {
+                                shown: staged.value_text(*setting),
+                            },
+                        };
+                        (setting.label().to_owned(), role)
+                    }
+                    MenuItem::Control { .. } | MenuItem::Details { .. } => return None,
+                };
+                Some(RowNode {
+                    rect: rects[row],
+                    label,
+                    role,
+                })
+            })
+            .collect()
     }
 }
 

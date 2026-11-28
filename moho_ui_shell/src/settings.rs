@@ -302,8 +302,12 @@ impl EngineSettings {
     }
 
     /// A toggle row's value; `false` for any other row.
-    pub(crate) fn toggle_value(&self, _setting: EngineSetting) -> bool {
-        false
+    pub(crate) fn toggle_value(&self, setting: EngineSetting) -> bool {
+        match setting {
+            EngineSetting::MouseSmoothing => self.mouse_smoothing,
+            EngineSetting::InvertMouseY => self.invert_mouse_y,
+            _ => false,
+        }
     }
 
     /// Flips a toggle row; other rows are left alone.
