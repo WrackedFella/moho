@@ -1,5 +1,7 @@
 //! Player input: the action set, its default bindings and the per-tick command.
 
+use std::collections::BTreeMap;
+
 use moho_core::prefs::Prefs;
 use moho_input::action_map::{ActionFrame, ActionMap, source_look_per_count};
 use moho_input::bindings::{ActionBindings, Binding};
@@ -125,6 +127,22 @@ pub fn look_from(saved: f32, smoothing: bool, invert_y: bool) -> LookSettings {
         invert_y,
         acceleration: 0.0,
     }
+}
+
+/// The bindings the `[bindings]` section and the `[action_modes]` section describe, each unusable
+/// line logged as a warning and left at its default.
+pub fn load_bindings(
+    bindings: &BTreeMap<String, String>,
+    modes: &BTreeMap<String, String>,
+) -> ActionBindings<SearchlightAction> {
+    let (mut loaded, warnings) = ActionBindings::load(bindings);
+    for warning in warnings {
+        tracing::warn!(?warning, "bindings");
+    }
+    for warning in loaded.load_modes(modes) {
+        tracing::warn!(?warning, "action mode");
+    }
+    loaded
 }
 
 /// The action map for `bindings`, with mouse look following `prefs`.

@@ -714,6 +714,25 @@ mod tests {
     }
 
     #[test]
+    fn the_startup_load_reads_back_applied_modes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut settings = settings_at(&path);
+        let mut bindings = rebound();
+        bindings.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+        settings.set_bindings(&bindings).unwrap();
+
+        let (prefs, _warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) = split_fullscreen_binding(prefs.bindings());
+        let (_console, game_section) = split_console_binding(&without_fullscreen);
+        let loaded = crate::input::load_bindings(&game_section, prefs.action_modes());
+
+        assert_eq!(loaded, bindings);
+        assert_eq!(loaded.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(loaded.mode(SearchlightAction::LeanRight), ActionMode::Hold);
+    }
+
+    #[test]
     fn set_bindings_keeps_the_console_and_fullscreen_entries() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("searchlight.ini");

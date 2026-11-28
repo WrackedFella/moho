@@ -897,6 +897,22 @@ mod tests {
     }
 
     #[test]
+    fn a_draft_built_from_a_toggled_action_keeps_the_toggle() {
+        let mut bindings = defaults();
+        bindings.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+
+        let draft = ControlsDraft::new(&bindings);
+
+        assert_eq!(draft.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(draft.mode(SearchlightAction::LeanRight), ActionMode::Hold);
+        assert_eq!(draft.bindings(), bindings);
+        assert_eq!(
+            draft.bindings().mode(SearchlightAction::LeanLeft),
+            ActionMode::Toggle
+        );
+    }
+
+    #[test]
     fn resetting_twice_is_resetting_once() {
         let mut draft = draft();
         draft.clear(SearchlightAction::Reload, Slot::Primary);
