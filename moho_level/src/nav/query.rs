@@ -210,7 +210,9 @@ fn route(
             }
             let portal = current.portal(edge);
             let midpoint = (portal.0 + portal.1) * 0.5;
-            let through = cost[polygon] + position[polygon].distance(midpoint) * factor;
+            // Saturated, so a huge multiplier cannot overflow to infinity and shut the cell.
+            let through =
+                (cost[polygon] + position[polygon].distance(midpoint) * factor).min(f32::MAX);
             if through < cost[next] {
                 cost[next] = through;
                 position[next] = midpoint;
@@ -314,6 +316,9 @@ pub(super) fn path_by_cost(
     to: Vec3,
     mut judge: impl FnMut(usize) -> Option<f32>,
 ) -> Option<Vec<Vec3>> {
+    if !from.is_finite() || !to.is_finite() {
+        return None;
+    }
     let has_cells = |polygon: usize| !of_polygon[polygon].is_empty();
     let snapped_start = snap(coarse, from, has_cells)?;
     let snapped_goal = snap(coarse, to, has_cells)?;

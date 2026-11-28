@@ -1430,4 +1430,62 @@ mod cells {
 
         assert_eq!(route, None);
     }
+
+    #[test]
+    fn a_huge_finite_multiplier_is_still_walkable() {
+        let route = LANE_CELLS
+            .path_by_cost(START, GOAL, |cell| {
+                if in_lane(cell, 10.0) {
+                    multiplier(f32::MAX)
+                } else {
+                    PLAIN
+                }
+            })
+            .expect("walkable is walkable, however costly");
+
+        assert!(crossing_z(&route) > 2.0, "{route:?}");
+        assert!(route.iter().all(|p| p.is_finite()), "{route:?}");
+    }
+
+    #[test]
+    fn a_non_finite_end_does_not_panic_and_never_gives_a_non_finite_corner() {
+        let bad = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+
+        for value in bad {
+            for broken in [
+                Vec3::new(value, 0.0, -4.0),
+                Vec3::new(-6.0, value, -4.0),
+                Vec3::new(-6.0, 0.0, value),
+            ] {
+                for (from, to) in [(broken, GOAL), (START, broken)] {
+                    let route = LANE_CELLS.path_by_cost(from, to, |_| PLAIN);
+
+                    if let Some(route) = route {
+                        assert!(
+                            route.iter().all(|p| p.is_finite()),
+                            "{from:?} to {to:?}: {route:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_second_rule_on_the_same_cell_mesh_does_not_see_the_first_ones_verdicts() {
+        let open = LANE_CELLS.path_by_cost(START, GOAL, |_| PLAIN);
+
+        let lane_out = LANE_CELLS.path_by_cost(START, GOAL, |cell| {
+            if in_lane(cell, 5.0) {
+                CellCost::NotWalkable
+            } else {
+                PLAIN
+            }
+        });
+        let all_walkable = LANE_CELLS.path_by_cost(START, GOAL, |_| PLAIN);
+
+        assert!(open.is_some());
+        assert!(northmost(&lane_out.expect("the longer way is open")) >= 5.0 - 1e-3);
+        assert_eq!(all_walkable, open);
+    }
 }

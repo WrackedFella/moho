@@ -246,7 +246,7 @@ impl CellMesh {
     }
 
     /// Corners from `from` to `to` through cells `rule` passed, start and goal included;
-    /// `None` when an end is off the mesh or in a not-walkable cell, or no walkable corridor
+    /// `None` when an end is not finite, off the mesh or in a not-walkable cell, or no walkable corridor
     /// joins them. The route is never partial.
     ///
     /// Both ends snap onto the navmesh as [`NavMesh::path`] does, so the route starts and ends
