@@ -262,10 +262,12 @@ impl PhysicsWorld {
         Some(body.position().translation)
     }
 
-    /// Set a body's linear velocity, waking it.
+    /// Set a body's linear velocity, waking it; an unknown body is ignored.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_body_velocity(&mut self, id: BodyId, velocity: Vec3) {
-        self.rigid_body_set[id.0].set_linvel(velocity, true);
+        if let Some(body) = self.rigid_body_set.get_mut(id.0) {
+            body.set_linvel(velocity, true);
+        }
     }
 
     /// A body's rotation; `None` for an unknown body.
@@ -410,6 +412,75 @@ mod tests {
             (17.0..19.0).contains(&high_pos.y) && high_pos.x == 5.0,
             "the high body falls about 1.2 m from 20, got {high_pos}"
         );
+    }
+
+    #[test]
+    fn collider_tag_follows_its_own_mesh_and_none_once_removed() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), HitTag(11));
+        world.set_world_mesh(WorldMeshId(2), &floor_mesh(1.0), HitTag(22));
+        let first = world.world_mesh_collider(WorldMeshId(1)).expect("first");
+        let second = world.world_mesh_collider(WorldMeshId(2)).expect("second");
+
+        world.remove_world_mesh(WorldMeshId(1));
+
+        assert_eq!(world.collider_tag(first), None);
+        assert_eq!(world.collider_tag(second), Some(HitTag(22)));
+    }
+
+    #[test]
+    fn body_position_of_an_id_from_another_world_is_none() {
+        let mut other = PhysicsWorld::new();
+        let foreign = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
+        let world = PhysicsWorld::new();
+
+        assert_eq!(world.body_position(foreign), None);
+    }
+
+    #[test]
+    fn test_helpers_on_unknown_ids_read_none_and_do_not_panic() {
+        let mut other = PhysicsWorld::new();
+        let foreign_body = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
+        other.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
+        let foreign_collider = other.world_mesh_collider(WorldMeshId(1)).expect("mesh");
+        let mut world = PhysicsWorld::new();
+
+        world.set_body_velocity(foreign_body, Vec3::X);
+
+        assert_eq!(world.body_rotation(foreign_body), None);
+        assert_eq!(world.collider_triangle_count(foreign_collider), None);
+        assert_eq!(world.body_count(), 0);
+    }
+
+    #[test]
+    fn collider_triangle_count_of_a_non_trimesh_collider_is_none() {
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 5.0, 0.0));
+        let capsule = world
+            .collider_set
+            .iter()
+            .map(|(handle, _)| ColliderId(handle))
+            .next()
+            .expect("the character has a capsule");
+
+        assert_eq!(world.collider_triangle_count(capsule), None);
+    }
+
+    #[test]
+    fn replacing_a_world_mesh_gives_a_new_collider_id_and_keeps_the_count() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0), TEST_TAG);
+        let old = world.world_mesh_collider(id).expect("first registration");
+        let before = world.collider_count();
+
+        world.set_world_mesh(id, &floor_mesh(2.0), TEST_TAG);
+
+        let new = world.world_mesh_collider(id).expect("replacement");
+        assert_ne!(new, old);
+        assert_eq!(world.collider_count(), before);
+        assert!(world.collider_triangle_count(new).is_some());
+        assert_eq!(world.collider_triangle_count(old), None);
     }
 
     #[test]
