@@ -279,7 +279,7 @@ pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
             slots: draft.slots(action),
             note: None,
             chevron: None,
-            mode: None,
+            mode: action.toggleable().then(|| draft.mode(action)),
         })
         .collect();
     items.push(MenuAction::ApplyControls.button());

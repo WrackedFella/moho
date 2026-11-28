@@ -98,9 +98,12 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     let mode = ArenaMode::for_level(arena.clone(), config, WaveTuning::default());
     let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
     let (console_section, game_section) = split_console_binding(&bindings_section);
-    let (bindings, warnings) = ActionBindings::load(&game_section);
+    let (mut bindings, warnings) = ActionBindings::load(&game_section);
     for warning in warnings {
         tracing::warn!(?warning, "bindings");
+    }
+    for warning in bindings.load_modes(prefs.action_modes()) {
+        tracing::warn!(?warning, "action mode");
     }
     let actions = build_action_map(bindings, &prefs);
     let window_mode = start_window_mode(prefs.window_mode());

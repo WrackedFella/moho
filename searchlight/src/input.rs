@@ -88,6 +88,13 @@ impl Action for SearchlightAction {
             SearchlightAction::Aim => const { &[Binding::mouse(MouseButton::Right)] },
         }
     }
+
+    fn toggleable(self) -> bool {
+        matches!(
+            self,
+            SearchlightAction::LeanLeft | SearchlightAction::LeanRight
+        )
+    }
 }
 
 /// Look settings from `prefs`. A sensitivity not above zero would freeze or reverse the

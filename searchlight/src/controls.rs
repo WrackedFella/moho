@@ -12,14 +12,16 @@ struct Row {
     action: SearchlightAction,
     slots: [Option<Binding>; 2],
     rest: Vec<Binding>,
+    mode: ActionMode,
 }
 
 impl Row {
-    fn from_bindings(action: SearchlightAction, held: &[Binding]) -> Self {
+    fn from_bindings(action: SearchlightAction, held: &[Binding], mode: ActionMode) -> Self {
         Self {
             action,
             slots: [held.first().copied(), held.get(1).copied()],
             rest: held.iter().skip(2).copied().collect(),
+            mode,
         }
     }
 
@@ -79,7 +81,7 @@ impl ControlsDraft {
     pub fn new(bindings: &ActionBindings<SearchlightAction>) -> Self {
         let rows = SearchlightAction::ALL
             .iter()
-            .map(|&action| Row::from_bindings(action, bindings.get(action)))
+            .map(|&action| Row::from_bindings(action, bindings.get(action), bindings.mode(action)))
             .collect();
         Self {
             base: bindings.clone(),
@@ -94,6 +96,7 @@ impl ControlsDraft {
         for row in &self.rows {
             let held = row.slots.iter().flatten().chain(&row.rest).copied();
             bindings.set(row.action, held.collect());
+            bindings.set_mode(row.action, row.mode);
         }
         bindings
     }
@@ -123,19 +126,26 @@ impl ControlsDraft {
 
     /// `action`'s hold/toggle choice as drafted.
     pub fn mode(&self, action: SearchlightAction) -> ActionMode {
-        let _ = action;
-        ActionMode::Hold
+        self.rows
+            .iter()
+            .find(|row| row.action == action)
+            .map_or(ActionMode::Hold, |row| row.mode)
     }
 
     /// Stages `mode` for `action`; an action that is not toggleable stays on hold.
     pub fn set_mode(&mut self, action: SearchlightAction, mode: ActionMode) {
-        let _ = (action, mode);
+        if !action.toggleable() {
+            return;
+        }
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            row.mode = mode;
+        }
     }
 
     /// Puts every action back on its default bindings.
     pub fn reset_all(&mut self) {
         for row in &mut self.rows {
-            *row = Row::from_bindings(row.action, row.action.default_bindings());
+            *row = Row::from_bindings(row.action, row.action.default_bindings(), ActionMode::Hold);
         }
     }
 

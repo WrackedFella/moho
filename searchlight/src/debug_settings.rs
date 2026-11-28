@@ -190,7 +190,8 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
-    /// Stores the game's action bindings under `[bindings]` and saves the prefs file; the
+    /// Stores the game's action bindings under `[bindings]` and their hold/toggle modes under
+    /// `[action_modes]`, and saves the prefs file; the
     /// `console` and `fullscreen` entries the file holds are kept.
     ///
     /// # Errors
@@ -203,6 +204,7 @@ impl DebugSettings {
             }
         }
         self.prefs.set_bindings(section);
+        self.prefs.set_action_modes(bindings.modes_to_section());
         self.prefs.save_to(&self.path)
     }
 
