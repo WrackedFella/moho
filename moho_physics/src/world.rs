@@ -220,7 +220,7 @@ impl PhysicsWorld {
         );
     }
 
-    /// Spawn a dynamic sphere rigid body. Returns the body id.
+    /// Spawn a dynamic sphere rigid body.
     pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> BodyId {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);

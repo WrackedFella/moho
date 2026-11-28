@@ -103,7 +103,7 @@ team, body part), which the engine stores and never interprets. `PhysicsWorld::c
 surface as a `RayHit` (point, normal facing back against the ray, distance, tag). Untagged
 colliders, such as movement capsules and props, never stop a ray; `RayQuery::ignore` skips
 one character. It reads the world as the last `step` left it. `PhysicsWorld::collider_tag`
-turns a collider handle, such as the one a movement `Impact` reports, into its tag. The adapter tags chunks with
+turns a `ColliderId` (`moho_physics/src/ids.rs`), such as the one a movement `Impact` reports, into its tag. The adapter tags chunks with
 `TERRAIN_TAG` in `world_geometry.rs`.
 
 `PhysicsWorld::set_hit_volumes` (`moho_physics/src/world/character.rs`) replaces a
