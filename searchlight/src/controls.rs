@@ -1,7 +1,7 @@
 //! The bindings being edited on the Controls page, before Apply makes them live.
 
 use moho_input::Action;
-use moho_input::bindings::{ActionBindings, Binding, Input};
+use moho_input::bindings::{ActionBindings, ActionMode, Binding, Input};
 use moho_ui_shell::Slot;
 
 use crate::input::SearchlightAction;
@@ -12,14 +12,16 @@ struct Row {
     action: SearchlightAction,
     slots: [Option<Binding>; 2],
     rest: Vec<Binding>,
+    mode: ActionMode,
 }
 
 impl Row {
-    fn from_bindings(action: SearchlightAction, held: &[Binding]) -> Self {
+    fn from_bindings(action: SearchlightAction, held: &[Binding], mode: ActionMode) -> Self {
         Self {
             action,
             slots: [held.first().copied(), held.get(1).copied()],
             rest: held.iter().skip(2).copied().collect(),
+            mode,
         }
     }
 
@@ -79,7 +81,7 @@ impl ControlsDraft {
     pub fn new(bindings: &ActionBindings<SearchlightAction>) -> Self {
         let rows = SearchlightAction::ALL
             .iter()
-            .map(|&action| Row::from_bindings(action, bindings.get(action)))
+            .map(|&action| Row::from_bindings(action, bindings.get(action), bindings.mode(action)))
             .collect();
         Self {
             base: bindings.clone(),
@@ -94,6 +96,7 @@ impl ControlsDraft {
         for row in &self.rows {
             let held = row.slots.iter().flatten().chain(&row.rest).copied();
             bindings.set(row.action, held.collect());
+            bindings.set_mode(row.action, row.mode);
         }
         bindings
     }
@@ -121,10 +124,28 @@ impl ControlsDraft {
         }
     }
 
+    /// `action`'s hold/toggle choice as drafted.
+    pub fn mode(&self, action: SearchlightAction) -> ActionMode {
+        self.rows
+            .iter()
+            .find(|row| row.action == action)
+            .map_or(ActionMode::Hold, |row| row.mode)
+    }
+
+    /// Stages `mode` for `action`; an action that is not toggleable stays on hold.
+    pub fn set_mode(&mut self, action: SearchlightAction, mode: ActionMode) {
+        if !action.toggleable() {
+            return;
+        }
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            row.mode = mode;
+        }
+    }
+
     /// Puts every action back on its default bindings.
     pub fn reset_all(&mut self) {
         for row in &mut self.rows {
-            *row = Row::from_bindings(row.action, row.action.default_bindings());
+            *row = Row::from_bindings(row.action, row.action.default_bindings(), ActionMode::Hold);
         }
     }
 
@@ -848,6 +869,47 @@ mod tests {
         );
         assert_eq!(draft.bindings(), defaults());
         assert!(!draft.is_unbound(SearchlightAction::Jump));
+    }
+
+    #[test]
+    fn reset_all_sets_every_mode_to_hold() {
+        let mut draft = draft();
+        draft.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+        draft.set_mode(SearchlightAction::LeanRight, ActionMode::Toggle);
+        let staged = draft.bindings();
+
+        draft.reset_all();
+
+        assert_eq!(staged.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(
+            staged.mode(SearchlightAction::LeanRight),
+            ActionMode::Toggle
+        );
+        for &action in SearchlightAction::ALL {
+            assert_eq!(draft.mode(action), ActionMode::Hold, "{action:?}");
+            assert_eq!(
+                draft.bindings().mode(action),
+                ActionMode::Hold,
+                "{action:?} in the bindings"
+            );
+        }
+        assert_eq!(draft.bindings(), defaults());
+    }
+
+    #[test]
+    fn a_draft_built_from_a_toggled_action_keeps_the_toggle() {
+        let mut bindings = defaults();
+        bindings.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+
+        let draft = ControlsDraft::new(&bindings);
+
+        assert_eq!(draft.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(draft.mode(SearchlightAction::LeanRight), ActionMode::Hold);
+        assert_eq!(draft.bindings(), bindings);
+        assert_eq!(
+            draft.bindings().mode(SearchlightAction::LeanLeft),
+            ActionMode::Toggle
+        );
     }
 
     #[test]

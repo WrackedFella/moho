@@ -279,7 +279,7 @@ pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
             slots: draft.slots(action),
             note: None,
             chevron: None,
-            mode: None,
+            mode: action.toggleable().then(|| draft.mode(action)),
         })
         .collect();
     items.push(MenuAction::ApplyControls.button());
@@ -313,7 +313,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_core::prefs::Prefs;
-    use moho_input::bindings::{Action, ActionBindings, Binding, Input};
+    use moho_input::bindings::{Action, ActionBindings, ActionMode, Binding, Input};
     use moho_input::key::{Key, MouseButton};
     use moho_ui_shell::{GameSlider, Slot};
 
@@ -691,6 +691,39 @@ mod tests {
         assert!(draft.is_unbound(SearchlightAction::LeanLeft));
         assert!(!draft.is_unbound(SearchlightAction::LeanRight));
         assert_ne!(slots(SearchlightAction::LeanRight), [None, None]);
+    }
+
+    #[test]
+    fn only_toggleable_actions_show_the_checkbox() {
+        let mut draft = ControlsDraft::new(&default_bindings());
+        draft.set_mode(SearchlightAction::LeanRight, ActionMode::Toggle);
+
+        let screen = controls_screen(&draft);
+
+        let shown: Vec<(SearchlightAction, Option<ActionMode>)> = screen
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Control {
+                    action: MenuAction::Rebind(action),
+                    mode,
+                    ..
+                } => Some((*action, *mode)),
+                _ => None,
+            })
+            .collect();
+        let expected: Vec<(SearchlightAction, Option<ActionMode>)> = SearchlightAction::ALL
+            .iter()
+            .map(|&action| {
+                let mode = match action {
+                    SearchlightAction::LeanLeft => Some(ActionMode::Hold),
+                    SearchlightAction::LeanRight => Some(ActionMode::Toggle),
+                    _ => None,
+                };
+                (action, mode)
+            })
+            .collect();
+        assert_eq!(shown, expected, "Reload and the rest show no checkbox");
     }
 
     #[test]

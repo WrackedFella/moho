@@ -1364,9 +1364,14 @@ impl SearchlightGame {
                     self.show_controls();
                 }
                 MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(),
-                MenuEvent::DetailsToggled { .. }
-                | MenuEvent::Picked { .. }
-                | MenuEvent::ModeChosen { .. } => {}
+                MenuEvent::ModeChosen { action, mode } => {
+                    if let (MenuAction::Rebind(action), Some(draft)) = (action, &mut self.controls)
+                    {
+                        draft.set_mode(action, mode);
+                    }
+                    self.show_controls();
+                }
+                MenuEvent::DetailsToggled { .. } | MenuEvent::Picked { .. } => {}
                 MenuEvent::ActionPicked {
                     action: MenuAction::ItemAction(inventory::ItemAction::Wear),
                     item: MenuAction::Item(row),
@@ -6965,6 +6970,136 @@ mod tests {
             [Binding::key(Key::T)],
             "Back saved nothing"
         );
+    }
+
+    /// The hold/toggle choice the top screen shows on `action`'s row.
+    fn shown_mode(
+        game: &SearchlightGame,
+        action: SearchlightAction,
+    ) -> Option<moho_input::bindings::ActionMode> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MenuItem::Control {
+                    label: shown, mode, ..
+                } if shown == label(action) => Some(*mode),
+                _ => None,
+            })
+            .expect("the screen lists the action")
+    }
+
+    /// Ticks `action`'s hold/toggle checkbox on the Controls page: the focus moves from the
+    /// primary slot across the secondary to the checkbox, and Enter reports the other mode.
+    fn tick_mode_checkbox(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        action: SearchlightAction,
+    ) {
+        focus_control(game, action);
+        press_keys(game, ctx, &[Key::ArrowRight, Key::ArrowRight, Key::Enter]);
+    }
+
+    /// The commands of four ticks after two taps of `input` in play: the press and release of
+    /// the first tap, then those of the second.
+    fn two_taps(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        input: Input,
+    ) -> [SearchlightCommand; 4] {
+        let [first_down, first_up] = tap(game, ctx, input);
+        let [second_down, second_up] = tap(game, ctx, input);
+        [first_down, first_up, second_down, second_up]
+    }
+
+    #[test]
+    fn a_toggled_lean_holds_after_one_press_and_ends_after_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        tick_mode_checkbox(&mut game, &mut ctx, SearchlightAction::LeanLeft);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let [first_down, first_up, second_down, second_up] = two_taps(&mut game, &mut ctx, KEY_Q);
+        let idle = game.command();
+
+        assert_eq!(
+            first_down.lean,
+            Some(LeanSide::Left),
+            "the first press leans"
+        );
+        assert_eq!(
+            first_up.lean,
+            Some(LeanSide::Left),
+            "the release keeps the lean"
+        );
+        assert_eq!(
+            second_down.lean, None,
+            "the press that releases the latch does not lean for a tick"
+        );
+        assert_eq!(second_up.lean, None, "the second release leans no more");
+        assert_eq!(idle.lean, None);
+    }
+
+    #[test]
+    fn a_chosen_mode_waits_for_apply_and_back_drops_it() {
+        use moho_input::bindings::ActionMode;
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        let before = shown_mode(&game, SearchlightAction::LeanLeft);
+        assert_eq!(before, Some(ActionMode::Hold), "Hold is the default");
+
+        tick_mode_checkbox(&mut game, &mut ctx, SearchlightAction::LeanLeft);
+        let staged = shown_mode(&game, SearchlightAction::LeanLeft);
+        let live_while_staged = game.input.bindings().mode(SearchlightAction::LeanLeft);
+        let reload_row = shown_mode(&game, SearchlightAction::Reload);
+        assert_eq!(
+            staged,
+            Some(ActionMode::Toggle),
+            "the page shows the choice"
+        );
+        reopen_controls(&mut game, &mut ctx);
+        let after_back = shown_mode(&game, SearchlightAction::LeanLeft);
+        let live_after_back = game.input.bindings().mode(SearchlightAction::LeanLeft);
+        let saved_after_back = path.exists();
+        tick_mode_checkbox(&mut game, &mut ctx, SearchlightAction::LeanLeft);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        let live_after_apply = game.input.bindings().mode(SearchlightAction::LeanLeft);
+
+        assert_eq!(
+            live_while_staged,
+            ActionMode::Hold,
+            "nothing is live before Apply"
+        );
+        assert_eq!(reload_row, None, "Reload offers no checkbox");
+        assert_eq!(
+            after_back,
+            Some(ActionMode::Hold),
+            "Back dropped the choice"
+        );
+        assert_eq!(live_after_back, ActionMode::Hold);
+        assert!(!saved_after_back, "Back saved nothing");
+        assert_eq!(live_after_apply, ActionMode::Toggle, "Apply made it live");
+        let (prefs, _warnings) = Prefs::load_from(&path);
+        let mut saved = saved_bindings(&path);
+        let mode_warnings = saved.load_modes(prefs.action_modes());
+        assert_eq!(mode_warnings, vec![]);
+        assert_eq!(
+            saved.mode(SearchlightAction::LeanLeft),
+            ActionMode::Toggle,
+            "Apply saved the mode"
+        );
+        assert_eq!(saved.mode(SearchlightAction::LeanRight), ActionMode::Hold);
     }
 
     #[test]

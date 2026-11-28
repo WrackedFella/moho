@@ -7,13 +7,12 @@ use std::sync::Arc;
 
 use moho_app::{AppConfig, LoopConfig, split_fullscreen_binding};
 use moho_core::prefs::Prefs;
-use moho_input::bindings::ActionBindings;
 use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::console_commands;
 use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE, start_window_mode};
-use searchlight::input::build_action_map;
+use searchlight::input::{build_action_map, load_bindings};
 use searchlight::launch;
 use searchlight::levels;
 use searchlight::mode::ArenaMode;
@@ -98,10 +97,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     let mode = ArenaMode::for_level(arena.clone(), config, WaveTuning::default());
     let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
     let (console_section, game_section) = split_console_binding(&bindings_section);
-    let (bindings, warnings) = ActionBindings::load(&game_section);
-    for warning in warnings {
-        tracing::warn!(?warning, "bindings");
-    }
+    let bindings = load_bindings(&game_section, prefs.action_modes());
     let actions = build_action_map(bindings, &prefs);
     let window_mode = start_window_mode(prefs.window_mode());
     let debug_settings = DebugSettings::new(prefs, prefs_path());

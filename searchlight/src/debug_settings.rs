@@ -190,8 +190,9 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
-    /// Stores the game's action bindings under `[bindings]` and saves the prefs file; the
-    /// `console` and `fullscreen` entries the file holds are kept.
+    /// Stores the game's action bindings under `[bindings]` and their hold/toggle modes under
+    /// `[action_modes]`, and saves the prefs file; the `console` and `fullscreen` entries the
+    /// file holds are kept.
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
@@ -203,6 +204,7 @@ impl DebugSettings {
             }
         }
         self.prefs.set_bindings(section);
+        self.prefs.set_action_modes(bindings.modes_to_section());
         self.prefs.save_to(&self.path)
     }
 
@@ -226,7 +228,7 @@ mod tests {
     use std::path::Path;
 
     use moho_app::split_fullscreen_binding;
-    use moho_input::bindings::{Binding, Input, Modifiers};
+    use moho_input::bindings::{ActionMode, Binding, Input, Modifiers};
     use moho_input::key::{Key, MouseButton};
 
     use super::*;
@@ -686,6 +688,48 @@ mod tests {
         assert_eq!(warnings, vec![]);
         assert_eq!(game_warnings, vec![]);
         assert_eq!(loaded, bindings);
+    }
+
+    #[test]
+    fn applied_modes_load_back_as_main_loads_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        let mut bindings = rebound();
+        bindings.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+
+        settings.set_bindings(&bindings).unwrap();
+        let (prefs, warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) = split_fullscreen_binding(prefs.bindings());
+        let (_console, game_section) = split_console_binding(&without_fullscreen);
+        let (mut loaded, game_warnings) = ActionBindings::<SearchlightAction>::load(&game_section);
+        let mode_warnings = loaded.load_modes(prefs.action_modes());
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(game_warnings, vec![]);
+        assert_eq!(mode_warnings, vec![]);
+        assert_eq!(loaded, bindings);
+        assert_eq!(loaded.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(loaded.mode(SearchlightAction::LeanRight), ActionMode::Hold);
+    }
+
+    #[test]
+    fn the_startup_load_reads_back_applied_modes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut settings = settings_at(&path);
+        let mut bindings = rebound();
+        bindings.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+        settings.set_bindings(&bindings).unwrap();
+
+        let (prefs, _warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) = split_fullscreen_binding(prefs.bindings());
+        let (_console, game_section) = split_console_binding(&without_fullscreen);
+        let loaded = crate::input::load_bindings(&game_section, prefs.action_modes());
+
+        assert_eq!(loaded, bindings);
+        assert_eq!(loaded.mode(SearchlightAction::LeanLeft), ActionMode::Toggle);
+        assert_eq!(loaded.mode(SearchlightAction::LeanRight), ActionMode::Hold);
     }
 
     #[test]
