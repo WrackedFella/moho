@@ -954,7 +954,6 @@ mod tests {
     use super::*;
     use crate::world::test_support::test_settings;
     use proptest::prelude::*;
-    use rapier3d::geometry::ColliderHandle;
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -1032,7 +1031,7 @@ mod tests {
     }
 
     fn collider() -> ColliderId {
-        ColliderId(ColliderHandle::invalid())
+        ColliderId::invalid()
     }
 
     /// [`super::step`] with no queued effects and a slide that only sees the asked motion.
@@ -2934,7 +2933,7 @@ mod tests {
         use super::*;
 
         fn handle(index: u32) -> ColliderId {
-            ColliderId(ColliderHandle::from_raw_parts(index, 0))
+            ColliderId::from_index(index)
         }
 
         /// Normals of an inside corner opening toward -Z, `half_angle` radians either side of
@@ -3143,7 +3142,7 @@ mod tests {
             assert!(after.length() < 1e-5, "{after:?}");
             assert_eq!(impacts.len(), MAX_CLIP_PLANES, "{impacts:?}");
             for impact in &impacts {
-                let index = impact.collider.0.into_raw_parts().0 as usize;
+                let index = impact.collider.index() as usize;
                 assert!(
                     (impact.speed + velocity.dot(planes[index])).abs() < 1e-5,
                     "any reported impact is measured from the incoming velocity: {impact:?}"
@@ -3195,7 +3194,7 @@ mod tests {
         }
 
         fn sorted(mut impacts: Vec<Impact>) -> Vec<Impact> {
-            impacts.sort_by_key(|impact| impact.collider.0.into_raw_parts());
+            impacts.sort_by_key(|impact| impact.collider.index());
             impacts
         }
 
