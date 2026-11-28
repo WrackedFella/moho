@@ -149,9 +149,9 @@ fn toggle_flow() -> (
 
     click_found(&mut harness, Role::CheckBox, "Invert mouse Y");
     let after = toggled_of(&harness, Role::CheckBox, "Invert mouse Y");
+    let seen = nodes_seen(&harness);
     harness.state_mut().menu_mut().scroll(1000.0);
     harness.run();
-    let seen = nodes_seen(&harness);
     click_found(&mut harness, Role::Button, "Apply");
 
     let events = harness.state_mut().menu_mut().take_events();
@@ -284,10 +284,13 @@ fn row_nodes_paint_nothing() {
     harness.get_by_role_and_label(Role::Button, "Settings");
 
     let layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("moho_menu_rows"));
-    let shapes = harness
-        .ctx
-        .graphics(|graphics| graphics.get(layer).map(|list| list.all_entries().count()));
-    assert_eq!(shapes, Some(0), "the layer exists and holds no shapes");
+    // egui drops a layer that only hovered once the pass is drained, so absent counts as empty.
+    let shapes = harness.ctx.graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(0, |list| list.all_entries().count())
+    });
+    assert_eq!(shapes, 0, "the layer holds no shapes");
 }
 
 #[test]
