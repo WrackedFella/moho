@@ -4,9 +4,9 @@
 //! game's settings and one collide-and-slide query, so it can be re-run for prediction.
 
 use crate::world::CharacterState;
+use crate::ColliderId;
 use glam::Vec3;
 use moho_core::sim_math;
-use rapier3d::geometry::ColliderHandle;
 use serde::{Deserialize, Serialize};
 
 /// Largest pitch magnitude in radians, short of straight up or down.
@@ -380,7 +380,7 @@ pub struct Tuning {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Impact {
     /// The collider that was hit.
-    pub collider: ColliderHandle,
+    pub collider: ColliderId,
     /// The surface normal, pointing toward the character.
     pub normal: Vec3,
     /// The speed lost into the surface, m/s.
@@ -398,7 +398,7 @@ pub struct Slide {
     /// when there is none.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
-    pub hits: Vec<(ColliderHandle, Vec3)>,
+    pub hits: Vec<(ColliderId, Vec3)>,
 }
 
 /// The walkable surface under a character's capsule.
@@ -412,7 +412,7 @@ pub struct Ground {
     /// How far the capsule can drop before it touches anything, in metres, cast straight down.
     pub gap: f32,
     /// The collider the face belongs to.
-    pub collider: ColliderHandle,
+    pub collider: ColliderId,
     /// The contact point on the face, in world space.
     pub point: Vec3,
 }
@@ -1030,8 +1030,8 @@ mod tests {
         }
     }
 
-    fn collider() -> ColliderHandle {
-        ColliderHandle::invalid()
+    fn collider() -> ColliderId {
+        ColliderId::invalid()
     }
 
     /// [`super::step`] with no queued effects and a slide that only sees the asked motion.
@@ -2932,8 +2932,8 @@ mod tests {
     mod clip {
         use super::*;
 
-        fn handle(index: u32) -> ColliderHandle {
-            ColliderHandle::from_raw_parts(index, 0)
+        fn handle(index: u32) -> ColliderId {
+            ColliderId::from_index(index)
         }
 
         /// Normals of an inside corner opening toward -Z, `half_angle` radians either side of
@@ -3142,7 +3142,7 @@ mod tests {
             assert!(after.length() < 1e-5, "{after:?}");
             assert_eq!(impacts.len(), MAX_CLIP_PLANES, "{impacts:?}");
             for impact in &impacts {
-                let index = impact.collider.into_raw_parts().0 as usize;
+                let index = impact.collider.index() as usize;
                 assert!(
                     (impact.speed + velocity.dot(planes[index])).abs() < 1e-5,
                     "any reported impact is measured from the incoming velocity: {impact:?}"
@@ -3194,7 +3194,7 @@ mod tests {
         }
 
         fn sorted(mut impacts: Vec<Impact>) -> Vec<Impact> {
-            impacts.sort_by_key(|impact| impact.collider.into_raw_parts());
+            impacts.sort_by_key(|impact| impact.collider.index());
             impacts
         }
 
@@ -3224,7 +3224,7 @@ mod tests {
                 }
                 let mut shuffled = keyed.clone();
                 shuffled.sort_by_key(|&(_, _, key)| key);
-                let run = |planes: &[(ColliderHandle, Vec3, u32)]| {
+                let run = |planes: &[(ColliderId, Vec3, u32)]| {
                     let slid = Slide {
                         translation: Vec3::ZERO,
                         grounded: false,

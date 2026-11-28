@@ -495,12 +495,12 @@ mod tests {
             "terrain plus the three spheres, pawns aside"
         );
         assert_eq!(
-            pw.collider_set.len(),
+            pw.collider_count(),
             with_geometry + flagstone_game::crew::CREW_SIZE + 3,
             "terrain, one body per pawn and three spheres"
         );
         assert_eq!(
-            pw.rigid_body_set.len(),
+            pw.body_count(),
             flagstone_game::crew::CREW_SIZE + 3,
             "one body per pawn, three spheres"
         );

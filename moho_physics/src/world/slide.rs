@@ -4,6 +4,7 @@ use crate::movement::{
     CharacterQueries, Ground, HullPose, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
 };
 use crate::world::CharacterState;
+use crate::ColliderId;
 use glam::{Quat, Vec3};
 use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
@@ -111,7 +112,7 @@ fn is_riser(normal: Vec3) -> bool {
     normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y
 }
 
-fn landed_without_ground_hit(grounded: bool, asked: Vec3, hits: &[(ColliderHandle, Vec3)]) -> bool {
+fn landed_without_ground_hit(grounded: bool, asked: Vec3, hits: &[(ColliderId, Vec3)]) -> bool {
     grounded
         && asked.y < 0.0
         && !hits
@@ -392,7 +393,7 @@ impl Slider<'_> {
         &self,
         from: &Pose,
         by: Vec3,
-        mut hits: Option<&mut Vec<(ColliderHandle, Vec3)>>,
+        mut hits: Option<&mut Vec<(ColliderId, Vec3)>>,
     ) -> Vec3 {
         let mut moved = Vec3::ZERO;
         let mut remaining = by;
@@ -415,7 +416,7 @@ impl Slider<'_> {
             remaining -= dir * hit.time_of_impact;
             let normal = self.exact_normal(handle, &hit);
             if let Some(hits) = hits.as_deref_mut() {
-                hits.push((handle, normal));
+                hits.push((ColliderId(handle), normal));
             }
             let along = remaining - normal * remaining.dot(normal).min(0.0);
             let level = normal.with_y(0.0).normalize_or_zero();
@@ -587,7 +588,7 @@ impl Slider<'_> {
             ground: Ground {
                 normal,
                 gap,
-                collider,
+                collider: ColliderId(collider),
                 point,
             },
             edge,
@@ -686,8 +687,8 @@ mod tests {
     use moho_render_api::{WorldMesh, WorldMeshId};
     use rapier3d::prelude::{QueryFilter, SharedShape};
 
-    fn hit(normal: Vec3) -> (ColliderHandle, Vec3) {
-        (ColliderHandle::invalid(), normal)
+    fn hit(normal: Vec3) -> (ColliderId, Vec3) {
+        (ColliderId(ColliderHandle::invalid()), normal)
     }
 
     #[test]
@@ -883,7 +884,7 @@ mod tests {
     /// Like [`with_slider`], also giving the collider of each mesh, in order.
     fn with_slider_and_colliders<T>(
         meshes: &[WorldMesh],
-        check: impl FnOnce(&Slider, &[ColliderHandle]) -> T,
+        check: impl FnOnce(&Slider, &[ColliderId]) -> T,
     ) -> T {
         with_slider_ticking(meshes, 1.0 / 60.0, check)
     }
@@ -892,7 +893,7 @@ mod tests {
     fn with_slider_ticking<T>(
         meshes: &[WorldMesh],
         dt: f32,
-        check: impl FnOnce(&Slider, &[ColliderHandle]) -> T,
+        check: impl FnOnce(&Slider, &[ColliderId]) -> T,
     ) -> T {
         let mut world = PhysicsWorld::new();
         let mut colliders = Vec::new();

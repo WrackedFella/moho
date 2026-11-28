@@ -8,9 +8,9 @@ use std::fmt::Write as _;
 
 use glam::{Quat, Vec3};
 use moho_physics::{
-    CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
+    BodyId, CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
     CharacterState, HitTag, Hull, HullShape, Lean, LeanReach, LooseId, LooseShape, LooseSpawn,
-    LooseState, MoveSettings, PhysicsWorld, RigidBodyHandle, Stance, Stature,
+    LooseState, MoveSettings, PhysicsWorld, Stance, Stature,
 };
 use moho_render_api::{WorldMesh, WorldMeshId};
 use serde::{Deserialize, Serialize};
@@ -209,7 +209,7 @@ fn wall_z(x: f32, z_from: f32, z_to: f32) -> WorldMesh {
 struct Scene {
     world: PhysicsWorld,
     characters: [CharacterHandle; 2],
-    cuboid: RigidBodyHandle,
+    cuboid: BodyId,
 }
 
 /// Floor, a 0.3 m step, a wall corner, two characters and a dynamic cuboid in their path.
@@ -234,8 +234,7 @@ fn build_scene(box_velocity: Vec3) -> Scene {
         body: crouching_body(),
     });
     let cuboid = world.add_dynamic_cuboid(Vec3::new(0.0, 0.6, 4.0), 0.5, 0.5, 0.5);
-    let body = &mut world.rigid_body_set[cuboid];
-    body.set_linvel(box_velocity, true);
+    world.set_body_velocity(cuboid, box_velocity);
 
     Scene {
         world,
@@ -417,11 +416,16 @@ fn snapshot(scene: &Scene) -> Snapshot {
             .character(handle)
             .expect("characters are never removed")
     });
-    let body = &scene.world.rigid_body_set[scene.cuboid];
     Snapshot {
         characters: [first, second],
-        box_translation: body.position().translation,
-        box_rotation: body.position().rotation,
+        box_translation: scene
+            .world
+            .body_position(scene.cuboid)
+            .expect("the cuboid is never removed"),
+        box_rotation: scene
+            .world
+            .body_rotation(scene.cuboid)
+            .expect("the cuboid is never removed"),
         loose: scene.world.loose_states().collect(),
     }
 }

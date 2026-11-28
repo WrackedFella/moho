@@ -1,3 +1,4 @@
+use crate::ids::{BodyId, ColliderId};
 use glam::Vec3;
 use moho_render_api::{WorldMesh, WorldMeshId, WorldMeshRange};
 use rapier3d::prelude::*;
@@ -30,8 +31,8 @@ pub struct PhysicsWorld {
     island_manager: IslandManager,
     broad_phase: BroadPhaseBvh,
     narrow_phase: NarrowPhase,
-    pub rigid_body_set: RigidBodySet,
-    pub collider_set: ColliderSet,
+    rigid_body_set: RigidBodySet,
+    collider_set: ColliderSet,
     impulse_joint_set: ImpulseJointSet,
     multibody_joint_set: MultibodyJointSet,
     soft_body_set: SoftBodySet,
@@ -181,12 +182,22 @@ impl PhysicsWorld {
     }
 
     /// The collider registered for `id`; `None` for an unknown, empty or rejected mesh.
-    pub fn world_mesh_collider(&self, id: WorldMeshId) -> Option<ColliderHandle> {
-        self.world_mesh_colliders.get(&id).copied()
+    pub fn world_mesh_collider(&self, id: WorldMeshId) -> Option<ColliderId> {
+        self.world_mesh_colliders.get(&id).copied().map(ColliderId)
+    }
+
+    /// The number of rigid bodies in the world: characters, loose objects and dynamic bodies.
+    pub fn body_count(&self) -> usize {
+        self.rigid_body_set.len()
+    }
+
+    /// The number of colliders in the world: world meshes plus every body's shapes.
+    pub fn collider_count(&self) -> usize {
+        self.collider_set.len()
     }
 
     /// Remove a collider from the simulation.
-    pub fn remove_collider(&mut self, handle: ColliderHandle) {
+    fn remove_collider(&mut self, handle: ColliderHandle) {
         self.collider_set.remove(
             handle,
             &mut self.island_manager,
@@ -209,8 +220,8 @@ impl PhysicsWorld {
         );
     }
 
-    /// Spawn a dynamic sphere rigid body. Returns the body handle.
-    pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> RigidBodyHandle {
+    /// Spawn a dynamic sphere rigid body.
+    pub fn add_dynamic_sphere(&mut self, position: Vec3, radius: f32) -> BodyId {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);
 
@@ -221,7 +232,7 @@ impl PhysicsWorld {
         self.collider_set
             .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
 
-        body_handle
+        BodyId(body_handle)
     }
 
     /// Add a dynamic box rigid body at `position` with given half-extents.
@@ -231,7 +242,7 @@ impl PhysicsWorld {
         half_x: f32,
         half_y: f32,
         half_z: f32,
-    ) -> RigidBodyHandle {
+    ) -> BodyId {
         let body = RigidBodyBuilder::dynamic().translation(position).build();
         let body_handle = self.rigid_body_set.insert(body);
 
@@ -242,13 +253,46 @@ impl PhysicsWorld {
         self.collider_set
             .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
 
-        body_handle
+        BodyId(body_handle)
     }
 
     /// Get a dynamic rigid body's current translation.
-    pub fn body_position(&self, handle: RigidBodyHandle) -> Option<Vec3> {
-        let body = self.rigid_body_set.get(handle)?;
+    pub fn body_position(&self, id: BodyId) -> Option<Vec3> {
+        let body = self.rigid_body_set.get(id.0)?;
         Some(body.position().translation)
+    }
+}
+
+/// Engine-typed setup and readback for tests outside this crate (ADR-0038).
+#[cfg(any(test, feature = "test-support"))]
+impl PhysicsWorld {
+    /// Set a body's linear velocity, waking it.
+    ///
+    /// # Panics
+    /// When `id` is not a live body of this world: launching a body that does not exist is a
+    /// bug in the caller's setup.
+    pub fn set_body_velocity(&mut self, id: BodyId, velocity: Vec3) {
+        self.rigid_body_set
+            .get_mut(id.0)
+            .expect("set_body_velocity needs a live body issued by this world")
+            .set_linvel(velocity, true);
+    }
+
+    /// A body's rotation; `None` for an unknown body.
+    pub fn body_rotation(&self, id: BodyId) -> Option<glam::Quat> {
+        Some(self.rigid_body_set.get(id.0)?.position().rotation)
+    }
+
+    /// The triangle count of a trimesh collider; `None` for an unknown collider or one that
+    /// is not a trimesh.
+    pub fn collider_triangle_count(&self, id: ColliderId) -> Option<usize> {
+        Some(
+            self.collider_set
+                .get(id.0)?
+                .shape()
+                .as_trimesh()?
+                .num_triangles(),
+        )
     }
 }
 
@@ -331,7 +375,7 @@ mod tests {
             world.step(1.0 / 60.0);
         }
 
-        assert!(world.collider_set.get(floor).is_none());
+        assert!(world.collider_set.get(floor.0).is_none());
         let pos = world.body_position(sphere).unwrap();
         assert!(pos.y < -1.0, "Sphere should fall through, y={}", pos.y);
     }
@@ -351,6 +395,136 @@ mod tests {
             (0.2..0.3).contains(&y),
             "cuboid should rest at half height 0.25, y={y}"
         );
+    }
+
+    #[test]
+    fn dynamic_bodies_get_distinct_ids_that_track_their_own_body() {
+        let mut world = PhysicsWorld::new();
+        let low: crate::BodyId = world.add_dynamic_sphere(Vec3::new(0.0, 10.0, 0.0), 0.5);
+        let high: crate::BodyId = world.add_dynamic_sphere(Vec3::new(5.0, 20.0, 0.0), 0.5);
+
+        for _ in 0..30 {
+            world.step(1.0 / 60.0);
+        }
+
+        assert_ne!(low, high);
+        let low_pos = world.body_position(low).expect("low body is live");
+        let high_pos = world.body_position(high).expect("high body is live");
+        assert!(
+            (7.0..9.0).contains(&low_pos.y) && low_pos.x == 0.0,
+            "the low body falls about 1.2 m from 10, got {low_pos}"
+        );
+        assert!(
+            (17.0..19.0).contains(&high_pos.y) && high_pos.x == 5.0,
+            "the high body falls about 1.2 m from 20, got {high_pos}"
+        );
+    }
+
+    #[test]
+    fn collider_tag_follows_its_own_mesh_and_none_once_removed() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), HitTag(11));
+        world.set_world_mesh(WorldMeshId(2), &floor_mesh(1.0), HitTag(22));
+        let first = world.world_mesh_collider(WorldMeshId(1)).expect("first");
+        let second = world.world_mesh_collider(WorldMeshId(2)).expect("second");
+
+        world.remove_world_mesh(WorldMeshId(1));
+
+        assert_eq!(world.collider_tag(first), None);
+        assert_eq!(world.collider_tag(second), Some(HitTag(22)));
+    }
+
+    #[test]
+    #[should_panic(expected = "set_body_velocity needs a live body")]
+    fn set_body_velocity_panics_on_a_body_the_world_never_issued() {
+        let mut other = PhysicsWorld::new();
+        let foreign_body = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
+        let mut world = PhysicsWorld::new();
+
+        world.set_body_velocity(foreign_body, Vec3::X);
+    }
+
+    #[test]
+    fn readbacks_for_ids_a_world_never_issued_are_none() {
+        let mut other = PhysicsWorld::new();
+        let foreign_body = other.add_dynamic_sphere(Vec3::new(0.0, 3.0, 0.0), 0.5);
+        other.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
+        let foreign_collider = other.world_mesh_collider(WorldMeshId(1)).expect("mesh");
+        let world = PhysicsWorld::new();
+
+        assert_eq!(world.body_position(foreign_body), None);
+        assert_eq!(world.body_rotation(foreign_body), None);
+        assert_eq!(world.collider_triangle_count(foreign_collider), None);
+        assert_eq!(world.body_count(), 0);
+    }
+
+    #[test]
+    fn body_rotation_reports_the_spun_bodys_rotation() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let id = world.add_dynamic_cuboid(Vec3::new(0.0, 3.0, 0.0), 0.5, 0.5, 0.5);
+        world.rigid_body_set[id.0].set_angvel(Vec3::new(0.0, 2.0, 0.0), true);
+
+        for _ in 0..30 {
+            world.step(1.0 / 60.0);
+        }
+
+        let rotation = world.body_rotation(id).expect("body is live");
+        let stored = world.rigid_body_set[id.0].position().rotation;
+        assert!(
+            rotation.angle_between(glam::Quat::IDENTITY) > 0.5,
+            "a body spinning at 2 rad/s for 0.5 s has turned about 1 rad, got {rotation}"
+        );
+        assert!(rotation.abs_diff_eq(stored, 1e-6), "{rotation} vs {stored}");
+    }
+
+    #[test]
+    fn collider_triangle_count_of_a_non_trimesh_collider_is_none() {
+        let mut world = PhysicsWorld::new();
+        let character = world.add_character(Vec3::new(0.0, 5.0, 0.0));
+        let capsule = ColliderId(world.rigid_body_set[character.0].colliders()[0]);
+
+        assert_eq!(world.collider_triangle_count(capsule), None);
+    }
+
+    #[test]
+    fn replacing_a_world_mesh_gives_a_new_collider_id_and_keeps_the_count() {
+        let mut world = PhysicsWorld::new();
+        let id = WorldMeshId(1);
+        world.set_world_mesh(id, &floor_mesh(0.0), TEST_TAG);
+        let old = world.world_mesh_collider(id).expect("first registration");
+        let before = world.collider_count();
+
+        world.set_world_mesh(id, &floor_mesh(2.0), TEST_TAG);
+
+        let new = world.world_mesh_collider(id).expect("replacement");
+        assert_ne!(new, old);
+        assert_eq!(world.collider_count(), before);
+        assert!(world.collider_triangle_count(new).is_some());
+        assert_eq!(world.collider_triangle_count(old), None);
+    }
+
+    #[test]
+    fn counts_are_one_body_and_n_plus_one_colliders() {
+        const N: u64 = 4;
+        let mut world = PhysicsWorld::new();
+        world.add_character(Vec3::new(0.0, 5.0, 0.0));
+        for id in 0..N {
+            world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32), TEST_TAG);
+        }
+
+        assert_eq!(world.body_count(), 1);
+        assert_eq!(world.collider_count(), N as usize + 1);
+
+        world.remove_world_mesh(WorldMeshId(0));
+
+        assert_eq!(world.body_count(), 1);
+        assert_eq!(world.collider_count(), N as usize);
+
+        world.add_dynamic_sphere(Vec3::new(0.0, 9.0, 0.0), 0.5);
+
+        assert_eq!(world.body_count(), 2);
+        assert_eq!(world.collider_count(), N as usize + 1);
     }
 
     fn empty_mesh() -> WorldMesh {
@@ -499,7 +673,7 @@ mod tests {
                 .expect("character is live");
             world.step(DT);
             let character_state = world.character(character).expect("character is live");
-            let body_speed = world.rigid_body_set[body].linvel().y;
+            let body_speed = world.rigid_body_set[body.0].linvel().y;
             if character_state.grounded {
                 character_landed.get_or_insert(tick);
             }

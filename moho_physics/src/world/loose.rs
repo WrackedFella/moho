@@ -1972,13 +1972,13 @@ mod tests {
     fn non_loose_bodies_are_not_braked() {
         let mut world = world_with_floor(&floor_mesh(0.0));
         let handle = world.add_dynamic_sphere(Vec3::new(0.0, 0.05, 0.0), 0.05);
-        let body = &mut world.rigid_body_set[handle];
+        let body = &mut world.rigid_body_set[handle.0];
         body.set_linvel(Vec3::new(0.0, 0.0, 2.0), true);
         body.set_angvel(Vec3::new(40.0, 0.0, 0.0), true);
 
         run(&mut world, 120);
 
-        let speed = world.rigid_body_set[handle].linvel().length();
+        let speed = world.rigid_body_set[handle.0].linvel().length();
         assert!(speed > 1.5, "the sphere keeps rolling, speed={speed}");
     }
 
