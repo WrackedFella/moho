@@ -2,7 +2,9 @@
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
 use moho_input::Action;
-use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, ListRow, MenuItem, MenuScreen};
+use moho_ui_shell::{
+    Chevron, EngineSetting, EngineSettings, GameSlider, ListRow, MenuItem, MenuScreen, Slot,
+};
 
 use crate::controls::{ControlsDraft, label};
 use crate::debug_settings::GameRows;
@@ -27,6 +29,8 @@ pub enum MenuAction {
     ResetControls,
     /// The Controls row of an action, which captures its bindings and is never chosen.
     Rebind(SearchlightAction),
+    /// Puts one action's drafted bindings back on its defaults; nothing is live until Apply.
+    ResetAction(SearchlightAction),
     /// Answers the conflict dialog by moving the input to the capturing action.
     Replace,
     /// Answers the conflict dialog by keeping both actions as they were.
@@ -123,6 +127,7 @@ impl MenuAction {
             MenuAction::ApplyControls => "Apply",
             MenuAction::ResetControls => "Reset",
             MenuAction::Rebind(action) => label(action),
+            MenuAction::ResetAction(_) => "Reset",
             MenuAction::Replace => "Replace",
             MenuAction::Cancel => "Cancel",
             MenuAction::Item(_) => "Item",
@@ -269,30 +274,59 @@ pub fn settings_page(
     }
 }
 
-/// The Controls page's rows for `draft`: one per action with its two slots, then Apply, Reset and Back.
-pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
-    let mut items: Vec<MenuItem<MenuAction>> = SearchlightAction::ALL
-        .iter()
-        .map(|&action| MenuItem::Control {
+/// The Controls page's rows for `draft`: one per action with its two slots, then Apply, Reset and
+/// Back. `open` is the action whose details are shown under its row.
+pub fn controls_rows_with(
+    draft: &ControlsDraft,
+    open: Option<SearchlightAction>,
+) -> Vec<MenuItem<MenuAction>> {
+    let mut items = Vec::new();
+    for &action in SearchlightAction::ALL {
+        let is_open = open == Some(action);
+        items.push(MenuItem::Control {
             label: label(action).to_owned(),
             action: MenuAction::Rebind(action),
             slots: draft.slots(action),
             note: None,
-            chevron: None,
+            chevron: Some(if is_open {
+                Chevron::Open
+            } else {
+                Chevron::Closed
+            }),
             mode: action.toggleable().then(|| draft.mode(action)),
-        })
-        .collect();
+        });
+        if is_open {
+            for slot in [Slot::Primary, Slot::Secondary] {
+                let (trigger, modifiers) = draft.details(action, slot);
+                items.push(MenuItem::Details {
+                    action: MenuAction::Rebind(action),
+                    slot,
+                    trigger,
+                    modifiers,
+                });
+            }
+            items.push(MenuAction::ResetAction(action).button());
+        }
+    }
     items.push(MenuAction::ApplyControls.button());
     items.push(MenuAction::ResetControls.button());
     items.push(MenuAction::Back.button());
     items
 }
 
-/// The titled Controls page for `draft`; Escape is Back.
+/// The titled Controls page for `draft` with no action open; Escape is Back.
 pub fn controls_screen(draft: &ControlsDraft) -> MenuScreen<MenuAction> {
+    controls_screen_with(draft, None)
+}
+
+/// The titled Controls page for `draft` with `open` expanded; Escape is Back.
+pub fn controls_screen_with(
+    draft: &ControlsDraft,
+    open: Option<SearchlightAction>,
+) -> MenuScreen<MenuAction> {
     MenuScreen {
         title: Some("Controls".to_owned()),
-        items: controls_rows(draft),
+        items: controls_rows_with(draft, open),
         back: Some(MenuAction::Back),
         settings: None,
     }
@@ -313,9 +347,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_core::prefs::Prefs;
-    use moho_input::bindings::{Action, ActionBindings, ActionMode, Binding, Input};
+    use moho_input::bindings::{
+        Action, ActionBindings, ActionMode, Binding, Input, Modifiers, Trigger,
+    };
     use moho_input::key::{Key, MouseButton};
-    use moho_ui_shell::{GameSlider, Slot};
+    use moho_ui_shell::{Chevron, GameSlider, Slot};
 
     use super::*;
     use crate::controls::label;
@@ -753,6 +789,144 @@ mod tests {
             rows.iter()
                 .all(|(_, slots)| !slots.contains(&Some(Binding::key(Key::C)))),
             "no row shows C"
+        );
+    }
+
+    fn control_chevrons(
+        screen: &MenuScreen<MenuAction>,
+    ) -> Vec<(SearchlightAction, Option<Chevron>)> {
+        screen
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Control {
+                    action: MenuAction::Rebind(action),
+                    chevron,
+                    ..
+                } => Some((*action, *chevron)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_controls_row_carries_a_chevron_and_its_whole_bindings() {
+        let mut bindings = default_bindings();
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space),
+                Binding::key(Key::X).held().with(Modifiers::CTRL),
+            ],
+        );
+        let draft = ControlsDraft::new(&bindings);
+
+        let closed = controls_screen(&draft);
+        let open = controls_screen_with(&draft, Some(SearchlightAction::Fire));
+
+        let all_closed: Vec<_> = SearchlightAction::ALL
+            .iter()
+            .map(|&action| (action, Some(Chevron::Closed)))
+            .collect();
+        assert_eq!(control_chevrons(&closed), all_closed);
+        let one_open: Vec<_> = SearchlightAction::ALL
+            .iter()
+            .map(|&action| {
+                let chevron = if action == SearchlightAction::Fire {
+                    Chevron::Open
+                } else {
+                    Chevron::Closed
+                };
+                (action, Some(chevron))
+            })
+            .collect();
+        assert_eq!(control_chevrons(&open), one_open, "at most one row is open");
+        for screen in [&closed, &open] {
+            let rows = control_rows(screen);
+            let expected: Vec<ControlRow> = SearchlightAction::ALL
+                .iter()
+                .map(|&action| (label(action).to_owned(), draft.slots(action)))
+                .collect();
+            assert_eq!(rows, expected, "the whole bindings, hold and chord too");
+        }
+        assert!(
+            closed
+                .items
+                .iter()
+                .all(|item| !matches!(item, MenuItem::Details { .. })),
+            "a closed page has no details rows"
+        );
+    }
+
+    #[test]
+    fn an_open_action_is_followed_by_a_details_row_per_slot_and_its_reset() {
+        let mut draft = ControlsDraft::new(&default_bindings());
+        draft.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Secondary,
+            Trigger::Press,
+            Modifiers::SHIFT,
+        );
+        let action = SearchlightAction::CheckMagazine;
+
+        let screen = controls_screen_with(&draft, Some(action));
+
+        let at = screen
+            .items
+            .iter()
+            .position(|item| {
+                matches!(item, MenuItem::Control { action: MenuAction::Rebind(a), .. } if *a == action)
+            })
+            .expect("the action is listed");
+        assert_eq!(
+            screen.items[at + 1..at + 4],
+            [
+                MenuItem::Details {
+                    action: MenuAction::Rebind(action),
+                    slot: Slot::Primary,
+                    trigger: Trigger::Hold,
+                    modifiers: Modifiers::NONE,
+                },
+                MenuItem::Details {
+                    action: MenuAction::Rebind(action),
+                    slot: Slot::Secondary,
+                    trigger: Trigger::Press,
+                    modifiers: Modifiers::SHIFT,
+                },
+                MenuAction::ResetAction(action).button(),
+            ],
+            "the empty slot shows its preset"
+        );
+        let details = screen
+            .items
+            .iter()
+            .filter(|item| matches!(item, MenuItem::Details { .. }))
+            .count();
+        assert_eq!(details, 2, "no other action shows details");
+    }
+
+    #[test]
+    fn only_an_open_page_offers_the_actions_reset_beside_the_pages_own() {
+        let draft = ControlsDraft::new(&default_bindings());
+        let reset_buttons = |screen: &MenuScreen<MenuAction>| {
+            screen
+                .items
+                .iter()
+                .filter(|item| matches!(item, MenuItem::Button { label, .. } if label == "Reset"))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        let closed = reset_buttons(&controls_screen(&draft));
+        let open = reset_buttons(&controls_screen_with(&draft, Some(SearchlightAction::Fire)));
+
+        assert_eq!(closed, [MenuAction::ResetControls.button()]);
+        assert_eq!(
+            open,
+            [
+                MenuAction::ResetAction(SearchlightAction::Fire).button(),
+                MenuAction::ResetControls.button()
+            ]
         );
     }
 

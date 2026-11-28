@@ -691,6 +691,45 @@ mod tests {
     }
 
     #[test]
+    fn hold_and_chord_slots_load_back_as_main_loads_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        let mut bindings = rebound();
+        bindings.set(
+            SearchlightAction::CheckMagazine,
+            vec![
+                Binding::key(Key::R).held(),
+                Binding::key(Key::Y).held().with(Modifiers::SHIFT),
+            ],
+        );
+        bindings.set(
+            SearchlightAction::Reload,
+            vec![
+                Binding::key(Key::T).with(Modifiers::CTRL),
+                Binding::mouse(MouseButton::Middle).with(Modifiers::ALT),
+            ],
+        );
+
+        settings.set_bindings(&bindings).unwrap();
+        let (prefs, warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) = split_fullscreen_binding(prefs.bindings());
+        let (_console, game_section) = split_console_binding(&without_fullscreen);
+        let (loaded, game_warnings) = ActionBindings::<SearchlightAction>::load(&game_section);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(game_warnings, vec![]);
+        assert_eq!(loaded, bindings);
+        assert_eq!(
+            loaded.get(SearchlightAction::CheckMagazine),
+            [
+                Binding::key(Key::R).held(),
+                Binding::key(Key::Y).held().with(Modifiers::SHIFT)
+            ]
+        );
+    }
+
+    #[test]
     fn applied_modes_load_back_as_main_loads_them() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config/searchlight.ini");

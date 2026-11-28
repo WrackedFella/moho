@@ -10,7 +10,7 @@ use glam::{Affine3A, Mat3, Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
-use moho_input::bindings::{Binding, Input};
+use moho_input::bindings::{Input, Modifiers, Trigger};
 use moho_input::key::Key;
 use moho_physics::{CharacterBody, CharacterState, HitVolume, first_person_view};
 use moho_render_api::{
@@ -26,8 +26,8 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    Anchor, EngineSettings, ItemLists, ListId, MenuEvent, Routing, ScreenText, Slot, UiLayers,
-    UiShell, apply_engine_command, apply_engine_settings,
+    Anchor, EngineSettings, ItemLists, ListId, MenuEvent, MenuItem, Routing, ScreenText, Slot,
+    UiLayers, UiShell, apply_engine_command, apply_engine_settings,
 };
 
 use crate::aim::{Magnification, aimed_fov_y, look_scale};
@@ -46,7 +46,7 @@ use crate::input::{
 use crate::inventory;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
-    MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
+    MenuAction, conflict_screen, controls_rows_with, controls_screen, main_screen, pause_screen,
     settings_categories_screen, settings_page,
 };
 use crate::menu_feed::{MenuCamera, MenuFeed};
@@ -58,6 +58,8 @@ use crate::tag::SurfaceTag;
 use crate::tuning::{SHIPPED_BODY, STRIP_FADE_TICKS};
 use crate::{TICK_HZ, hud};
 
+/// The note on a Controls row whose edit was refused as reserved.
+const REFUSED_NOTE: &str = "That input can't be bound";
 /// Ticks a struck dummy segment stays lit.
 const FLASH_TICKS: u32 = TICK_HZ / 6;
 /// Dummy segment mesh ids start here, clear of the arena's (which count up from 0).
@@ -1082,6 +1084,10 @@ pub struct SearchlightGame {
     queued_inventory: Option<InventoryCommand>,
     /// The bindings being edited while the Controls page is open.
     controls: Option<ControlsDraft>,
+    /// The action whose details the Controls page shows; at most one.
+    open_action: Option<SearchlightAction>,
+    /// The action whose last edit was refused as reserved; its row notes it on the next refresh.
+    refused: Option<SearchlightAction>,
     /// Ticks the rig strip stays up after the last trigger.
     strip_ticks_left: u32,
     /// Outlines of every character's hit volumes are drawn; session state, off at every launch.
@@ -1118,6 +1124,8 @@ impl SearchlightGame {
             pending_settings: None,
             queued_inventory: None,
             controls: None,
+            open_action: None,
+            refused: None,
             strip_ticks_left: 0,
             hit_volumes: false,
         }
@@ -1318,6 +1326,7 @@ impl SearchlightGame {
                 }
                 MenuEvent::Chosen(MenuAction::Controls) => {
                     let draft = ControlsDraft::new(self.input.bindings());
+                    self.open_action = None;
                     self.stage.shell().menu_mut().push(controls_screen(&draft));
                     self.controls = Some(draft);
                 }
@@ -1329,6 +1338,12 @@ impl SearchlightGame {
                     self.show_controls();
                 }
                 MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
+                MenuEvent::Chosen(MenuAction::ResetAction(action)) => {
+                    if let Some(draft) = &mut self.controls {
+                        draft.reset(action);
+                    }
+                    self.show_controls();
+                }
                 MenuEvent::Chosen(MenuAction::Back) if self.screen == Screen::Inventory => {
                     self.close_inventory();
                 }
@@ -1337,6 +1352,7 @@ impl SearchlightGame {
                 }
                 MenuEvent::Chosen(MenuAction::Back) => {
                     self.controls = None;
+                    self.open_action = None;
                     self.stage.shell().menu_mut().pop();
                 }
                 MenuEvent::Chosen(MenuAction::Replace) => self.answer_conflict(true),
@@ -1371,7 +1387,21 @@ impl SearchlightGame {
                     }
                     self.show_controls();
                 }
-                MenuEvent::DetailsToggled { .. } | MenuEvent::Picked { .. } => {}
+                MenuEvent::DetailsToggled {
+                    action: MenuAction::Rebind(action),
+                } => {
+                    self.open_action = (self.open_action != Some(action)).then_some(action);
+                    self.show_controls();
+                }
+                MenuEvent::Picked {
+                    action: MenuAction::Rebind(action),
+                    slot,
+                    trigger,
+                    modifiers,
+                } => self.picked(action, slot, trigger, modifiers),
+                MenuEvent::DetailsToggled { .. } | MenuEvent::Picked { .. } => {
+                    self.show_controls();
+                }
                 MenuEvent::ActionPicked {
                     action: MenuAction::ItemAction(inventory::ItemAction::Wear),
                     item: MenuAction::Item(row),
@@ -1388,7 +1418,20 @@ impl SearchlightGame {
     /// Shows the Controls page's rows from the draft.
     fn show_controls(&mut self) {
         if let Some(draft) = &self.controls {
-            let rows = controls_rows(draft);
+            let mut rows = controls_rows_with(draft, self.open_action);
+            if let Some(refused) = self.refused.take() {
+                for row in &mut rows {
+                    if let MenuItem::Control {
+                        action: MenuAction::Rebind(action),
+                        note,
+                        ..
+                    } = row
+                        && *action == refused
+                    {
+                        *note = Some(REFUSED_NOTE.to_owned());
+                    }
+                }
+            }
             self.stage.shell().menu_mut().set_items(rows);
         }
     }
@@ -1399,12 +1442,44 @@ impl SearchlightGame {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        if let Capture::Conflict { by, .. } = draft.capture(action, slot, input) {
-            let dialog = conflict_screen(&Binding::from(input).label(), label(by));
-            self.stage.shell().menu_mut().push(dialog);
+        let outcome = draft.capture(action, slot, input);
+        self.answer_edit(action, outcome);
+    }
+
+    /// Stages the kind and modifiers a picker chose for `action`'s `slot`.
+    fn picked(
+        &mut self,
+        action: SearchlightAction,
+        slot: Slot,
+        trigger: Trigger,
+        modifiers: Modifiers,
+    ) {
+        let Some(draft) = &mut self.controls else {
             return;
+        };
+        let outcome = draft.pick(action, slot, trigger, modifiers);
+        self.answer_edit(action, outcome);
+    }
+
+    /// Answers an edit of `action`'s row: a conflict opens the dialog, a refusal is noted on the
+    /// row, anything else refreshes the page.
+    fn answer_edit(&mut self, action: SearchlightAction, outcome: Capture) {
+        match outcome {
+            Capture::Conflict { by, .. } => {
+                let held = self
+                    .controls
+                    .as_ref()
+                    .and_then(ControlsDraft::pending_binding)
+                    .map_or_else(String::new, moho_input::bindings::Binding::label);
+                let dialog = conflict_screen(&held, label(by));
+                self.stage.shell().menu_mut().push(dialog);
+            }
+            Capture::Reserved => {
+                self.refused = Some(action);
+                self.show_controls();
+            }
+            Capture::Set | Capture::Unchanged => self.show_controls(),
         }
-        self.show_controls();
     }
 
     /// Closes the conflict dialog, answers it through the draft and refreshes the Controls rows.
@@ -6970,6 +7045,509 @@ mod tests {
             [Binding::key(Key::T)],
             "Back saved nothing"
         );
+    }
+
+    use moho_input::bindings::{Modifiers, Trigger};
+    use moho_ui_shell::Chevron;
+
+    type DetailRow = (SearchlightAction, Slot, Trigger, Modifiers);
+
+    fn top_items(game: &SearchlightGame) -> Vec<MenuItem<MenuAction>> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen.items.clone()
+    }
+
+    /// The chevron every Controls row on the top screen shows, in row order.
+    fn chevrons(game: &SearchlightGame) -> Vec<(SearchlightAction, Chevron)> {
+        top_items(game)
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Control {
+                    action: MenuAction::Rebind(action),
+                    chevron: Some(chevron),
+                    ..
+                } => Some((action, chevron)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The details rows of the top screen, in row order.
+    fn detail_rows(game: &SearchlightGame) -> Vec<DetailRow> {
+        top_items(game)
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Details {
+                    action: MenuAction::Rebind(action),
+                    slot,
+                    trigger,
+                    modifiers,
+                } => Some((action, slot, trigger, modifiers)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The actions whose reset button the top screen shows.
+    fn action_resets(game: &SearchlightGame) -> Vec<SearchlightAction> {
+        top_items(game)
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Button {
+                    action: MenuAction::ResetAction(action),
+                    ..
+                } => Some(action),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn open_chevrons(game: &SearchlightGame) -> Vec<SearchlightAction> {
+        chevrons(game)
+            .into_iter()
+            .filter(|(_, chevron)| *chevron == Chevron::Open)
+            .map(|(action, _)| action)
+            .collect()
+    }
+
+    /// Presses the chevron of `action`'s row.
+    fn toggle_details(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        action: SearchlightAction,
+    ) {
+        focus_control(game, action);
+        press_keys(game, ctx, &[Key::ArrowLeft, Key::Enter]);
+    }
+
+    fn is_details(wanted: SearchlightAction, at: Slot) -> impl Fn(&MenuItem<MenuAction>) -> bool {
+        move |item| {
+            matches!(
+                item,
+                MenuItem::Details { action: MenuAction::Rebind(action), slot, .. }
+                    if *action == wanted && *slot == at
+            )
+        }
+    }
+
+    /// Steps the kind picker of `action`'s `slot` once.
+    fn step_kind(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        action: SearchlightAction,
+        slot: Slot,
+    ) {
+        press_item(game, ctx, "kind picker", is_details(action, slot));
+    }
+
+    /// Steps the modifier picker of `action`'s `slot` once.
+    fn step_modifier(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        action: SearchlightAction,
+        slot: Slot,
+    ) {
+        focus_row(game, "modifier picker", is_details(action, slot));
+        press_keys(game, ctx, &[Key::ArrowRight, Key::Enter]);
+    }
+
+    /// Captures `input` into `action`'s secondary slot.
+    fn capture_secondary(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        action: SearchlightAction,
+        input: Input,
+    ) {
+        focus_control(game, action);
+        press_keys(game, ctx, &[Key::ArrowRight, Key::Enter]);
+        game.route_input(ctx, input, true, false);
+        game.route_input(ctx, input, false, false);
+    }
+
+    /// Whether holding `input` for `ticks` ticks checks the magazine.
+    fn checks_when_held(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        input: Input,
+        ticks: usize,
+    ) -> bool {
+        game.route_input(ctx, input, true, false);
+        let checked = (0..ticks).any(|_| game.command().check);
+        game.route_input(ctx, input, false, false);
+        checked
+    }
+
+    const KEY_Y: Input = Input::Key(Key::Y);
+    const KEY_CTRL: Input = Input::Key(Key::Ctrl);
+
+    #[test]
+    fn expanding_one_action_shows_its_pickers_and_reset_only() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        let before = (chevrons(&game), detail_rows(&game), action_resets(&game));
+
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+
+        let all_closed: Vec<_> = SearchlightAction::ALL
+            .iter()
+            .map(|&action| (action, Chevron::Closed))
+            .collect();
+        assert_eq!(
+            before,
+            (all_closed, vec![], vec![]),
+            "nothing starts expanded"
+        );
+        assert_eq!(open_chevrons(&game), [SearchlightAction::CheckMagazine]);
+        assert_eq!(
+            detail_rows(&game),
+            [
+                (
+                    SearchlightAction::CheckMagazine,
+                    Slot::Primary,
+                    Trigger::Hold,
+                    Modifiers::NONE
+                ),
+                (
+                    SearchlightAction::CheckMagazine,
+                    Slot::Secondary,
+                    Trigger::Press,
+                    Modifiers::NONE
+                ),
+            ]
+        );
+        assert_eq!(action_resets(&game), [SearchlightAction::CheckMagazine]);
+    }
+
+    #[test]
+    fn toggling_the_open_action_closes_it() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+        let opened = open_chevrons(&game);
+
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+
+        assert_eq!(opened, [SearchlightAction::CheckMagazine]);
+        assert_eq!(open_chevrons(&game), []);
+        assert_eq!(detail_rows(&game), []);
+        assert_eq!(action_resets(&game), []);
+        assert_eq!(chevrons(&game).len(), SearchlightAction::ALL.len());
+    }
+
+    #[test]
+    fn opening_another_action_closes_the_first() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Fire);
+
+        assert_eq!(open_chevrons(&game), [SearchlightAction::Fire]);
+        assert_eq!(
+            detail_rows(&game),
+            [
+                (
+                    SearchlightAction::Fire,
+                    Slot::Primary,
+                    Trigger::Press,
+                    Modifiers::NONE
+                ),
+                (
+                    SearchlightAction::Fire,
+                    Slot::Secondary,
+                    Trigger::Press,
+                    Modifiers::NONE
+                ),
+            ]
+        );
+        assert_eq!(action_resets(&game), [SearchlightAction::Fire]);
+    }
+
+    #[test]
+    fn an_applied_hold_slot_fires_after_the_hold_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+        step_kind(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::CheckMagazine,
+            Slot::Secondary,
+        );
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::CheckMagazine, KEY_Y);
+        let staged = control_row(&game, SearchlightAction::CheckMagazine);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let tapped = tap(&mut game, &mut ctx, KEY_Y).iter().any(|c| c.check);
+        let early = checks_when_held(&mut game, &mut ctx, KEY_Y, 10);
+        let held = checks_when_held(&mut game, &mut ctx, KEY_Y, 30);
+
+        assert_eq!(
+            staged.0,
+            [
+                Some(Binding::key(Key::R).held()),
+                Some(Binding::key(Key::Y).held())
+            ],
+            "the slot shows Hold Y"
+        );
+        assert!(!tapped, "a tap of Y does not check");
+        assert!(!early, "ten ticks is short of the hold time");
+        assert!(held, "holding Y past the hold time checks the magazine");
+        assert_eq!(
+            saved_bindings(&path).get(SearchlightAction::CheckMagazine),
+            [Binding::key(Key::R).held(), Binding::key(Key::Y).held()],
+            "Apply saved the hold"
+        );
+    }
+
+    #[test]
+    fn an_applied_chord_slot_fires_with_its_modifier() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::CheckMagazine,
+            Slot::Secondary,
+        );
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::CheckMagazine, KEY_Y);
+        let staged = control_row(&game, SearchlightAction::CheckMagazine);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let bare = tap(&mut game, &mut ctx, KEY_Y).iter().any(|c| c.check);
+        game.route_input(&mut ctx, KEY_CTRL, true, false);
+        let chord = tap(&mut game, &mut ctx, KEY_Y).iter().any(|c| c.check);
+        game.route_input(&mut ctx, KEY_CTRL, false, false);
+
+        assert_eq!(
+            staged.0,
+            [
+                Some(Binding::key(Key::R).held()),
+                Some(Binding::key(Key::Y).with(Modifiers::CTRL))
+            ],
+            "the slot shows Ctrl+Y"
+        );
+        assert!(!bare, "Y alone does not check");
+        assert!(chord, "Ctrl held with a press of Y checks the magazine");
+        assert_eq!(
+            saved_bindings(&path).get(SearchlightAction::CheckMagazine),
+            [
+                Binding::key(Key::R).held(),
+                Binding::key(Key::Y).with(Modifiers::CTRL)
+            ],
+            "Apply saved the chord"
+        );
+    }
+
+    #[test]
+    fn a_picker_step_into_a_held_binding_opens_the_conflict_dialog() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+        step_kind(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+        );
+        let after_first = title(&game);
+
+        step_kind(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+        );
+        let dialog = title(&game);
+        press_item(&mut game, &mut ctx, "Replace", is_button("Replace"));
+
+        assert_eq!(
+            after_first.as_deref(),
+            Some("Controls"),
+            "Hold to Double is free"
+        );
+        assert_eq!(dialog.as_deref(), Some("R is used by Reload"));
+        assert_eq!(
+            control_row(&game, SearchlightAction::CheckMagazine).0,
+            [Some(Binding::key(Key::R)), None]
+        );
+        assert_eq!(
+            control_row(&game, SearchlightAction::Reload).0,
+            [None, None]
+        );
+    }
+
+    #[test]
+    fn an_applied_action_reset_puts_one_action_on_its_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, MIDDLE_BUTTON);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Reload);
+
+        press_item(&mut game, &mut ctx, "action reset", |item| {
+            matches!(
+                item,
+                MenuItem::Button {
+                    action: MenuAction::ResetAction(SearchlightAction::Reload),
+                    ..
+                }
+            )
+        });
+        let reload = control_row(&game, SearchlightAction::Reload).0;
+        let fire = control_row(&game, SearchlightAction::Fire).0;
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+
+        assert_eq!(reload, default_slots(SearchlightAction::Reload));
+        assert_eq!(fire, [Some(Binding::mouse(MouseButton::Middle)), None]);
+        let saved = saved_bindings(&path);
+        assert_eq!(
+            saved.get(SearchlightAction::Reload),
+            SearchlightAction::Reload.default_bindings()
+        );
+        assert_eq!(
+            saved.get(SearchlightAction::Fire),
+            [Binding::mouse(MouseButton::Middle)],
+            "Fire keeps the player's choice"
+        );
+    }
+
+    #[test]
+    fn a_modifier_key_captured_into_its_own_chord_is_noted_once() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Jump,
+            Slot::Secondary,
+        );
+
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::Jump, KEY_CTRL);
+        let refused = control_row(&game, SearchlightAction::Jump);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        let later = control_row(&game, SearchlightAction::Jump);
+
+        assert_eq!(
+            refused,
+            (
+                [Some(Binding::key(Key::Space)), None],
+                Some("That input can't be bound".to_owned())
+            )
+        );
+        assert_eq!(later.1, None, "the note is gone after the next refresh");
+    }
+
+    #[test]
+    fn a_conflict_dialog_names_the_full_binding_for_a_chord_and_a_hold() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::CheckMagazine);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::CheckMagazine,
+            Slot::Secondary,
+        );
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::CheckMagazine, KEY_Y);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        step_modifier(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Jump,
+            Slot::Secondary,
+        );
+
+        capture_secondary(&mut game, &mut ctx, SearchlightAction::Jump, KEY_Y);
+        let chord = title(&game);
+        press_item(&mut game, &mut ctx, "Cancel", is_button("Cancel"));
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Reload);
+        step_kind(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Reload,
+            Slot::Primary,
+        );
+        let hold = title(&game);
+
+        assert_eq!(
+            chord.as_deref(),
+            Some("Ctrl+Y is used by Check magazine"),
+            "a capture into a chord slot"
+        );
+        assert_eq!(
+            hold.as_deref(),
+            Some("Hold R is used by Check magazine"),
+            "a pick into a hold"
+        );
+    }
+
+    #[test]
+    fn backing_out_of_controls_discards_the_open_action_and_a_staged_pick() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let live = game.input.bindings().clone();
+        open_controls(&mut game, &mut ctx);
+        toggle_details(&mut game, &mut ctx, SearchlightAction::Jump);
+        step_kind(&mut game, &mut ctx, SearchlightAction::Jump, Slot::Primary);
+        let staged = detail_rows(&game);
+
+        reopen_controls(&mut game, &mut ctx);
+
+        assert_eq!(
+            staged,
+            [
+                (
+                    SearchlightAction::Jump,
+                    Slot::Primary,
+                    Trigger::Hold,
+                    Modifiers::NONE
+                ),
+                (
+                    SearchlightAction::Jump,
+                    Slot::Secondary,
+                    Trigger::Press,
+                    Modifiers::NONE
+                ),
+            ]
+        );
+        assert_eq!(open_chevrons(&game), []);
+        assert_eq!(detail_rows(&game), []);
+        assert_eq!(
+            control_row(&game, SearchlightAction::Jump).0,
+            default_slots(SearchlightAction::Jump)
+        );
+        assert_eq!(game.input.bindings(), &live);
     }
 
     /// The hold/toggle choice the top screen shows on `action`'s row.

@@ -1,7 +1,8 @@
 //! The bindings being edited on the Controls page, before Apply makes them live.
 
 use moho_input::Action;
-use moho_input::bindings::{ActionBindings, ActionMode, Binding, Input};
+use moho_input::bindings::{ActionBindings, ActionMode, Binding, Input, Modifiers, Trigger};
+use moho_input::key::Key;
 use moho_ui_shell::Slot;
 
 use crate::input::SearchlightAction;
@@ -13,6 +14,9 @@ struct Row {
     slots: [Option<Binding>; 2],
     rest: Vec<Binding>,
     mode: ActionMode,
+    /// The kind and modifiers each slot was last given by a picker: what the next capture into
+    /// it builds, and what an empty slot shows.
+    kinds: [(Trigger, Modifiers); 2],
 }
 
 impl Row {
@@ -22,6 +26,7 @@ impl Row {
             slots: [held.first().copied(), held.get(1).copied()],
             rest: held.iter().skip(2).copied().collect(),
             mode,
+            kinds: [(Trigger::Press, Modifiers::NONE); 2],
         }
     }
 
@@ -63,7 +68,9 @@ struct Pending {
 /// What happened to a captured input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capture {
-    /// The requested slot now holds the plain press of the input.
+    /// The requested slot now holds the binding: from a capture, the input with the slot's kind
+    /// and modifiers (a press, a hold or a chord); from a pick, the slot's input with the new
+    /// kind and modifiers.
     Set,
     /// The action already holds the input in a slot or beyond them; nothing changed.
     Unchanged,
@@ -165,7 +172,13 @@ impl ControlsDraft {
         {
             row.remove(pending.binding);
             row.slots[index(pending.slot)] = Some(pending.binding);
+            row.kinds[index(pending.slot)] = (pending.binding.trigger, pending.binding.modifiers);
         }
+    }
+
+    /// The binding a pending conflict would put in place, for naming it in the dialog.
+    pub fn pending_binding(&self) -> Option<Binding> {
+        self.pending.map(|pending| pending.binding)
     }
 
     /// Answers a pending conflict by dropping it.
@@ -173,13 +186,83 @@ impl ControlsDraft {
         self.pending = None;
     }
 
-    /// Puts the plain press of `input` in `action`'s `slot` unless it is reserved, another action
-    /// holds it, or `action` already holds it in any position. A conflict stays pending until
-    /// `replace` or `cancel`; any later capture drops it.
+    /// The kind and modifiers `action`'s `slot` holds, or the ones a picker gave it while empty.
+    pub fn details(&self, action: SearchlightAction, slot: Slot) -> (Trigger, Modifiers) {
+        self.rows.iter().find(|row| row.action == action).map_or(
+            (Trigger::Press, Modifiers::NONE),
+            |row| {
+                row.slots[index(slot)].map_or(row.kinds[index(slot)], |bound| {
+                    (bound.trigger, bound.modifiers)
+                })
+            },
+        )
+    }
+
+    /// Sets `action`'s `slot` to `trigger` and `modifiers`. An empty slot only remembers them for
+    /// its next capture and the answer is `Unchanged`. A bound slot keeps its input and is
+    /// checked like a capture: reserved, held by another action (pending), or already held.
+    pub fn pick(
+        &mut self,
+        action: SearchlightAction,
+        slot: Slot,
+        trigger: Trigger,
+        modifiers: Modifiers,
+    ) -> Capture {
+        self.pending = None;
+        let Some(row) = self.rows.iter_mut().find(|row| row.action == action) else {
+            return Capture::Unchanged;
+        };
+        let Some(bound) = row.slots[index(slot)] else {
+            row.kinds[index(slot)] = (trigger, modifiers);
+            return Capture::Unchanged;
+        };
+        // Whatever the answer, the slot's shown kind is what the next capture keeps.
+        row.kinds[index(slot)] = (bound.trigger, bound.modifiers);
+        let binding = Binding {
+            input: bound.input,
+            trigger,
+            modifiers,
+        };
+        if binding == bound {
+            row.kinds[index(slot)] = (trigger, modifiers);
+            return Capture::Unchanged;
+        }
+        self.place(action, slot, binding)
+    }
+
+    /// Restores `action`'s default bindings and mode.
+    pub fn reset(&mut self, action: SearchlightAction) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            *row = Row::from_bindings(action, action.default_bindings(), ActionMode::Hold);
+        }
+    }
+
+    /// Puts `input` in `action`'s `slot` with the kind and modifiers the slot was last given by a
+    /// picker (a plain press if never) unless that is reserved, another action holds it, or
+    /// `action` already holds it in any position. A conflict stays pending until `replace` or
+    /// `cancel`; any later capture drops it.
     pub fn capture(&mut self, action: SearchlightAction, requested: Slot, input: Input) -> Capture {
         self.pending = None;
-        let binding = Binding::from(input);
-        if binding.is_protected() {
+        let (trigger, modifiers) = self
+            .rows
+            .iter()
+            .find(|row| row.action == action)
+            .map_or((Trigger::Press, Modifiers::NONE), |row| {
+                row.kinds[index(requested)]
+            });
+        self.place(
+            action,
+            requested,
+            Binding {
+                input,
+                trigger,
+                modifiers,
+            },
+        )
+    }
+
+    fn place(&mut self, action: SearchlightAction, requested: Slot, binding: Binding) -> Capture {
+        if binding.is_protected() || chords_with_itself(binding) {
             return Capture::Reserved;
         }
         if let Some(other) = self
@@ -207,11 +290,24 @@ impl ControlsDraft {
             Some(row) if row.holds(binding) => Capture::Unchanged,
             Some(row) => {
                 row.slots[index(requested)] = Some(binding);
+                row.kinds[index(requested)] = (binding.trigger, binding.modifiers);
                 Capture::Set
             }
             None => Capture::Unchanged,
         }
     }
+}
+
+/// A modifier key under its own modifier (`Ctrl` with `Ctrl`): the prefs loader rejects that
+/// chord, so it would be dropped on load.
+fn chords_with_itself(binding: Binding) -> bool {
+    let own = match binding.input {
+        Input::Key(Key::Ctrl) => Modifiers::CTRL,
+        Input::Key(Key::Shift) => Modifiers::SHIFT,
+        Input::Key(Key::Alt) => Modifiers::ALT,
+        _ => return false,
+    };
+    binding.modifiers.contains(own)
 }
 
 fn index(slot: Slot) -> usize {
@@ -987,5 +1083,454 @@ mod tests {
         assert_eq!(label(SearchlightAction::CheckMagazine), "Check magazine");
         assert_eq!(label(SearchlightAction::Restart), "Restart");
         assert_eq!(label(SearchlightAction::LeanLeft), "Lean left");
+    }
+
+    #[test]
+    fn capture_takes_kind_and_modifier_from_the_slot() {
+        let mut draft = draft();
+
+        draft.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Hold,
+            Modifiers::NONE,
+        );
+        let into_hold = draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Input::Key(Key::Y),
+        );
+        draft.pick(
+            SearchlightAction::Jump,
+            Slot::Secondary,
+            Trigger::Press,
+            Modifiers::CTRL,
+        );
+        let into_chord =
+            draft.capture(SearchlightAction::Jump, Slot::Secondary, Input::Key(Key::Y));
+
+        assert_eq!((into_hold, into_chord), (Capture::Set, Capture::Set));
+        assert_eq!(
+            draft.slots(SearchlightAction::CheckMagazine),
+            [Some(Binding::key(Key::Y).held()), None],
+            "a hold slot keeps its kind and takes the key alone"
+        );
+        assert_eq!(
+            draft.slots(SearchlightAction::Jump),
+            [
+                Some(Binding::key(Key::Space)),
+                Some(Binding::key(Key::Y).with(Modifiers::CTRL))
+            ],
+            "Ctrl+Y does not conflict with Hold Y"
+        );
+    }
+
+    #[test]
+    fn a_captured_key_takes_the_kind_and_modifier_a_pick_preset_on_an_empty_slot() {
+        let mut draft = draft();
+
+        draft.pick(
+            SearchlightAction::Jump,
+            Slot::Secondary,
+            Trigger::Hold,
+            Modifiers::SHIFT,
+        );
+        let outcome = draft.capture(SearchlightAction::Jump, Slot::Secondary, Input::Key(Key::Y));
+        draft.pick(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Trigger::Press,
+            Modifiers::CTRL,
+        );
+        let chord = draft.capture(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Input::Key(Key::T),
+        );
+
+        assert_eq!((outcome, chord), (Capture::Set, Capture::Set));
+        assert_eq!(
+            draft.slots(SearchlightAction::Jump),
+            [
+                Some(Binding::key(Key::Space)),
+                Some(Binding::key(Key::Y).held().with(Modifiers::SHIFT))
+            ]
+        );
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [
+                Some(Binding::key(Key::R)),
+                Some(Binding::key(Key::T).with(Modifiers::CTRL))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hold_and_a_press_of_one_key_do_not_conflict() {
+        let mut draft = draft();
+        draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Input::Key(Key::Z),
+        );
+        draft.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Hold,
+            Modifiers::NONE,
+        );
+        let before = draft.bindings();
+
+        let outcome = draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Input::Key(Key::R),
+        );
+        let after = draft.bindings();
+        draft.replace();
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::CheckMagazine),
+            [Some(Binding::key(Key::R).held()), None]
+        );
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::R)), None],
+            "Reload keeps its press"
+        );
+        assert_ne!(before, after, "the capture changed the draft");
+        assert_eq!(draft.bindings(), after, "no conflict was left pending");
+    }
+
+    #[test]
+    fn reset_restores_one_action_and_keeps_the_others() {
+        let mut draft = draft();
+        draft.capture(SearchlightAction::Reload, Slot::Primary, Input::Key(Key::T));
+        draft.capture(
+            SearchlightAction::Fire,
+            Slot::Primary,
+            Input::Mouse(MouseButton::Middle),
+        );
+        draft.capture(
+            SearchlightAction::LeanLeft,
+            Slot::Primary,
+            Input::Key(Key::Z),
+        );
+        draft.set_mode(SearchlightAction::LeanLeft, ActionMode::Toggle);
+
+        draft.reset(SearchlightAction::Reload);
+        let after_reload = draft.bindings();
+        draft.reset(SearchlightAction::LeanLeft);
+
+        assert_eq!(
+            after_reload.get(SearchlightAction::Reload),
+            SearchlightAction::Reload.default_bindings()
+        );
+        assert_eq!(
+            after_reload.get(SearchlightAction::Fire),
+            [Binding::mouse(MouseButton::Middle)],
+            "Fire keeps the player's choice"
+        );
+        assert_eq!(
+            after_reload.get(SearchlightAction::LeanLeft),
+            [Binding::key(Key::Z)],
+            "another action's rebinding stays"
+        );
+        assert_eq!(
+            after_reload.mode(SearchlightAction::LeanLeft),
+            ActionMode::Toggle
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::LeanLeft),
+            SearchlightAction::LeanLeft.default_bindings()
+        );
+        assert_eq!(draft.mode(SearchlightAction::LeanLeft), ActionMode::Hold);
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Fire),
+            [Binding::mouse(MouseButton::Middle)]
+        );
+    }
+
+    #[test]
+    fn reset_clears_a_slot_preset_and_an_emptied_slot() {
+        let mut draft = draft();
+        draft.pick(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Trigger::Hold,
+            Modifiers::ALT,
+        );
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+
+        draft.reset(SearchlightAction::Reload);
+        let outcome = draft.capture(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Input::Key(Key::T),
+        );
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::R)), Some(Binding::key(Key::T))],
+            "the preset did not survive the reset"
+        );
+    }
+
+    #[test]
+    fn a_picker_change_into_a_held_binding_asks_first() {
+        let mut asked = draft();
+        let mut cancelled = draft();
+
+        let outcome = asked.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Press,
+            Modifiers::NONE,
+        );
+        let unchanged = asked.bindings() == defaults();
+        asked.replace();
+        cancelled.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Press,
+            Modifiers::NONE,
+        );
+        cancelled.cancel();
+        cancelled.replace();
+
+        assert_eq!(
+            outcome,
+            Capture::Conflict {
+                by: SearchlightAction::Reload,
+                slot: Some(Slot::Primary)
+            }
+        );
+        assert!(unchanged, "a pending conflict is a draft no-op");
+        assert_eq!(
+            asked.slots(SearchlightAction::CheckMagazine),
+            [Some(Binding::key(Key::R)), None],
+            "Replace moves Press R to Check magazine"
+        );
+        assert!(asked.is_unbound(SearchlightAction::Reload));
+        assert_eq!(cancelled.bindings(), defaults(), "Cancel keeps both");
+    }
+
+    #[test]
+    fn a_modifier_key_in_its_own_chord_is_refused() {
+        for (key, modifier) in [
+            (Key::Ctrl, Modifiers::CTRL),
+            (Key::Shift, Modifiers::SHIFT),
+            (Key::Alt, Modifiers::ALT),
+        ] {
+            let mut by_capture = draft();
+            by_capture.pick(
+                SearchlightAction::Jump,
+                Slot::Secondary,
+                Trigger::Press,
+                modifier,
+            );
+            let mut by_pick = draft();
+            by_pick.capture(SearchlightAction::Jump, Slot::Secondary, Input::Key(key));
+            let bare = by_pick.bindings();
+
+            let captured =
+                by_capture.capture(SearchlightAction::Jump, Slot::Secondary, Input::Key(key));
+            let picked = by_pick.pick(
+                SearchlightAction::Jump,
+                Slot::Secondary,
+                Trigger::Press,
+                modifier,
+            );
+
+            assert_eq!(
+                captured,
+                Capture::Reserved,
+                "{key:?} captured into its chord"
+            );
+            assert_eq!(picked, Capture::Reserved, "{key:?} picked into its chord");
+            assert_eq!(
+                by_capture.bindings(),
+                defaults(),
+                "{key:?}: capture changed nothing"
+            );
+            assert_eq!(by_pick.bindings(), bare, "{key:?}: pick changed nothing");
+        }
+    }
+
+    #[test]
+    fn a_modifier_key_under_another_modifier_is_allowed() {
+        let mut draft = draft();
+        draft.pick(
+            SearchlightAction::Jump,
+            Slot::Secondary,
+            Trigger::Press,
+            Modifiers::SHIFT,
+        );
+
+        let outcome = draft.capture(
+            SearchlightAction::Jump,
+            Slot::Secondary,
+            Input::Key(Key::Ctrl),
+        );
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::Jump),
+            [
+                Some(Binding::key(Key::Space)),
+                Some(Binding::key(Key::Ctrl).with(Modifiers::SHIFT))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_pick_on_an_empty_slot_presets_the_next_capture() {
+        let mut draft = draft();
+
+        draft.pick(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Trigger::Hold,
+            Modifiers::CTRL,
+        );
+
+        assert_eq!(draft.bindings(), defaults(), "nothing is bound by a pick");
+        assert_eq!(
+            draft.details(SearchlightAction::Reload, Slot::Secondary),
+            (Trigger::Hold, Modifiers::CTRL)
+        );
+        assert_eq!(
+            draft.details(SearchlightAction::Reload, Slot::Primary),
+            (Trigger::Press, Modifiers::NONE),
+            "the other slot is untouched"
+        );
+    }
+
+    #[test]
+    fn details_of_a_bound_slot_are_its_bindings_kind_and_modifiers() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space).held(),
+                Binding::key(Key::X).with(Modifiers::ALT),
+            ],
+        );
+        let draft = ControlsDraft::new(&bindings);
+
+        assert_eq!(
+            draft.details(SearchlightAction::Jump, Slot::Primary),
+            (Trigger::Hold, Modifiers::NONE)
+        );
+        assert_eq!(
+            draft.details(SearchlightAction::Jump, Slot::Secondary),
+            (Trigger::Press, Modifiers::ALT)
+        );
+        assert_eq!(
+            draft.details(SearchlightAction::CheckMagazine, Slot::Primary),
+            (Trigger::Hold, Modifiers::NONE)
+        );
+        assert_eq!(
+            draft.details(SearchlightAction::Reload, Slot::Primary),
+            (Trigger::Press, Modifiers::NONE)
+        );
+    }
+
+    #[test]
+    fn a_pick_on_a_bound_slot_changes_its_binding_and_keeps_the_input() {
+        let mut draft = draft();
+
+        let hold = draft.pick(
+            SearchlightAction::Reload,
+            Slot::Primary,
+            Trigger::Hold,
+            Modifiers::CTRL,
+        );
+        let same = draft.pick(
+            SearchlightAction::Reload,
+            Slot::Primary,
+            Trigger::Hold,
+            Modifiers::CTRL,
+        );
+        let double = draft.pick(
+            SearchlightAction::Reload,
+            Slot::Primary,
+            Trigger::Double,
+            Modifiers::NONE,
+        );
+
+        assert_eq!(
+            (hold, same, double),
+            (Capture::Set, Capture::Unchanged, Capture::Set)
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Reload),
+            [Binding::key(Key::R).doubled()]
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::CheckMagazine),
+            [Binding::key(Key::R).held()],
+            "another action is untouched"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_pick_leaves_the_slot_and_its_kind_as_they_were() {
+        let mut draft = draft();
+        let outcome = draft.pick(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Trigger::Press,
+            Modifiers::NONE,
+        );
+        draft.cancel();
+
+        let shown = draft.slots(SearchlightAction::CheckMagazine);
+        let details = draft.details(SearchlightAction::CheckMagazine, Slot::Primary);
+        let captured = draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Input::Key(Key::Y),
+        );
+
+        assert!(matches!(outcome, Capture::Conflict { .. }));
+        assert_eq!(shown, [Some(Binding::key(Key::R).held()), None]);
+        assert_eq!(details, (Trigger::Hold, Modifiers::NONE));
+        assert_eq!(captured, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::CheckMagazine),
+            [Some(Binding::key(Key::Y).held()), None],
+            "the cancelled Press pick left no preset behind"
+        );
+    }
+
+    #[test]
+    fn a_pick_replaces_a_two_modifier_chord() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Reload,
+            vec![Binding::key(Key::R).with(Modifiers::CTRL.and(Modifiers::SHIFT))],
+        );
+        let mut draft = ControlsDraft::new(&bindings);
+
+        let shown = draft.details(SearchlightAction::Reload, Slot::Primary);
+        let outcome = draft.pick(
+            SearchlightAction::Reload,
+            Slot::Primary,
+            Trigger::Press,
+            Modifiers::ALT,
+        );
+
+        assert_eq!(
+            shown,
+            (Trigger::Press, Modifiers::CTRL.and(Modifiers::SHIFT))
+        );
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Reload),
+            [Binding::key(Key::R).with(Modifiers::ALT)]
+        );
     }
 }
