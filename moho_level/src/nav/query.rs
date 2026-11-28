@@ -299,8 +299,11 @@ pub(super) fn path(mesh: &NavMesh, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
 /// The cell of `range` nearest `point` on the ground plane; the lowest index on a tie.
 fn nearest_cell(cells: &[Polygon], range: &Range<usize>, point: Vec3) -> Option<usize> {
     let p = ground(point);
-    let gap = |cell: usize| cells[cell].closest_ground_point(p).distance(p);
-    range.clone().min_by(|a, b| gap(*a).total_cmp(&gap(*b)))
+    range
+        .clone()
+        .map(|cell| (cells[cell].closest_ground_point(p).distance(p), cell))
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, cell)| cell)
 }
 
 /// A route over `cells`, the cut pieces of `coarse`'s polygons (`of_polygon[i]` is the range of
@@ -320,20 +323,14 @@ pub(super) fn path_by_cost(
         return None;
     }
     let has_cells = |polygon: usize| !of_polygon[polygon].is_empty();
-    let snapped_start = snap(coarse, from, has_cells)?;
-    let snapped_goal = snap(coarse, to, has_cells)?;
-    let start = Snapped {
-        polygon: nearest_cell(
-            cells,
-            &of_polygon[snapped_start.polygon],
-            snapped_start.point,
-        )?,
-        point: snapped_start.point,
+    let in_cells = |coarse_end: Snapped| {
+        Some(Snapped {
+            polygon: nearest_cell(cells, &of_polygon[coarse_end.polygon], coarse_end.point)?,
+            point: coarse_end.point,
+        })
     };
-    let goal = Snapped {
-        polygon: nearest_cell(cells, &of_polygon[snapped_goal.polygon], snapped_goal.point)?,
-        point: snapped_goal.point,
-    };
+    let start = in_cells(snap(coarse, from, has_cells)?)?;
+    let goal = in_cells(snap(coarse, to, has_cells)?)?;
     judge(start.polygon)?;
     judge(goal.polygon)?;
     let portals = route(cells, &start, &goal, judge)?;

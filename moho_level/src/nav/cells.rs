@@ -26,12 +26,19 @@ fn fits(estimate: u64) -> bool {
     estimate <= MAX_CELLS
 }
 
+/// The lowest and highest coordinate of `corners` on `axis`; (∞, -∞) when there are none.
+fn extent(corners: &[Vec3], axis: usize) -> (f32, f32) {
+    let values = corners.iter().map(|v| v[axis]);
+    (
+        values.clone().fold(f32::INFINITY, f32::min),
+        values.fold(f32::NEG_INFINITY, f32::max),
+    )
+}
+
 /// An upper bound on the cells cut from `polygon`: one per grid square its ground bounds touch.
 fn estimate(polygon: &Polygon, size: f32) -> u64 {
     let span = |axis: usize| {
-        let values = polygon.vertices.iter().map(|v| v[axis]);
-        let low = values.clone().fold(f32::INFINITY, f32::min);
-        let high = values.fold(f32::NEG_INFINITY, f32::max);
+        let (low, high) = extent(&polygon.vertices, axis);
         if high >= low {
             ((high - low) / size).ceil() as u64 + 1
         } else {
@@ -90,9 +97,7 @@ fn split(polygon: &[Vec3], axis: usize, line: f32) -> Option<(Vec<Vec3>, Vec<Vec
 
 /// Cuts `piece` at every grid line on `axis` strictly inside its bounds, lowest line first.
 fn sweep(piece: Vec<Vec3>, axis: usize, size: f32) -> Vec<Vec<Vec3>> {
-    let values = piece.iter().map(|v| v[axis]);
-    let low = values.clone().fold(f32::INFINITY, f32::min);
-    let high = values.fold(f32::NEG_INFINITY, f32::max);
+    let (low, high) = extent(&piece, axis);
     let mut pieces = Vec::new();
     let mut rest = piece;
     let mut k = (low / size).floor() as i64;
@@ -169,7 +174,8 @@ fn link(cells: &mut [Polygon], of_polygon: &[Range<usize>], coarse: &[Polygon]) 
         owner[range.clone()].fill(polygon);
     }
     // Only looked up, never iterated: the order of its entries must not reach the output.
-    let mut edges: HashMap<EdgeKey, usize> = HashMap::new();
+    let edge_count = cells.iter().map(|cell| cell.vertices.len()).sum();
+    let mut edges: HashMap<EdgeKey, usize> = HashMap::with_capacity(edge_count);
     for (index, cell) in cells.iter().enumerate() {
         for (a, b) in cell.corners() {
             edges.entry(edge_key(a, b)).or_insert(index);
