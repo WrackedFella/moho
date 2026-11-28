@@ -53,14 +53,9 @@ fn toggled_of(harness: &Harness<'static, SearchlightGame>, label: &str) -> Optio
 #[test]
 fn invert_mouse_y_found_by_its_label_reads_checked_and_is_applied() {
     let dir = tempfile::tempdir().unwrap();
-    let mut harness = harness_of(main_menu_game(&dir.path().join("searchlight.ini")));
-    let applied_before = harness
-        .state_mut()
-        .debug_settings
-        .as_ref()
-        .expect("the game holds debug settings")
-        .prefs()
-        .invert_mouse_y();
+    let path = dir.path().join("searchlight.ini");
+    let mut harness = harness_of(main_menu_game(&path));
+    let saved_before = path.exists();
     click_found(&mut harness, Role::Button, "Settings");
     click_found(&mut harness, Role::Button, "Mouse");
     let before = toggled_of(&harness, "Invert mouse Y");
@@ -71,15 +66,11 @@ fn invert_mouse_y_found_by_its_label_reads_checked_and_is_applied() {
     harness.run();
     click_found(&mut harness, Role::Button, "Apply");
 
-    let applied = harness
-        .state_mut()
-        .debug_settings
-        .as_ref()
-        .expect("the game holds debug settings")
-        .prefs()
-        .invert_mouse_y();
-    assert!(!applied_before);
+    assert!(!saved_before, "nothing is saved before Apply");
     assert_eq!(before, Some(Toggled::False));
     assert_eq!(after, Some(Toggled::True));
-    assert!(applied, "Apply makes the game's prefs invert the mouse");
+    assert!(path.exists(), "Apply saves the prefs file");
+    let (saved, warnings) = Prefs::load_from(&path);
+    assert_eq!(warnings, vec![]);
+    assert!(saved.invert_mouse_y(), "the saved prefs invert the mouse");
 }

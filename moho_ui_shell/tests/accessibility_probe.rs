@@ -279,18 +279,28 @@ fn a_row_click_through_route_chooses_its_action() {
 
 #[test]
 fn row_nodes_paint_nothing() {
-    let harness = harness_of(menu_shell());
+    let layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("moho_menu_rows"));
+    // egui drains the paint lists when a pass ends, so count the layer's shapes inside the pass,
+    // right after the shell has painted.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(SIZE[0], SIZE[1]))
+        .build_ui_state(
+            move |ui, (shell, shapes): &mut (UiShell<(), Choice>, Option<usize>)| {
+                shell.paint(ui.ctx());
+                *shapes = Some(ui.ctx().graphics(|graphics| {
+                    graphics
+                        .get(layer)
+                        .map_or(0, |list| list.all_entries().count())
+                }));
+            },
+            (menu_shell(), None),
+        );
+    harness.run();
 
     harness.get_by_role_and_label(Role::Button, "Settings");
 
-    let layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("moho_menu_rows"));
-    // egui drops a layer that only hovered once the pass is drained, so absent counts as empty.
-    let shapes = harness.ctx.graphics(|graphics| {
-        graphics
-            .get(layer)
-            .map_or(0, |list| list.all_entries().count())
-    });
-    assert_eq!(shapes, 0, "the layer holds no shapes");
+    let (_, shapes) = harness.state();
+    assert_eq!(*shapes, Some(0), "the layer holds no shapes");
 }
 
 #[test]
